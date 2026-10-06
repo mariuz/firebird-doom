@@ -187,12 +187,13 @@ const fbNow = await one(`SELECT st, z FROM things WHERE id = ${fb}`);
 assert(fbNow && fbNow.ST === 'dying' && Math.abs(fbNow.Z - floorZ) < 0.01, `a fireball diving into the floor explodes on it (z ${fbNow?.Z} = floor ${floorZ})`);
 
 // one climbing into a sky ceiling simply disappears
-const sky = await one(`SELECT FIRST 1 t.x, t.y, s.floor_h FROM things t JOIN sectors s ON s.id = t.sector_id
-                        WHERE s.sky = 1 AND t.kind IN ('item', 'decor', 'monster')`);
+const sky = await one(`SELECT FIRST 1 t.x, t.y, s.floor_h, s.ceil_h FROM things t JOIN sectors s ON s.id = t.sector_id
+                        WHERE s.sky = 1 AND t.kind IN ('item', 'decor', 'monster')
+                        ORDER BY s.ceil_h - s.floor_h, t.id`);
 if (sky) {
   const sb = await spawn(9000, sky.X, sky.Y, sky.FLOOR_H + 40);
   await db.exec(`UPDATE things SET momx = 0, momy = 0, momz = 50, owner_id = -1 WHERE id = ${sb}`);
-  await tic(12);
+  await tic(Math.ceil((sky.CEIL_H - sky.FLOOR_H) / 50) + 4);   // however tall the sky is
   const sbNow = await one(`SELECT st FROM things WHERE id = ${sb}`);
   assert(!sbNow, 'a fireball flying into the sky vanishes without exploding');
 } else console.log('(no thing under open sky on this map)');
