@@ -1,0 +1,29 @@
+{
+  "name": "firebird-doom",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DOOM rendered and simulated inside Firebird SQL, running in the browser via Firebird WASM",
+  "type": "module",
+  "scripts": {
+    "fetch-wad": "node scripts/fetch-wad.mjs",
+    "build": "node scripts/build.mjs",
+    "serve": "node scripts/build.mjs --serve",
+    "test": "node scripts/sql-smoke.mjs",
+    "test:all-maps": "node scripts/all-maps.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "firebird-wasm": "^0.3.0"
+  },
+  "devDependencies": {
+    "esbuild-wasm": "^0.25.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mariuz/firebird-doom.git"
+  },
+  "homepage": "https://mariuz.github.io/firebird-doom/"
+}

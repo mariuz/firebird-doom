@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Firebird DOOM</title>
+  <meta name="description" content="DOOM simulated and rendered inside the Firebird SQL database, running in your browser via Firebird WASM.">
+  <script src="./coi-serviceworker.js"></script>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <header>
+    <h1>Firebird <span>DOOM</span></h1>
+    <p class="tagline">Every game tic is a PSQL procedure. Every frame is a <code>SELECT</code>.
+      Firebird 6 runs in WebAssembly in a Worker in this tab.</p>
+  </header>
+
+  <main>
+    <section class="game">
+      <div class="screen-wrap">
+        <canvas id="screen" width="320" height="200" tabindex="0" aria-label="DOOM view rendered from Firebird query results"></canvas>
+        <div id="status" class="status">Loading…</div>
+      </div>
+      <div id="stats" class="stats">&nbsp;</div>
+      <div class="controls">
+        <label>WAD <span id="wadname" class="pill">—</span>
+          <input id="wadfile" type="file" accept=".wad,.WAD"></label>
+        <label>Map <select id="map"></select></label>
+        <label>Detail <select id="detail">
+          <option value="high">High (320 columns)</option>
+          <option value="low">Low (160 columns)</option>
+        </select></label>
+        <span id="engine" class="pill">Firebird</span>
+        <span id="mapname" class="pill"></span>
+      </div>
+      <p class="keys">Click the view to capture the mouse ·
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows move ·
+        <kbd>Ctrl</kbd> or click fire · <kbd>Space</kbd>/<kbd>E</kbd> use ·
+        <kbd>Shift</kbd> run · <kbd>1</kbd>–<kbd>4</kbd> weapons ·
+        <kbd>Tab</kbd> map · <kbd>P</kbd> pause.
+        On touch screens the left half moves, the right half turns, and a tap fires.</p>
+    </section>
+
+    <section class="console">
+      <h2>SQL console <small>— the live game database</small></h2>
+      <div class="presets">
+        <button data-sql="SELECT * FROM player">player</button>
+        <button data-sql="SELECT t.id, t.kind, tt.sprite, t.st, t.hp, CAST(t.x AS INTEGER) x, CAST(t.y AS INTEGER) y FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.kind = 'monster' ORDER BY t.st, t.id">monsters</button>
+        <button data-sql="SELECT * FROM movers">movers</button>
+        <button data-sql="SELECT FIRST 40 * FROM frame_walls">frame_walls</button>
+        <button data-sql="SELECT * FROM frame_sprites ORDER BY depth">frame_sprites</button>
+        <button data-sql="UPDATE player SET health = 200, armor = 200, bullets = 200, shells = 50, has_shotgun = 1, has_chaingun = 1, keycards = 7">IDKFA</button>
+        <button data-sql="UPDATE things SET hp = 1 WHERE kind = 'monster'">one-hit monsters</button>
+        <button data-sql="UPDATE sectors SET light = 255, base_light = 255">lights on</button>
+      </div>
+      <textarea id="sql" spellcheck="false" rows="4">SELECT kind, COUNT(*) n FROM things GROUP BY kind</textarea>
+      <div class="run"><button id="run-sql">Run</button> <small>Ctrl+Enter</small></div>
+      <pre id="sql-out" class="out"></pre>
+    </section>
+
+    <section class="about">
+      <h2>How it works</h2>
+      <ul>
+        <li><b>The WAD becomes tables.</b> <code>VERTEXES</code>, <code>LINEDEFS</code>, <code>SIDEDEFS</code>,
+          <code>SECTORS</code>, <code>SEGS</code>, <code>SSECTORS</code>, <code>NODES</code> and <code>THINGS</code>
+          are copied in as rows. Sprite frames and texture sizes become tables too.</li>
+        <li><b>The game is PSQL.</b> <code>DOOM_TIC</code> runs at 35 Hz: player movement with wall sliding
+          (<code>CHECK_POSITION</code>), doors and lifts (<code>MOVERS</code>), monster AI with line-of-sight
+          (<code>CHECK_SIGHT</code>), hitscan weapons, projectiles, pickups, secrets, and light effects.</li>
+        <li><b>The BSP is a recursive CTE.</b> <code>INIT_MAP</code> finds every thing's sector by walking
+          <code>NODES</code> for all things at once with <code>WITH RECURSIVE</code>.</li>
+        <li><b>The renderer is a query.</b> <code>FRAME_WALLS</code> projects every linedef to screen columns,
+          intersects each column's ray with it, sorts each column front to back, and carries DOOM's
+          <code>ceilingclip</code>/<code>floorclip</code> window down the column. <code>FRAME_WALLS_WINDOWED</code> does the same
+          with <code>MAX() OVER (PARTITION BY col ORDER BY depth)</code>. <code>FRAME_SPRITES</code> picks the rotation
+          frame for each monster.</li>
+        <li><b>JavaScript only paints.</b> It looks up texels and colormaps for the rows Firebird returns.</li>
+      </ul>
+      <p>Inspired by CedarDB's <a href="https://cedardb.com/blog/sqldoom/">SQL DOOM</a> and
+        <a href="https://cedardb.com/blog/doomql/">DOOMQL</a>, and by
+        <a href="https://www.hey.earth/posts/duckdb-doom">DuckDB-DOOM</a>. The engine is
+        <a href="https://github.com/mariuz/electric-firebird">Electric Firebird</a> (<code>firebird-wasm</code>).
+        The game data is <a href="https://freedoom.github.io/">Freedoom</a>. DOOM is a trademark of id Software.</p>
+    </section>
+  </main>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
