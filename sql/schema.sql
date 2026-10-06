@@ -285,7 +285,8 @@ CREATE TABLE player (
   view_h       DOUBLE PRECISION DEFAULT 41 NOT NULL,
   view_z       DOUBLE PRECISION DEFAULT 41 NOT NULL,
   use_down     SMALLINT DEFAULT 0 NOT NULL,
-  dead         SMALLINT DEFAULT 0 NOT NULL
+  dead         SMALLINT DEFAULT 0 NOT NULL,
+  invis_tics   INTEGER DEFAULT 0 NOT NULL    -- pw_invisibility: tics of partial invisibility left
 );
 
 -- S_StartSound: every sound the simulation makes, for the browser to play.

@@ -1523,10 +1523,11 @@ BEGIN
              has_chainsaw = :has_saw, has_ssg = :has_ssg,
              weapon = :weapon, items = items + 1, bonus_count = 6,
              keycards = IIF(:pk = 'key', BIN_OR(keycards, :amt), keycards),
+             invis_tics = IIF(:pk = 'invis', :amt, invis_tics),
              msg = 'Picked up ' || :lbl || '.', msg_tics = 70
        WHERE id = 1;
       EXECUTE PROCEDURE play_sound(CASE WHEN pk IN ('shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'chainsaw', 'ssg') THEN 'DSWPNUP'
-                                        WHEN pk IN ('none', 'mega') THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
+                                        WHEN pk IN ('none', 'mega', 'invis') THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
     END
   END
 END^
@@ -1724,9 +1725,13 @@ DECLARE mass INTEGER;
 DECLARE fl SMALLINT;
 DECLARE grav SMALLINT;
 DECLARE nsec INTEGER;
+DECLARE pinvis SMALLINT;
+DECLARE tshadow SMALLINT;
+DECLARE shadowed SMALLINT;
 BEGIN
-  SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
-    INTO ppx, ppy, ppz, ppdead, ptid, pang;
+  SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle, IIF(p.invis_tics > 0, 1, 0)
+    FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
+    INTO ppx, ppy, ppz, ppdead, ptid, pang, pinvis;
 
   FOR SELECT t.id, t.kind, t.x, t.y, t.z, t.angle, t.st, t.st_tics, t.st_len, t.step, t.reaction,
              t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame, t.momz,
@@ -1765,11 +1770,13 @@ BEGIN
     pdead = ppdead;
     gang = pang;
     tgt = NULL;
+    shadowed = pinvis;
     IF (k = 'monster' AND target_id IS NOT NULL) THEN
     BEGIN
       sx = NULL;
-      SELECT t.x, t.y, t.z, t.angle FROM things t WHERE t.id = :target_id AND t.st NOT IN ('dying', 'dead')
-        INTO sx, sy, oz, gang;
+      SELECT t.x, t.y, t.z, t.angle, (SELECT ts.shadow FROM thing_types ts WHERE ts.thing_type = t.thing_type)
+        FROM things t WHERE t.id = :target_id AND t.st NOT IN ('dying', 'dead')
+        INTO sx, sy, oz, gang, tshadow;
       IF (sx IS NULL) THEN
       BEGIN
         target_id = NULL;              -- it died: back to hunting the player
@@ -1782,6 +1789,7 @@ BEGIN
         pz = oz;
         pdead = 0;
         tgt = target_id;
+        shadowed = tshadow;
       END
     END
     dist = SQRT((px - x) * (px - x) + (py - y) * (py - y));
@@ -2138,9 +2146,10 @@ BEGIN
         n = (st_len - st_tics - 8) / 24;                        -- volley 0, 1, 2
         EXECUTE PROCEDURE play_sound('DSFIRSHT', id, x, y);
         EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad,
-          ang + CASE n WHEN 2 THEN -0.09817e0 ELSE 0 END, px, py, pz);
+          ang + IIF(shadowed = 1, (RAND() - RAND()) * PI() / 8, 0) + CASE n WHEN 2 THEN -0.09817e0 ELSE 0 END, px, py, pz);
         EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad,
-          ang + CASE n WHEN 0 THEN 0.19635e0 WHEN 1 THEN -0.39270e0 ELSE 0.09817e0 END, px, py, pz);
+          ang + IIF(shadowed = 1, (RAND() - RAND()) * PI() / 8, 0)
+              + CASE n WHEN 0 THEN 0.19635e0 WHEN 1 THEN -0.39270e0 ELSE 0.09817e0 END, px, py, pz);
       END
       -- A_VileTarget (frame H): conjure the flame on the player.
       -- A_VileAttack (frame O): if we can still see them, 20 damage, a toss
@@ -2173,6 +2182,7 @@ BEGIN
       BEGIN
         st = 'charge';
         EXECUTE PROCEDURE play_sound(atk_snd, id, x, y);
+        ang = ang + IIF(shadowed = 1, (RAND() - RAND()) * PI() / 4, 0);   -- (A_FaceTarget at a shadow)
         momx = COS(ang) * 20;
         momy = SIN(ang) * 20;
         momz = (pz + 28 - z) / MAXVALUE(1e0, dist / 20);
@@ -2184,7 +2194,10 @@ BEGIN
         EXECUTE PROCEDURE play_sound(IIF(atk_kind = 'missile' AND dist < melee_range, 'DSCLAW', atk_snd), id, x, y);
         IF (atk_kind = 'hitscan') THEN
         BEGIN
-          IF (check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
+          -- A_FaceTarget turns up to 45° wide of a shadow: then the volley
+          -- only lands if that still points at the target's body
+          IF (check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1
+              AND (shadowed = 0 OR ABS((RAND() - RAND()) * PI() / 4) < ATAN2(20, dist))) THEN
           BEGIN
             -- P_LineAttack: the first other monster (or barrel) on the line of
             -- fire takes the bullets instead
@@ -2221,7 +2234,10 @@ BEGIN
         ELSE IF (atk_kind = 'missile' AND missile_type = 3006) THEN
           EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang);
         ELSE IF (atk_kind = 'missile') THEN
-          EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad, ang, px, py, pz);
+          -- P_SpawnMissile: at a shadow (you, partially invisible; a spectre)
+          -- the shot goes up to 22.5° astray
+          EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad,
+            ang + IIF(shadowed = 1, (RAND() - RAND()) * PI() / 8, 0), px, py, pz);
       END
       IF (st_tics <= 0 AND st = 'attack') THEN
       BEGIN
@@ -2413,7 +2429,7 @@ RETURNS (
   kills INTEGER, total_kills INTEGER, items INTEGER, total_items INTEGER,
   secrets INTEGER, total_secrets INTEGER,
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
-  sides_rev INTEGER, map_name VARCHAR(8))
+  sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER)
 AS
 DECLARE i INTEGER = 0;
 BEGIN
@@ -2430,7 +2446,8 @@ BEGIN
     UPDATE player p
        SET damage_count = MAXVALUE(0, p.damage_count - 1),
            bonus_count = MAXVALUE(0, p.bonus_count - 1),
-           msg_tics = MAXVALUE(0, p.msg_tics - 1)
+           msg_tics = MAXVALUE(0, p.msg_tics - 1),
+           invis_tics = MAXVALUE(0, p.invis_tics - 1)
      WHERE p.id = 1;
     i = i + 1;
   END
@@ -2439,7 +2456,7 @@ BEGIN
          p.max_bullets, p.max_shells, p.max_rockets, p.max_cells,
          p.attack_tics, p.attack_len, p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
          p.dead, g.exit_kind, p.kills, g.total_kills, p.items, g.total_items, p.secrets, g.total_secrets,
-         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name
+         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics
     FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g
    WHERE p.id = 1 AND g.id = 1
     INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards,
@@ -2447,7 +2464,7 @@ BEGIN
          max_bullets, max_shells, max_rockets, max_cells,
          attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind,
          kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z,
-         sides_rev, map_name;
+         sides_rev, map_name, invis_tics;
   SUSPEND;
 END^
 
@@ -2611,7 +2628,7 @@ BEGIN
   UPDATE player
      SET thing_id = (SELECT MAX(id) FROM things WHERE kind = 'player'),
          keycards = 0, kills = 0, items = 0, secrets = 0, dead = 0, attack_tics = 0,
-         damage_count = 0, bonus_count = 0, view_h = 41, use_down = 0,
+         damage_count = 0, bonus_count = 0, view_h = 41, use_down = 0, invis_tics = 0,
          msg = :map_name, msg_tics = 105
    WHERE id = 1;
   UPDATE player p SET view_z = (SELECT z FROM things t WHERE t.id = p.thing_id) + 41 WHERE id = 1;

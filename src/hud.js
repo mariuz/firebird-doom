@@ -102,7 +102,11 @@ export function drawWeapon(renderer, hud, palette) {
     if (p >= 0 && p < 0.33) flash = 'BFGFA0';
     else if (p >= 0.33 && p < 0.45) flash = 'BFGFB0';
   }
-  // R_DrawPSprite: sx = 1, sy = WEAPONTOP (32), against a 320×200 screen
-  if (flash) renderer.patch(renderer.pictureByName(flash), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)), pb, 0);
-  renderer.patch(renderer.pictureByName(gun), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)), pb, 0);
+  // R_DrawPSprite: sx = 1, sy = WEAPONTOP (32), against a 320×200 screen.
+  // Partially invisible, the weapon is fuzz too – flickering back in the
+  // last four seconds (pw_invisibility > 4*32 || & 8)
+  const inv = hud.INVIS_TICS ?? 0;
+  const draw = inv > 4 * 32 || (inv & 8) ? renderer.patchFuzz.bind(renderer) : renderer.patch.bind(renderer);
+  if (flash) draw(renderer.pictureByName(flash), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)), pb, 0);
+  draw(renderer.pictureByName(gun), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)), pb, 0);
 }

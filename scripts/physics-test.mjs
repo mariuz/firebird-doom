@@ -515,6 +515,38 @@ if (sky) {
     const stopped = await one(`SELECT st, momx, momy FROM things WHERE id = ${soul}`);
     assert(stopped.ST !== 'charge' && stopped.MOMX === 0 && stopped.MOMY === 0, `a charging lost soul that gets shot stops (${stopped.ST})`);
     await db.exec(`DELETE FROM things WHERE id = ${soul}`);
+
+    // partial invisibility: the sphere gives 2100 tics, and monsters' aim goes astray
+    await db.exec(`DELETE FROM sound_events`);
+    const sphere = await spawn(2024, pl.X, pl.Y);
+    const got = (await tic()).rows[0];
+    const sphereLeft = await one(`SELECT COUNT(*) n FROM things WHERE id = ${sphere}`);
+    const pow = (await one(`SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSGETPOW'`)).N;
+    assert(got.INVIS_TICS > 2090 && got.INVIS_TICS <= 2100 && sphereLeft.N === 0 && pow > 0,
+      `picking up the partial invisibility sphere: ${got.INVIS_TICS} tics of it (DSGETPOW)`);
+    // a zombieman 280 units off, 80 volleys seen and 80 unseen
+    const shooter = await placeMon(3004, 280, `, angle = ${dir + Math.PI}`);
+    const volleys = async () => {
+      let hits = 0;
+      for (let i = 0; i < 80; i++) {
+        await db.exec('UPDATE player SET health = 1000, armor = 0');
+        await db.exec(`UPDATE things SET st = 'attack', st_len = 16, st_tics = 8, hp = 1000 WHERE id = ${shooter}`);
+        await tic();
+        if ((await one('SELECT health FROM player')).HEALTH < 1000) hits++;
+      }
+      return hits;
+    };
+    await db.exec('UPDATE player SET invis_tics = 0');
+    const seenHits = await volleys();
+    await db.exec('UPDATE player SET invis_tics = 2000');
+    const unseenHits = await volleys();
+    assert(seenHits >= 30 && unseenHits < seenHits / 2,
+      `a zombieman hits you ${seenHits}/80 times, partially invisible only ${unseenHits}/80`);
+    await db.exec('UPDATE player SET invis_tics = 3');
+    const worn = (await tic(5)).rows[0];
+    assert(worn.INVIS_TICS === 0, `it wears off (${worn.INVIS_TICS} tics left)`);
+    await db.exec(`DELETE FROM things WHERE id = ${shooter} OR thing_type IN (9010, 9011)`);
+    await db.exec('UPDATE player SET health = 100');
   } else console.log('(no open run from the player start for the infighting tests)');
 }
 

@@ -438,6 +438,28 @@ export class Renderer {
     }
   }
 
+  /** A patch drawn as fuzz (R_DrawFuzzColumn) over the 3D view: the weapon while invisible. */
+  patchFuzz(pic, x, y, palBase = 0) {
+    if (!pic) return;
+    const { sfb } = this;
+    const x0 = x - pic.left;
+    const y0 = y - pic.top;
+    const unlut = this.unlut[palBase / (34 * 256)];
+    const dark = palBase + 6 * 256;
+    for (let px = 0; px < pic.w; px++) {
+      const sx = x0 + px;
+      if (sx < 0 || sx >= 320) continue;
+      const off = px * pic.h;
+      for (let py = 0; py < pic.h; py++) {
+        const sy = y0 + py;
+        if (sy < 0 || sy >= 168 || !pic.alpha[off + py]) continue;
+        const fy = Math.min(167, Math.max(0, sy + FUZZ_OFFSETS[this.fuzzPos]));
+        this.fuzzPos = (this.fuzzPos + 1) % FUZZ_OFFSETS.length;
+        sfb[sy * 320 + sx] = this.lut[dark + (unlut.get(sfb[fy * 320 + sx]) ?? 0)];
+      }
+    }
+  }
+
   /** Scale the 3D view into the top of the 320×200 screen (low detail doubles pixels). */
   composeView() {
     const { w, h, fb, sfb } = this;

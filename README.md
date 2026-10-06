@@ -141,6 +141,15 @@ from pixel to pixel and from frame to frame, so the outline ripples as you watch
 framebuffer holds RGBA, so a reverse palette lookup turns each pixel back into its palette index
 before darkening. In a dim room a spectre is as hard to see as in DOOM.
 
+The partial invisibility sphere uses the same fuzz. Picking it up gives 60 seconds
+(, 2100 tics in , cleared at the end of a level). Your weapon is
+drawn as fuzz, and it flickers back in the last four seconds. Monsters aim the way they do at
+any  target, which includes a spectre they are fighting.  turns up to
+45° wide, so a zombie's volley lands only if that error still points at your body, and a lost
+soul's charge goes astray.  sends projectiles up to 22.5° off. Melee attacks
+still land. At 280 units a zombieman hits about 65% of the time when it can see you, and about
+15% when you're partially invisible.
+
 ### Sound and music
 
 The simulation decides what you hear. `PLAY_SOUND` inserts a row into `SOUND_EVENTS` (sound
