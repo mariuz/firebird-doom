@@ -43,7 +43,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_CheckSight` | `CHECK_SIGHT()` walks the blockmap cells along the sight line |
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `MONSTERS_THINK` |
-| `A_Tracer` (revenant), `A_FatAttack1/2/3` (mancubus) | homing and volleys in `MONSTERS_THINK`, `MONSTER_MISSILE` |
+| `A_Tracer`, `A_SkelFist` (revenant), `A_FatAttack1/2/3` (mancubus), `A_VileTarget` / `A_Fire` / `A_VileAttack` (arch-vile) | `MONSTERS_THINK` (the `melee` state and the `flame` kind), `MONSTER_MISSILE` |
 | `A_BossDeath`, `A_KeenDie` | `BOSS_DEATH`, `KEEN_DIE` |
 | `A_BrainSpit`, `A_SpawnFly`, `A_BrainScream` (the Icon of Sin) | the `shooter`, `cube` and `brain` kinds in `MONSTERS_THINK` |
 | `MF_SPAWNCEILING` (hanging bodies, Commander Keen) | `THING_TYPES.HANG`, placed in `INIT_MAP` |
@@ -180,13 +180,23 @@ You can also load your own `DOOM1.WAD` / `DOOM.WAD` / `DOOM2.WAD` with the file 
 is uploaded anywhere.
 
 `npm run test:all-maps` loads, plays and renders every map in the WAD, and fires each map's first
-teleporter. `npm run test:weapons` fires the rocket launcher, plasma gun, BFG, chainsaw and, when the WAD
-has it (`WAD=public/wads/freedoom2.wad`), the super shotgun at a monster. It checks ammo,
-sounds, damage, splash and pickups. `npm run test:specials` checks that hanging decorations hang. It also checks that the boss-death
-specials fire (E1M8, E2M8, E3M8, MAP07), that the last Commander Keen opens the 666 door, and that
-the Icon of Sin spits cubes, spawns monsters and ends the game when its brain dies. Use
-`WAD=public/wads/freedoom2.wad` for the Phase 2 parts. `npm run test:renderers` compares the BSP and brute-force renderers from several
-spots and headings on every map, and reports the speed-up. `npm run screenshots` regenerates
+teleporter. `npm run test:weapons` fires the rocket launcher, plasma gun, BFG, chainsaw and, when
+the WAD has it (`WAD=public/wads/freedoom2.wad`), the super shotgun at a monster. It checks ammo,
+sounds, damage, splash and pickups.
+
+`npm run test:specials` checks:
+
+- that hanging decorations hang
+- that the boss-death specials fire (E1M8, E2M8, E3M8, MAP07)
+- that the last Commander Keen opens the 666 door
+- that the Icon of Sin spits cubes, spawns monsters and ends the game when its brain dies
+- the DOOM II attacks: revenant missiles turn exactly 16.875° per update and find you, the
+  revenant punches, a mancubus attack fires six fireballs at DOOM's spread angles, and the
+  arch-vile's flame follows you before the blast throws you upwards
+
+Use `WAD=public/wads/freedoom2.wad` for the Phase 2 parts. `npm run test:renderers` compares the
+BSP and brute-force renderers from several spots and headings on every map, and reports the
+speed-up. `npm run screenshots` regenerates
 `docs/*.png`. `node scripts/bench.mjs queries.sql` times SQL statements against a loaded map, with
 statements separated by `-- @@` lines.
 
@@ -212,14 +222,21 @@ GitHub Pages. Pull requests run everything except the deploy.
 ## Simplifications
 
 Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
-Projectiles fly flat, and there are no crushers. Most DOOM II monsters reuse the existing
-attack kinds. Two are faithful: revenant missiles home like `A_Tracer` (turning up to 16.875° every
-4 tics and trailing smoke), and the mancubus fires DOOM's three volleys of two fireballs
-(`A_FatAttack1/2/3`). The arch-vile's fire is still an instant hit, and the revenant has no
-punch. Music is an approximation of OPL2
-FM synthesis, not a cycle-exact emulator.
-Large maps with many monsters awake at once can still drop below 10 fps. The *Low* detail setting (160
-columns, like DOOM's own) halves the render cost.
+Projectiles fly flat, and there are no crushers. The DOOM II monsters' signature attacks follow
+DOOM's code:
+
+- revenant missiles home like `A_Tracer`, turning up to 16.875° every 4 tics and trailing smoke
+- the revenant punches at close range (`A_SkelFist`, 6 × 1d10)
+- the mancubus fires three volleys of two fireballs (`A_FatAttack1/2/3`)
+- the arch-vile conjures a flame on you that follows you while it can see you, then blasts you for
+  20 and throws you upwards, while the flame explodes for 70 (`A_VileTarget`, `A_Fire`,
+  `A_VileAttack`)
+
+The arch-vile doesn't resurrect corpses, and the pain elemental doesn't burst into lost souls when
+it dies.
+
+Large maps with many monsters awake at once can still drop below 10 fps. The *Low* detail setting
+(160 columns, like DOOM's own) halves the render cost.
 
 ## Credits
 

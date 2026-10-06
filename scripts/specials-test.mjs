@@ -182,6 +182,63 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
     assert(offsets.length === 6 && offsets.every((o, i) => Math.abs(o - want[i]) < 0.3),
       `mancubus fires 3 volleys of 2 (offsets ${offsets.join(', ')}°; DOOM: ${want.join(', ')}°)`);
   } else console.log('(no open spot for the mancubus test)');
+
+  if (s2) {
+    await db.exec(`DELETE FROM things WHERE thing_type IN (67, 9006, 9007, 9010)`);
+    await db.exec(`UPDATE player SET health = 100000, armor = 0`);
+    const dir = Math.atan2(s2.y - p.Y, s2.x - p.X);
+
+    // the revenant's fist: swing, then 6 × 1d10 at arm's length
+    await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
+        EXECUTE PROCEDURE spawn_thing(66, ${p.X + Math.cos(dir) * 52}, ${p.Y + Math.sin(dir) * 52}, ${p.Z}, ${dir + Math.PI}) RETURNING_VALUES id;
+        UPDATE things SET st = 'chase', st_tics = 1, reaction = 0 WHERE id = :id;
+      END`);
+    const hp0 = (await one('SELECT health FROM player')).HEALTH;
+    for (let i = 0; i < 26; i++) await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
+    const hp1 = (await one('SELECT health FROM player')).HEALTH;
+    const fist = (await one("SELECT LIST(DISTINCT sound) l FROM sound_events WHERE sound IN ('DSSKESWG', 'DSSKEPCH')")).L ?? '';
+    assert(hp0 - hp1 > 0 && (hp0 - hp1) % 6 === 0 && hp0 - hp1 <= 60 * 3,
+      `revenant punches at close range (${hp0 - hp1} damage, a multiple of 6)`);
+    assert(fist.includes('DSSKESWG') && fist.includes('DSSKEPCH'), `revenant punch sounds (${fist})`);
+    await db.exec(`DELETE FROM things WHERE thing_type IN (66, 9006, 9010)`);
+
+    // the arch-vile: a flame that tracks the player, then the blast and the toss
+    await db.exec(`UPDATE player SET health = 100000, armor = 0`);
+    await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
+        EXECUTE PROCEDURE spawn_thing(64, ${s2.x}, ${s2.y}, ${s2.z}, ${dir + Math.PI}) RETURNING_VALUES id;
+        UPDATE things SET st = 'attack', st_len = 80, st_tics = 80, reaction = 0 WHERE id = :id;
+      END`);
+    const v0 = (await one('SELECT health FROM player')).HEALTH;
+    let flameTics = 0;
+    let closeTics = 0;
+    let rise = 0;
+    const heard = new Set();
+    for (let i = 0; i < 90; i++) {
+      // walk sideways for a bit: the flame should follow
+      await db.query(`SELECT * FROM doom_tic(1, 0, ${i < 40 ? 1 : 0}, 0, 0, 0, 0, 0)`);
+      const f = await one(`SELECT f.x, f.y, t.x px, t.y py, t.z pz, s.floor_h
+                             FROM things t JOIN sectors s ON s.id = t.sector_id
+                             LEFT JOIN things f ON f.kind = 'flame'
+                            WHERE t.kind = 'player'`);
+      if (f.X != null) {
+        flameTics++;
+        if (Math.hypot(f.X - f.PX, f.Y - f.PY) < 30) closeTics++;
+      }
+      rise = Math.max(rise, f.PZ - f.FLOOR_H);
+      if (i % 20 === 0 || i === 89) {
+        for (const r of (await db.query("SELECT DISTINCT sound FROM sound_events WHERE sound IN ('DSVILATK', 'DSFLAMST', 'DSFLAME', 'DSBAREXP')")).rows) heard.add(r.SOUND);
+      }
+    }
+    const v1 = (await one('SELECT health FROM player')).HEALTH;
+    const vsnd = [...heard].sort().join(',');
+    const left = (await one(`SELECT COUNT(*) n FROM things WHERE kind = 'flame'`)).N;
+    // (A_Fire only follows while the arch-vile can see you, so strafing out of sight leaves it behind)
+    assert(flameTics > 50 && closeTics / flameTics > 0.75, `arch-vile's flame follows the player (${closeTics} of ${flameTics} tics within 30 units)`);
+    assert(v0 - v1 >= 20, `arch-vile blast hurts (${v0 - v1} damage: 20 plus up to 70 splash)`);
+    assert(rise > 20, `the blast throws the player into the air (${rise.toFixed(0)} units up)`);
+    assert(['DSVILATK', 'DSFLAMST', 'DSBAREXP'].every((n) => vsnd.includes(n)), `arch-vile sounds (${vsnd})`);
+    assert(left === 0, 'the flame is gone once the attack ends');
+  }
 }
 
 await db.close();

@@ -25,6 +25,8 @@ export const THING_TYPES = [
   { type: 9006, sprite: 'FATB', kind: 'missile', radius: 11, height: 8, speed: 10, walk: 'AB', death: 'ABC', deathSprite: 'FBXP', bright: 1, dmgLo: 10, dmgHi: 80, deathSnd: 'DSBAREXP' },
   { type: 9007, sprite: 'MANF', kind: 'missile', radius: 6, height: 8, speed: 20, walk: 'AB', death: 'BCD', deathSprite: 'MISL', bright: 1, dmgLo: 8, dmgHi: 64, deathSnd: 'DSFIRXPL' },
   { type: 9008, sprite: 'APLS', kind: 'missile', radius: 13, height: 8, speed: 25, walk: 'AB', death: 'ABCDE', deathSprite: 'APBX', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL' },
+  // the arch-vile's fire (A_VileTarget / A_Fire)
+  { type: 9015, sprite: 'FIRE', kind: 'flame', radius: 1, height: 1, walk: 'ABCDEFGH', bright: 1 },
   { type: 9012, sprite: 'BFE2', kind: 'fx', radius: 1, height: 1, walk: 'ABCD', bright: 1 },
   { type: 9010, sprite: 'PUFF', kind: 'fx', radius: 1, height: 1, walk: 'ABCD', bright: 1 },
   { type: 9011, sprite: 'BLUD', kind: 'fx', radius: 1, height: 1, walk: 'CBA' },
@@ -44,8 +46,9 @@ export const THING_TYPES = [
   M(16, 'CYBR', { hp: 4000, speed: 16, radius: 40, height: 110, painChance: 20, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKLMNOP', atk: 'missile', missile: 9003, dmgLo: 20, dmgHi: 160, seeSnd: 'DSCYBSIT', atkSnd: 'DSRLAUNC', painSnd: 'DSDMPAIN', deathSnd: 'DSCYBDTH' }),
   M(7, 'SPID', { hp: 3000, speed: 12, radius: 128, height: 100, painChance: 40, walk: 'ABCDEF', attack: 'GH', pain: 'I', death: 'JKLMNOPQRS', atk: 'hitscan', shots: 3, dmgLo: 3, dmgHi: 15, seeSnd: 'DSSPISIT', atkSnd: 'DSSHOTGN', painSnd: 'DSDMPAIN', deathSnd: 'DSSPIDTH' }),
   // DOOM II: behaviours reuse the attack kinds above (approximations)
-  M(64, 'VILE', { hp: 700, speed: 15, painChance: 10, walk: 'ABCDEF', attack: 'GHIJKLMNOP', pain: 'Q', death: 'QRSTUVWXYZ', atk: 'hitscan', shots: 3, dmgLo: 3, dmgHi: 15, seeSnd: 'DSVILSIT', atkSnd: 'DSVILATK', painSnd: 'DSVIPAIN', deathSnd: 'DSVILDTH' }),
-  M(66, 'SKEL', { hp: 300, speed: 10, painChance: 100, walk: 'ABCDEF', attack: 'JK', pain: 'L', death: 'LMNOP', atk: 'missile', missile: 9006, dmgLo: 10, dmgHi: 60, seeSnd: 'DSSKESIT', atkSnd: 'DSSKEATK', painSnd: 'DSPOPAIN', deathSnd: 'DSSKEDTH' }),
+  M(64, 'VILE', { hp: 700, speed: 15, painChance: 10, walk: 'ABCDEF', attack: 'GHIJKLMNOP', pain: 'Q', death: 'QRSTUVWXYZ', atk: 'vile', seeSnd: 'DSVILSIT', atkSnd: 'DSVILATK', painSnd: 'DSVIPAIN', deathSnd: 'DSVILDTH' }),
+  M(66, 'SKEL', { hp: 300, speed: 10, painChance: 100, walk: 'ABCDEF', attack: 'JK', pain: 'L', death: 'LMNOP', atk: 'missile', missile: 9006, dmgLo: 10, dmgHi: 60,
+    meleeFr: 'GHI', meleeSnd: 'DSSKESWG', meleeHitSnd: 'DSSKEPCH', meleeDmg: 6, meleeRolls: 10, seeSnd: 'DSSKESIT', atkSnd: 'DSSKEATK', painSnd: 'DSPOPAIN', deathSnd: 'DSSKEDTH' }),
   M(67, 'FATT', { hp: 600, speed: 8, radius: 48, height: 64, painChance: 80, walk: 'ABCDEF', attack: 'GHIGHIGHIG', pain: 'J', death: 'KLMNOPQRST', atk: 'missile', missile: 9007, dmgLo: 8, dmgHi: 64, seeSnd: 'DSMANSIT', atkSnd: 'DSMANATK', painSnd: 'DSMNPAIN', deathSnd: 'DSMANDTH' }),
   M(68, 'BSPI', { hp: 500, speed: 12, radius: 64, height: 64, painChance: 128, walk: 'ABCDEF', attack: 'GH', pain: 'I', death: 'JKLMNOP', atk: 'missile', missile: 9008, dmgLo: 5, dmgHi: 40, seeSnd: 'DSBSPSIT', atkSnd: 'DSPLASMA', painSnd: 'DSDMPAIN', deathSnd: 'DSBSPDTH' }),
   // the pain elemental's "missile" is a lost soul (A_PainAttack), capped at 20

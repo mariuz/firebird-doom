@@ -978,10 +978,15 @@ BEGIN
     z = fz;
     momz = 0;
   END
-  ELSE IF (z > fz) THEN
+  ELSE IF (z > fz OR momz > 0) THEN
   BEGIN
     momz = momz - 1;
     z = MAXVALUE(fz, z + momz);
+    IF (z + 56 > cz) THEN
+    BEGIN
+      z = cz - 56;                   -- banged our head
+      momz = MINVALUE(momz, 0);
+    END
     IF (z = fz) THEN
     BEGIN
       IF (momz < -8) THEN
@@ -1367,23 +1372,33 @@ DECLARE spot INTEGER;
 DECLARE sx DOUBLE PRECISION;
 DECLARE sy DOUBLE PRECISION;
 DECLARE r DOUBLE PRECISION;
+DECLARE pang DOUBLE PRECISION;
+DECLARE ost VARCHAR(8);
+DECLARE oz DOUBLE PRECISION;
+DECLARE melee_fr VARCHAR(8);
+DECLARE melee_snd VARCHAR(8);
+DECLARE melee_hit_snd VARCHAR(8);
+DECLARE melee_dmg INTEGER;
+DECLARE melee_rolls INTEGER;
 BEGIN
-  SELECT t.x, t.y, t.z, p.dead, p.thing_id FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
-    INTO px, py, pz, pdead, ptid;
+  SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
+    INTO px, py, pz, pdead, ptid, pang;
   SELECT g.noise_tic FROM game g WHERE g.id = 1 INTO noise_tic;
 
   FOR SELECT t.id, t.kind, t.x, t.y, t.z, t.angle, t.st, t.st_tics, t.st_len, t.step, t.reaction,
              t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame,
              tt.speed, tt.walk_fr, tt.atk_fr, tt.death_fr, tt.atk_kind, tt.missile_type,
-             tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id, tt.see_snd, tt.atk_snd, tt.death_snd, t.thing_type
+             tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id, tt.see_snd, tt.atk_snd, tt.death_snd, t.thing_type,
+             tt.melee_fr, tt.melee_snd, tt.melee_hit_snd, tt.melee_dmg, tt.melee_rolls
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-       WHERE t.kind IN ('monster', 'barrel', 'missile', 'fx', 'keen', 'brain', 'shooter', 'cube')
+       WHERE t.kind IN ('monster', 'barrel', 'missile', 'fx', 'keen', 'brain', 'shooter', 'cube', 'flame')
          AND t.st NOT IN ('dead')
          AND NOT (t.kind = 'barrel' AND t.st = 'idle')
          AND NOT (t.st = 'idle' AND MOD(:tic + t.id, 8) <> 0)
         INTO id, k, x, y, z, ang, st, st_tics, st_len, step, reaction, rad, hgt, momx, momy, owner_id, flags, frame,
              spd, walk_fr, atk_fr, death_fr, atk_kind, missile_type, dmg_lo, dmg_hi, shots, sec,
-             see_snd, atk_snd, death_snd, ttype
+             see_snd, atk_snd, death_snd, ttype,
+             melee_fr, melee_snd, melee_hit_snd, melee_dmg, melee_rolls
   DO
   BEGIN
     del = 0;
@@ -1454,6 +1469,46 @@ BEGIN
       BEGIN
         st = 'dead';
         UPDATE game SET exit_kind = 1 WHERE id = 1;
+      END
+    END
+    ELSE IF (k = 'flame') THEN
+    BEGIN
+      -- A_Fire: hover 24 units in front of the player while the arch-vile
+      -- that conjured it can still see them; gone when its attack ends
+      ost = NULL;
+      SELECT t.x, t.y, t.z, t.st FROM things t WHERE t.id = :owner_id INTO sx, sy, oz, ost;
+      IF (ost IS DISTINCT FROM 'attack') THEN del = 1;
+      ELSE
+      BEGIN
+        frame = SUBSTRING(walk_fr FROM 1 + MOD(tic / 3, CHAR_LENGTH(walk_fr)) FOR 1);
+        IF (check_sight(sx, sy, oz + 48, px, py, pz + 41) = 1) THEN
+        BEGIN
+          x = px + COS(pang) * 24;
+          y = py + SIN(pang) * 24;
+          z = pz;
+          sec = sector_at(x, y);
+        END
+        IF (MOD(tic, 16) = 0) THEN EXECUTE PROCEDURE play_sound('DSFLAME', id, x, y);   -- A_FireCrackle
+      END
+    END
+    ELSE IF (st = 'melee') THEN
+    BEGIN
+      -- A_SkelWhoosh then A_SkelFist: swing on the second frame, hit on the third
+      st_tics = st_tics - 1;
+      ang = ATAN2(py - y, px - x);
+      idx = MINVALUE(CHAR_LENGTH(melee_fr) - 1, (st_len - st_tics) / 8);
+      frame = SUBSTRING(melee_fr FROM 1 + idx FOR 1);
+      IF (st_len - st_tics = 8) THEN EXECUTE PROCEDURE play_sound(melee_snd, id, x, y);
+      IF (st_len - st_tics = 16 AND pdead = 0 AND dist < 60 + rad / 2 + 16) THEN
+      BEGIN
+        EXECUTE PROCEDURE damage_player(melee_dmg * (1 + CAST(FLOOR(RAND() * melee_rolls) AS INTEGER)));
+        EXECUTE PROCEDURE play_sound(melee_hit_snd, id, x, y);
+      END
+      IF (st_tics <= 0) THEN
+      BEGIN
+        st = 'chase';
+        st_tics = 0;
+        reaction = 3;
       END
     END
     ELSE IF (k = 'fx') THEN
@@ -1589,7 +1644,29 @@ BEGIN
         EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad,
           ang + CASE n WHEN 0 THEN 0.19635e0 WHEN 1 THEN -0.39270e0 ELSE 0.09817e0 END);
       END
-      IF (st_tics = 7 AND pdead = 0 AND ttype <> 67) THEN
+      -- A_VileTarget (frame H): conjure the flame on the player.
+      -- A_VileAttack (frame O): if we can still see them, 20 damage, a toss
+      -- into the air (1000 / mass 100) and a 70-unit blast from the flame.
+      IF (atk_kind = 'vile' AND st_len - st_tics = 1) THEN
+        EXECUTE PROCEDURE play_sound(atk_snd, id, x, y);                       -- A_VileStart
+      IF (atk_kind = 'vile' AND pdead = 0 AND st_len - st_tics = 8) THEN
+      BEGIN
+        EXECUTE PROCEDURE spawn_thing(9015, px + COS(pang) * 24, py + SIN(pang) * 24, pz, 0) RETURNING_VALUES mid;
+        UPDATE things t SET owner_id = :id WHERE t.id = :mid;
+        EXECUTE PROCEDURE play_sound('DSFLAMST', mid, px, py);
+      END
+      IF (atk_kind = 'vile' AND pdead = 0 AND st_len - st_tics = 72
+          AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
+      BEGIN
+        EXECUTE PROCEDURE play_sound('DSBAREXP', id, px, py);
+        EXECUTE PROCEDURE damage_player(20);
+        UPDATE things t SET momz = 10 WHERE t.kind = 'player';
+        sx = px - COS(ang) * 24;
+        sy = py - SIN(ang) * 24;
+        UPDATE things t SET x = :sx, y = :sy WHERE t.kind = 'flame' AND t.owner_id = :id;
+        EXECUTE PROCEDURE radius_attack(sx, sy, pz, 70, id);
+      END
+      IF (st_tics = 7 AND pdead = 0 AND ttype <> 67 AND atk_kind <> 'vile') THEN
       BEGIN
         melee_range = 60 + rad / 2;
         EXECUTE PROCEDURE play_sound(IIF(atk_kind = 'missile' AND dist < melee_range, 'DSCLAW', atk_snd), id, x, y);
@@ -1637,15 +1714,28 @@ BEGIN
         IF (pdead = 0 AND reaction = 0 AND dist < 2048
             AND ((atk_kind = 'melee' AND dist < melee_range)
                  OR (atk_kind IN ('hitscan', 'missile')
-                     AND (dist < melee_range OR RAND() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2))))
+                     AND (dist < melee_range OR RAND() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2)))
+                 -- P_CheckMissileRange: the arch-vile only reaches 14 × 64 units
+                 OR (atk_kind = 'vile' AND dist < 896
+                     AND RAND() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2)))
             AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
         BEGIN
-          st = 'attack';
-          st_len = CHAR_LENGTH(atk_fr) * 8;
-          st_tics = st_len;
-          frame = SUBSTRING(atk_fr FROM 1 FOR 1);
           ang = ATAN2(py - y, px - x);
-          IF (ttype = 67) THEN EXECUTE PROCEDURE play_sound('DSMANATK', id, x, y);
+          IF (melee_fr IS NOT NULL AND dist < melee_range) THEN
+          BEGIN
+            st = 'melee';
+            st_len = CHAR_LENGTH(melee_fr) * 8;
+            st_tics = st_len;
+            frame = SUBSTRING(melee_fr FROM 1 FOR 1);
+          END
+          ELSE
+          BEGIN
+            st = 'attack';
+            st_len = CHAR_LENGTH(atk_fr) * 8;
+            st_tics = st_len;
+            frame = SUBSTRING(atk_fr FROM 1 FOR 1);
+            IF (ttype = 67) THEN EXECUTE PROCEDURE play_sound('DSMANATK', id, x, y);
+          END
         END
         ELSE IF (dist > melee_range - 8) THEN
         BEGIN

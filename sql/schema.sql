@@ -91,7 +91,13 @@ CREATE TABLE thing_types (
   atk_snd      VARCHAR(8),
   pain_snd     VARCHAR(8),
   death_snd    VARCHAR(8),
-  hang         SMALLINT DEFAULT 0 NOT NULL   -- MF_SPAWNCEILING: hangs from the ceiling
+  hang         SMALLINT DEFAULT 0 NOT NULL,  -- MF_SPAWNCEILING: hangs from the ceiling
+  -- a separate close-range attack (the revenant's fist)
+  melee_fr      VARCHAR(8),
+  melee_snd     VARCHAR(8),
+  melee_hit_snd VARCHAR(8),
+  melee_dmg     INTEGER,                     -- damage is melee_dmg × 1d(melee_rolls)
+  melee_rolls   INTEGER
 );
 
 -- ── the map ─────────────────────────────────────────────────────────────
