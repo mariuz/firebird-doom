@@ -53,6 +53,7 @@
         <button data-sql="SELECT * FROM movers">movers</button>
         <button data-sql="SELECT FIRST 40 * FROM frame_walls">frame_walls</button>
         <button data-sql="SELECT * FROM frame_sprites ORDER BY depth">frame_sprites</button>
+        <button data-sql="SELECT * FROM frame_visplanes ORDER BY pixels DESC">frame_visplanes</button>
         <button data-sql="UPDATE player SET health = 200, armor = 200, bullets = 200, shells = 50, has_shotgun = 1, has_chaingun = 1, keycards = 7">IDKFA</button>
         <button data-sql="UPDATE things SET hp = 1 WHERE kind = 'monster'">one-hit monsters</button>
         <button data-sql="UPDATE sectors SET light = 255, base_light = 255">lights on</button>
@@ -79,6 +80,8 @@
           ray, then carries DOOM's <code>ceilingclip</code>/<code>floorclip</code> window down each column. Switch
           <b>Renderer</b> to brute force to project every linedef instead (about 3× slower, same picture).
           <code>FRAME_WALLS_WINDOWED</code> states the clipping with <code>MAX() OVER (PARTITION BY col ORDER BY depth)</code>.
+          Each slice also reports the ceiling and floor rows it uncovers. The browser files those into visplanes and draws
+          them as horizontal spans, like DOOM's <code>R_MakeSpans</code>; <code>FRAME_VISPLANES</code> lists them.
           <code>FRAME_SPRITES</code> picks the rotation frame for each monster.</li>
         <li><b>JavaScript only paints.</b> It looks up texels and colormaps for the rows Firebird returns.</li>
       </ul>

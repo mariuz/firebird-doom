@@ -290,7 +290,7 @@ function updateStats() {
   }
   statsEl.textContent =
     `${fps.toFixed(1)} fps · ${settings.renderer === 'bsp' ? 'BSP' : 'brute'} · doom_tic ${lastFrame.tic.toFixed(0)} ms · frame_walls ${lastFrame.walls.toFixed(0)} ms ` +
-    `(${lastFrame.rows} slices) · frame_sprites ${lastFrame.sprites.toFixed(0)} ms · raster ${lastFrame.draw.toFixed(0)} ms`;
+    `(${lastFrame.rows} slices, ${renderer.visplaneCount ?? 0} visplanes) · frame_sprites ${lastFrame.sprites.toFixed(0)} ms · raster ${lastFrame.draw.toFixed(0)} ms`;
 }
 
 function drawAutomap() {

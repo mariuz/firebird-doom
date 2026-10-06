@@ -40,7 +40,8 @@ SET TERM ^ ;
 CREATE OR ALTER PROCEDURE render_slices
 RETURNS (
   col INTEGER, depth DOUBLE PRECISION, u DOUBLE PRECISION, line_id INTEGER, back_view SMALLINT,
-  open_top DOUBLE PRECISION, open_bot DOUBLE PRECISION)
+  open_top DOUBLE PRECISION, open_bot DOUBLE PRECISION,
+  fsec INTEGER, ff DOUBLE PRECISION, fc DOUBLE PRECISION)
 AS
 DECLARE px DOUBLE PRECISION;
 DECLARE py DOUBLE PRECISION;
@@ -63,7 +64,6 @@ DECLARE ldy DOUBLE PRECISION;
 DECLARE llen DOUBLE PRECISION;
 DECLARE lfs INTEGER;
 DECLARE lbs INTEGER;
-DECLARE fsec INTEGER;
 DECLARE bsec INTEGER;
 DECLARE f1 DOUBLE PRECISION;
 DECLARE r1 DOUBLE PRECISION;
@@ -77,8 +77,6 @@ DECLARE sxa DOUBLE PRECISION;
 DECLARE sxb DOUBLE PRECISION;
 DECLARE xl INTEGER;
 DECLARE xr INTEGER;
-DECLARE ff DOUBLE PRECISION;
-DECLARE fc DOUBLE PRECISION;
 DECLARE bf DOUBLE PRECISION;
 DECLARE bc DOUBLE PRECISION;
 DECLARE fsky SMALLINT;
@@ -191,7 +189,8 @@ END^
 CREATE OR ALTER PROCEDURE render_slices_bsp
 RETURNS (
   col INTEGER, depth DOUBLE PRECISION, u DOUBLE PRECISION, line_id INTEGER, back_view SMALLINT,
-  open_top DOUBLE PRECISION, open_bot DOUBLE PRECISION)
+  open_top DOUBLE PRECISION, open_bot DOUBLE PRECISION,
+  fsec INTEGER, ff DOUBLE PRECISION, fc DOUBLE PRECISION)
 AS
 DECLARE px DOUBLE PRECISION;
 DECLARE py DOUBLE PRECISION;
@@ -239,7 +238,6 @@ DECLARE sx2 DOUBLE PRECISION;
 DECLARE sy2 DOUBLE PRECISION;
 DECLARE slen DOUBLE PRECISION;
 DECLARE sxoff DOUBLE PRECISION;
-DECLARE fsec INTEGER;
 DECLARE bsec INTEGER;
 DECLARE f1 DOUBLE PRECISION;
 DECLARE r1 DOUBLE PRECISION;
@@ -253,8 +251,6 @@ DECLARE sxa DOUBLE PRECISION;
 DECLARE sxb DOUBLE PRECISION;
 DECLARE xl INTEGER;
 DECLARE xr INTEGER;
-DECLARE ff DOUBLE PRECISION;
-DECLARE fc DOUBLE PRECISION;
 DECLARE bf DOUBLE PRECISION;
 DECLARE bc DOUBLE PRECISION;
 DECLARE fsky SMALLINT;
@@ -523,24 +519,35 @@ CREATE OR ALTER PROCEDURE render_walls
 RETURNS (
   col INTEGER, depth DOUBLE PRECISION, u DOUBLE PRECISION, line_id INTEGER, back_view SMALLINT,
   open_top DOUBLE PRECISION, open_bot DOUBLE PRECISION,
-  clip_top DOUBLE PRECISION, clip_bot DOUBLE PRECISION)
+  clip_top DOUBLE PRECISION, clip_bot DOUBLE PRECISION,
+  fsec INTEGER, c_top INTEGER, c_bot INTEGER, f_top INTEGER, f_bot INTEGER)
 AS
 DECLARE last_col INTEGER = -1;
 DECLARE use_bsp SMALLINT;
-DECLARE bsp CURSOR FOR (SELECT col, depth, u, line_id, back_view, open_top, open_bot
+DECLARE ff DOUBLE PRECISION;
+DECLARE fc DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE h DOUBLE PRECISION;
+DECLARE projy DOUBLE PRECISION;
+DECLARE s DOUBLE PRECISION;
+DECLARE yt INTEGER;
+DECLARE yb INTEGER;
+DECLARE bsp CURSOR FOR (SELECT col, depth, u, line_id, back_view, open_top, open_bot, fsec, ff, fc
                           FROM render_slices_bsp ORDER BY col, depth);
-DECLARE brute CURSOR FOR (SELECT col, depth, u, line_id, back_view, open_top, open_bot
+DECLARE brute CURSOR FOR (SELECT col, depth, u, line_id, back_view, open_top, open_bot, fsec, ff, fc
                             FROM render_slices ORDER BY col, depth);
 BEGIN
   -- viewcfg.use_bsp picks the slice generator; the clipping is the same
-  SELECT vc.use_bsp FROM viewcfg vc WHERE vc.id = 1 INTO use_bsp;
+  SELECT vc.use_bsp, vc.h, vc.projy, p.view_z FROM viewcfg vc CROSS JOIN player p
+   WHERE vc.id = 1 AND p.id = 1
+    INTO use_bsp, h, projy, pz;
   IF (use_bsp = 1) THEN OPEN bsp; ELSE OPEN brute;
   WHILE (1 = 1) DO
   BEGIN
     IF (use_bsp = 1) THEN
-      FETCH bsp INTO col, depth, u, line_id, back_view, open_top, open_bot;
+      FETCH bsp INTO col, depth, u, line_id, back_view, open_top, open_bot, fsec, ff, fc;
     ELSE
-      FETCH brute INTO col, depth, u, line_id, back_view, open_top, open_bot;
+      FETCH brute INTO col, depth, u, line_id, back_view, open_top, open_bot, fsec, ff, fc;
     IF (ROW_COUNT = 0) THEN LEAVE;
     IF (col <> last_col) THEN
     BEGIN
@@ -550,6 +557,16 @@ BEGIN
     END
     IF (clip_top < clip_bot) THEN
     BEGIN
+      -- R_StoreWallRange's markceiling / markfloor: the rows between the
+      -- clip window and this wall belong to the front sector's ceiling and
+      -- floor visplanes. Rows [c_top, c_bot) and [f_top, f_bot).
+      s = projy / depth;
+      yt = MAXVALUE(0, CEILING(clip_top));
+      yb = MINVALUE(h, CEILING(clip_bot));
+      c_top = yt;
+      c_bot = MINVALUE(yb, MAXVALUE(yt, CEILING(h / 2 - (fc - pz) * s)));
+      f_top = MAXVALUE(yt, MINVALUE(yb, CEILING(h / 2 - (ff - pz) * s)));
+      f_bot = yb;
       SUSPEND;
       clip_top = MAXVALUE(clip_top, open_top);
       clip_bot = MINVALUE(clip_bot, open_bot);
@@ -575,6 +592,25 @@ SELECT *
                         ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 1e9) clip_bot
           FROM render_slices s) q
  WHERE q.clip_top < q.clip_bot;
+
+-- R_FindPlane, declaratively: this frame's visplanes, one row per distinct
+-- (surface, height, flat, light). The browser does the same grouping per
+-- column (splitting a plane when a column is used twice, as R_CheckPlane does)
+-- and then draws each plane as horizontal spans (R_MakeSpans / R_MapPlane).
+CREATE OR ALTER VIEW frame_visplanes AS
+SELECT p.surface, p.height, f.name flat, p.light, p.sky,
+       COUNT(*) columns_, MIN(p.col) minx, MAX(p.col) maxx, SUM(p.rows_) pixels
+  FROM (SELECT CAST('ceiling' AS VARCHAR(7)) surface, se.ceil_h height, se.ceil_flat flat, se.light, se.sky,
+               w.col, w.c_bot - w.c_top rows_
+          FROM render_walls w LEFT JOIN sectors se ON se.id = w.fsec
+         WHERE w.c_bot > w.c_top
+        UNION ALL
+        SELECT 'floor', se.floor_h, se.floor_flat, se.light, 0,
+               w.col, w.f_bot - w.f_top
+          FROM render_walls w LEFT JOIN sectors se ON se.id = w.fsec
+         WHERE w.f_bot > w.f_top) p
+  LEFT JOIN flats f ON f.id = p.flat
+ GROUP BY p.surface, p.height, f.name, p.light, p.sky;
 
 CREATE OR ALTER VIEW frame_sprites AS
 SELECT * FROM render_sprites;

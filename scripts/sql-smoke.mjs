@@ -88,6 +88,11 @@ const b = await db.query('SELECT COUNT(*) n, SUM(col * 1000 + line_id) h FROM fr
 assert(a.rows[0].N === b.rows[0].N && a.rows[0].H === b.rows[0].H,
   `BSP+solidsegs (procedural clip) and brute force (window-function clip) agree (${a.rows[0].N} slices)`);
 
+const vp = (await db.query(
+  'SELECT COUNT(DISTINCT col) c, SUM(c_bot - c_top) + SUM(f_bot - f_top) px FROM frame_walls WHERE c_bot > c_top OR f_bot > f_top')).rows[0];
+const planes = (await db.query('SELECT COUNT(*) n FROM frame_visplanes')).rows[0].N;
+assert(vp.C === 320 && planes > 0, `visplane spans in every column (${planes} visplanes, ${vp.PX} pixels)`);
+
 // turn around a full circle: every view must close every column
 for (let a = 0; a < 8; a++) {
   await tic([1, 0, 0, Math.PI / 4, 0, 0, 0, 0]);

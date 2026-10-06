@@ -46,7 +46,8 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_TouchSpecialThing` | pickups in `PLAYER_THINK` |
 | light flashes, strobes, glows | `LIGHTS_THINK` |
 | `R_RenderBSPNode`, `R_CheckBBox`, `R_ClipSolidWallSegment` (solidsegs) | `RENDER_SLICES_BSP` ([sql/render.sql](sql/render.sql)) |
-| `r_segs.c` / `r_plane.c` clip arrays | `RENDER_WALLS` / `FRAME_WALLS` (or `FRAME_WALLS_WINDOWED`) |
+| `r_segs.c` clip arrays, `markceiling` / `markfloor` | `RENDER_WALLS` / `FRAME_WALLS` (or `FRAME_WALLS_WINDOWED`) |
+| `r_plane.c` visplanes: `R_FindPlane`, `R_CheckPlane`, `R_MakeSpans`, `R_MapPlane` | `c_top`/`c_bot`/`f_top`/`f_bot` per slice, `FRAME_VISPLANES`; spans in [src/renderer.js](src/renderer.js) |
 | `r_things.c` | `RENDER_SPRITES` / `FRAME_SPRITES` |
 
 ### The renderer
@@ -85,8 +86,8 @@ SELECT *
  WHERE clip_top < clip_bot
 ```
 
-The smoke test checks that it matches `FRAME_WALLS` slice for slice. The game uses the
-procedural clip because Firebird's window sort costs about twice as much.
+The smoke test checks that `FRAME_WALLS_WINDOWED` matches `FRAME_WALLS` slice for slice. The
+game uses the procedural clip because Firebird's window sort costs about twice as much.
 
 Two Firebird-specific performance lessons:
 
@@ -97,6 +98,24 @@ Two Firebird-specific performance lessons:
 * **Pin the join order.** Joining a computed range to `SCREEN_COLS` took 65 s as an inner join,
   because the optimizer drove from the wrong side. With `CROSS JOIN LATERAL` or `LEFT JOIN` it
   took 0.2 s.
+
+### Floors and ceilings: visplanes
+
+DOOM doesn't texture floors column by column. While drawing walls it records, for each column,
+which rows of the front sector's ceiling and floor the wall leaves visible (`markceiling` and
+`markfloor` in `R_StoreWallRange`). It collects those rows into **visplanes**: one per distinct
+height, flat and light level, with at most one span per column. Then it draws each visplane as
+horizontal spans, because every pixel in a row of a flat surface is the same distance away.
+
+Here `RENDER_WALLS` returns those rows with every slice: `c_top`/`c_bot` for the ceiling and
+`f_top`/`f_bot` for the floor, computed from the same clip window it uses for the walls. The
+browser does `R_FindPlane`/`R_CheckPlane`. It groups the spans by (height, flat, light), starts
+a new plane when a column is already taken, and merges all sky into one plane. `R_MakeSpans`
+then sweeps each plane left to right, turning column spans into row spans. `R_MapPlane`
+draws each row span with one distance and light lookup, stepping the texture coordinates
+linearly. `SELECT * FROM frame_visplanes` shows the current frame's planes in the SQL console,
+and the stats line under the view counts them. Across Freedoom's maps the busiest frame
+needs 42, comfortably under vanilla DOOM's `MAXVISPLANES` of 128.
 
 ## Running locally
 
@@ -151,8 +170,7 @@ GitHub Pages. Pull requests run everything except the deploy.
 
 Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
 Projectiles fly flat. There's no sound, no rocket launcher, plasma or BFG, and no crushers.
-Floors and ceilings are drawn per wall slice rather than as DOOM's visplanes. Large maps with
-many monsters awake at once can still drop below 10 fps. The *Low* detail setting (160
+Large maps with many monsters awake at once can still drop below 10 fps. The *Low* detail setting (160
 columns, like DOOM's own) halves the render cost.
 
 ## Credits

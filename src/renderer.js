@@ -31,6 +31,34 @@ function buildAnim(names) {
   return cycles;
 }
 
+/**
+ * This frame's visplanes. A plane is one (height, flat, light) surface with
+ * at most one span per column; marking a column that is already taken
+ * starts a new plane with the same key, which is what R_CheckPlane does.
+ */
+class Visplanes {
+  constructor(w) {
+    this.w = w;
+    this.byKey = new Map();
+    this.list = [];
+  }
+
+  mark(key, info, x, top, bottom) {
+    let group = this.byKey.get(key);
+    if (!group) this.byKey.set(key, (group = []));
+    let p = group.find((q) => q.top[x] === 0x7fff);
+    if (!p) {
+      p = { ...info, top: new Int16Array(this.w).fill(0x7fff), bottom: new Int16Array(this.w).fill(-1), minx: x, maxx: x };
+      group.push(p);
+      this.list.push(p);
+    }
+    p.top[x] = top;
+    p.bottom[x] = bottom;
+    if (x < p.minx) p.minx = x;
+    if (x > p.maxx) p.maxx = x;
+  }
+}
+
 export class Renderer {
   constructor(canvas, wad, res) {
     this.canvas = canvas;
@@ -70,6 +98,7 @@ export class Renderer {
     this.screen = new ImageData(320, 200);
     this.sfb = new Uint32Array(this.screen.data.buffer);
     this.proj = w / 2; // 90° horizontal field of view
+    this.spanStart = new Int32Array(h);
     this.projy = 160; // vertical scale of a 320-wide screen, whatever the detail
   }
 
@@ -118,7 +147,8 @@ export class Renderer {
   /**
    * Draw one frame.
    *   view:    { x, y, z, angle, tic, palette }
-   *   walls:   FRAME_WALLS rows [col, depth, u, line, backView, openTop, openBot, clipTop, clipBot]
+   *   walls:   FRAME_WALLS rows [col, depth, u, line, backView, openTop, openBot, clipTop, clipBot,
+   *                               fsec, cTop, cBot, fTop, fBot]  (the last four: visplane rows)
    *   sprites: FRAME_SPRITES rows [id, depth, lump, flip, x1, x2, y1, y2, light]
    *   map:     { lines: Map, sides: Map, sectors: Map, skyTex }
    */
@@ -127,20 +157,18 @@ export class Renderer {
     const hh = h / 2;
     const hw = w / 2;
     const vz = view.z;
-    const ca = Math.cos(view.angle);
-    const sa = Math.sin(view.angle);
-    const lut = this.lut;
     const palBase = view.palette * 34 * 256;
     const tic = view.tic;
     const sky = this.texture(map.skyTex);
     fb.fill(0xff000000);
 
     const masked = [];
+    const planes = new Visplanes(w);
     // Per-column index into `walls` so sprites can find what is in front of them.
     const colStart = new Int32Array(w + 1).fill(-1);
 
     for (let i = 0; i < walls.length; i++) {
-      const [col, depth, u, lineId, backView, openTop, openBot, clipTop, clipBot] = walls[i];
+      const [col, depth, u, lineId, backView, openTop, openBot, clipTop, clipBot, , cTop, cBot, fTop, fBot] = walls[i];
       if (colStart[col] < 0) colStart[col] = i;
       const L = map.lines.get(lineId);
       const S = map.sides.get(backView ? L.bs : L.fs);
@@ -153,16 +181,19 @@ export class Renderer {
       if (yTop >= yBot) continue;
       const yfc = hh - (fs.ceil - vz) * scale;
       const yff = hh - (fs.floor - vz) * scale;
-      const k = (col + 0.5 - hw) / proj;
-      const rdx = ca + k * sa;
-      const rdy = sa - k * ca;
 
-      // ceiling (or sky) above the wall, floor below it
-      const cEnd = Math.min(yBot, Math.max(yTop, Math.ceil(yfc)));
-      if (fs.sky) this.skyColumn(col, yTop, cEnd, view.angle - Math.atan(k), sky, palBase);
-      else this.flatColumn(col, yTop, cEnd, fs.ceil - vz, -1, fs.ceilFlat, fs.light, view, rdx, rdy, palBase);
-      const fStart = Math.max(yTop, Math.min(yBot, Math.ceil(yff)));
-      this.flatColumn(col, fStart, yBot, vz - fs.floor, 1, fs.floorFlat, fs.light, view, rdx, rdy, palBase);
+      // R_FindPlane / R_CheckPlane: Firebird told us which rows of this column
+      // the front sector's ceiling and floor fill; file them under a visplane.
+      // All sky shares one plane, as in DOOM.
+      if (cBot > cTop) {
+        if (fs.sky) planes.mark('sky', { sky: true }, col, cTop, cBot - 1);
+        else planes.mark(`c${fs.ceil}|${fs.ceilFlat}|${fs.light}`, { height: fs.ceil, flat: fs.ceilFlat, light: fs.light, floor: false }, col, cTop, cBot - 1);
+      }
+      if (fBot > fTop) {
+        planes.mark(`f${fs.floor}|${fs.floorFlat}|${fs.light}`, { height: fs.floor, flat: fs.floorFlat, light: fs.light, floor: true }, col, fTop, fBot - 1);
+      }
+      const cEnd = cBot; // the wall starts where the ceiling ends…
+      const fStart = fTop; // …and ends where the floor starts
 
       const light = fs.light + L.lightDelta;
       const tu = u + S.xoff;
@@ -207,6 +238,21 @@ export class Renderer {
     }
     colStart[w] = walls.length;
 
+    // R_DrawPlanes: each visplane becomes horizontal spans.
+    this.visplaneCount = planes.list.length;
+    for (const p of planes.list) {
+      if (p.sky) {
+        for (let x = p.minx; x <= p.maxx; x++) {
+          if (p.top[x] <= p.bottom[x]) {
+            this.skyColumn(x, p.top[x], p.bottom[x] + 1, view.angle - Math.atan((x + 0.5 - hw) / proj), sky, palBase);
+          }
+        }
+      } else {
+        const flat = this.flat(this.anim(p.flat, this.flatAnim, tic));
+        if (flat) this.makeSpans(p, flat, view, palBase);
+      }
+    }
+
     // Masked middles and sprites, far to near, clipped by the walls in front.
     const items = masked.map((m) => ({ ...m, kind: 0 }));
     for (const s of sprites) items.push({ kind: 1, depth: s[1], lump: s[2], flip: s[3], x1: s[4], x2: s[5], y1: s[6], y2: s[7], light: s[8] });
@@ -248,22 +294,54 @@ export class Renderer {
     }
   }
 
-  flatColumn(col, y0, y1, height, sign, flatId, light, view, rdx, rdy, palBase) {
-    if (y0 >= y1) return;
-    const flat = this.flat(this.anim(flatId, this.flatAnim, view.tic));
-    if (!flat) return;
-    const { fb, w, h, projy } = this;
+  /**
+   * R_MakeSpans: sweep the plane's columns left to right. Rows whose span
+   * ends at this column are drawn; rows that begin here are remembered.
+   */
+  makeSpans(p, flat, view, palBase) {
+    const { top, bottom, minx, maxx } = p;
+    const start = this.spanStart;
+    const T = (x) => (x < minx || x > maxx ? 0x7fff : top[x]);
+    const B = (x) => (x < minx || x > maxx ? -1 : bottom[x]);
+    for (let x = minx; x <= maxx + 1; x++) {
+      let t1 = T(x - 1);
+      let b1 = B(x - 1);
+      let t2 = T(x);
+      let b2 = B(x);
+      while (t1 < t2 && t1 <= b1) { this.mapPlane(p, flat, t1, start[t1], x - 1, view, palBase); t1++; }
+      while (b1 > b2 && b1 >= t1) { this.mapPlane(p, flat, b1, start[b1], x - 1, view, palBase); b1--; }
+      while (t2 < t1 && t2 <= b2) { start[t2] = x; t2++; }
+      while (b2 > b1 && b2 >= t2) { start[b2] = x; b2--; }
+    }
+  }
+
+  /**
+   * R_MapPlane: one horizontal span. Every pixel of a row of a flat plane is
+   * at the same distance, so distance and light are computed once per span
+   * and the texture coordinates just step along the row.
+   */
+  mapPlane(p, flat, y, x1, x2, view, palBase) {
+    const { fb, w, h, proj, projy } = this;
     const hh = h / 2;
-    const start = (15 - Math.min(15, Math.max(0, light >> 4))) * 4;
-    for (let y = y0; y < y1; y++) {
-      const dy = sign > 0 ? y + 0.5 - hh : hh - y - 0.5;
-      if (dy <= 0) continue;
-      const dist = (height * projy) / dy;
-      const wx = view.x + dist * rdx;
-      const wy = view.y + dist * rdy;
-      const idx = ((Math.floor(-wy) & 63) << 6) | (Math.floor(wx) & 63);
-      const cm = Math.max(0, Math.min(31, start - Math.floor(1280 / (Math.abs(dist) + 16))));
-      fb[y * w + col] = this.lut[palBase + cm * 256 + flat[idx]];
+    const dy = p.floor ? y + 0.5 - hh : hh - y - 0.5;
+    const height = p.floor ? view.z - p.height : p.height - view.z;
+    if (dy <= 0 || height <= 0) return;
+    const dist = (height * projy) / dy;
+    const ca = Math.cos(view.angle);
+    const sa = Math.sin(view.angle);
+    const k = (x1 + 0.5 - w / 2) / proj;
+    let wx = view.x + dist * (ca + k * sa);
+    let wy = view.y + dist * (sa - k * ca);
+    const sx = (dist * sa) / proj;
+    const sy = (-dist * ca) / proj;
+    const start = (15 - Math.min(15, Math.max(0, p.light >> 4))) * 4;
+    const cm = palBase + Math.max(0, Math.min(31, start - Math.floor(1280 / (dist + 16)))) * 256;
+    const lut = this.lut;
+    let o = y * w + x1;
+    for (let x = x1; x <= x2; x++) {
+      fb[o++] = lut[cm + flat[((Math.floor(-wy) & 63) << 6) | (Math.floor(wx) & 63)]];
+      wx += sx;
+      wy += sy;
     }
   }
 
