@@ -150,6 +150,34 @@ if (t.seen) {
 } else console.log('(no clear line for the off-axis autoaim test)');
 await db.exec(`DELETE FROM things WHERE thing_type = 9003 OR id = ${t.id}`);
 
+// hitscan in 3D: a level shot passes under an imp whose feet are just above the
+// shot line; the right slope hits it
+t = await target(0, 0);
+await db.exec(`UPDATE things SET z = ${p.Z + 32 + 12}, hp = 10000 WHERE id = ${t.id}`);
+t = { ...t, z: p.Z + 32 + 12 };
+t.seen = (await one(`SELECT check_sight(${p.X}, ${p.Y}, ${p.Z + 32}, ${t.x}, ${t.y}, ${t.z + t.h / 2}) s FROM rdb$database`)).S;
+if (t.seen) {
+  const shot = async (slope) => (await db.query(`EXECUTE BLOCK RETURNS (h SMALLINT) AS BEGIN
+      EXECUTE PROCEDURE hitscan(${p.X}, ${p.Y}, ${p.Z + 32}, ${p.ANGLE}, 2048, 10, ${p.ID}, ${slope}) RETURNING_VALUES h;
+      SUSPEND; END`)).rows[0].H;
+  const slope = (t.z + t.h / 2 - (p.Z + 32)) / 300;
+  assert((await shot(0)) === 0, 'hitscan: a level shot passes under an imp hovering just above it');
+  assert((await shot(slope)) === 1, `hitscan: the same shot at slope ${slope.toFixed(3)} hits it`);
+
+  // the pistol finds that slope itself (P_BulletSlope)
+  const hp0 = (await one(`SELECT hp FROM things WHERE id = ${t.id}`)).HP;
+  for (let i = 0; i < 3; i++) await db.query('SELECT * FROM doom_tic(15, 0, 0, 0, 1, 0, 2, 0)');
+  const hp1 = (await one(`SELECT hp FROM things WHERE id = ${t.id}`)).HP;
+  assert(hp1 < hp0, `pistol autoaims up at the raised imp (${hp0 - hp1} damage in 3 shots)`);
+
+  // …but not beyond DOOM's aiming window
+  await db.exec(`UPDATE things SET z = z + 400, hp = 10000 WHERE id = ${t.id}`);
+  for (let i = 0; i < 3; i++) await db.query('SELECT * FROM doom_tic(15, 0, 0, 0, 1, 0, 0, 0)');
+  const hp2 = (await one(`SELECT hp FROM things WHERE id = ${t.id}`)).HP;
+  assert(hp2 === 10000, 'pistol does not reach an imp far above the aiming window');
+} else console.log('(no clear line ahead for the hitscan test)');
+await db.exec(`DELETE FROM things WHERE id = ${t.id}`);
+
 // a fireball diving into the floor explodes there
 const floorZ = (await one(`SELECT s.floor_h f FROM sectors s WHERE s.id = sector_at(${p.X}, ${p.Y})`)).F;
 const fb = await spawn(9000, p.X + 40, p.Y, floorZ + 40);

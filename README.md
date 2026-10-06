@@ -49,7 +49,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `A_BossDeath`, `A_KeenDie` | `BOSS_DEATH`, `KEEN_DIE` |
 | `A_BrainSpit`, `A_SpawnFly`, `A_BrainScream` (the Icon of Sin) | the `shooter`, `cube` and `brain` kinds in `MONSTERS_THINK` |
 | `MF_SPAWNCEILING` (hanging bodies, Commander Keen) | `THING_TYPES.HANG`, placed in `INIT_MAP` |
-| `P_LineAttack` (pistol, shotgun, chaingun, fist) | `HITSCAN` |
+| `P_LineAttack`, `P_BulletSlope` (pistol, shotguns, chaingun, fist, chainsaw) | `HITSCAN` (in 3D, with a slope), `AIM_SLOPE` |
 | `A_Saw`, `A_FireShotgun2` (chainsaw, super shotgun) | `HITSCAN` at melee range / 20 pellets; reload sounds timed in `PLAYER_THINK` |
 | `P_SpawnPlayerMissile`, `P_RadiusAttack`, `A_BFGSpray` (rocket launcher, plasma gun, BFG) | `FIRE_MISSILE`, `RADIUS_ATTACK`, `BFG_SPRAY`; projectiles fly in `MONSTERS_THINK` |
 | `P_TouchSpecialThing` | pickups in `PLAYER_THINK` |
@@ -199,6 +199,8 @@ sounds, damage, splash and pickups.
 
 Use `WAD=public/wads/freedoom2.wad` for the Phase 2 parts. `npm run test:physics` drives real crushers (descent, damage, gibs, stop and resume, floor
 crushers) and checks missile slopes, autoaim with its 5.625° fallback, floor impacts and the sky.
+It also checks that a level hitscan shot passes under a raised imp, that the right slope hits
+it, and that the pistol finds that slope itself but not beyond DOOM's aiming window.
 `npm run test:renderers` compares the
 BSP and brute-force renderers from several spots and headings on every map, and reports the
 speed-up. `npm run screenshots` regenerates
@@ -236,7 +238,12 @@ lowers a ceiling once.
 Projectiles fly in 3D. Monster missiles climb or dive towards your height, and revenant tracers
 steer vertically too. Your rockets, plasma and BFG autoaim vertically at the first monster in line
 (straight ahead, else 5.625° either side, as DOOM does). Missiles burst on floors and ceilings,
-vanish into the sky, and only hit what they actually reach. Hitscan weapons still ignore height.
+vanish into the sky, and only hit what they actually reach. Hitscan weapons aim the same way
+(`P_BulletSlope`): bullets take the vertical slope to a monster straight ahead or 5.625° to
+either side, and keep their own heading and spread. The fist and chainsaw aim at melee range.
+The shot then travels in 3D (`P_LineAttack`). A two-sided line stops it only if the shot's height
+where it crosses is outside the opening, a monster is hit only if the shot's height at its
+distance is inside its body, and puffs appear where the shot actually strikes.
 
 The DOOM II monsters' signature attacks follow DOOM's code:
 

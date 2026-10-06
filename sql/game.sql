@@ -759,10 +759,14 @@ BEGIN
 END^
 
 -- ── weapons ───────────────────────────────────────────────────────────────
--- P_LineAttack for the player: nearest blocking wall vs nearest shootable thing.
+-- P_LineAttack for the player: nearest blocking wall vs nearest shootable
+-- thing, along a ray that climbs or dips by SLOPE (height per unit of
+-- distance). A two-sided line stops the shot only if the shot's height where
+-- it crosses falls outside the opening; a thing is hit only if the shot's
+-- height at its distance lies within its body.
 CREATE OR ALTER PROCEDURE hitscan (
   sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION,
-  ang DOUBLE PRECISION, rng DOUBLE PRECISION, dmg INTEGER, shooter INTEGER)
+  ang DOUBLE PRECISION, rng DOUBLE PRECISION, dmg INTEGER, shooter INTEGER, slope DOUBLE PRECISION)
 RETURNS (hit SMALLINT)
 AS
 DECLARE ddx DOUBLE PRECISION;
@@ -792,19 +796,20 @@ BEGIN
    WHERE i.s > 0 AND i.s < 1 AND i.u >= 0 AND i.u <= 1
      AND (i.back_sector IS NULL
           OR MINVALUE(f.ceil_h, b.ceil_h) <= MAXVALUE(f.floor_h, b.floor_h)
-          OR MAXVALUE(f.floor_h, b.floor_h) > :sz
-          OR MINVALUE(f.ceil_h, b.ceil_h) < :sz)
+          OR MAXVALUE(f.floor_h, b.floor_h) > :sz + :slope * i.s * :rng
+          OR MINVALUE(f.ceil_h, b.ceil_h) < :sz + :slope * i.s * :rng)
    ORDER BY i.s
     INTO wall_s, wall_line, wall_sp;
   wall_s = COALESCE(wall_s, 1);
 
   SELECT FIRST 1 q.id, q.along
-    FROM (SELECT t.id, t.radius,
+    FROM (SELECT t.id, t.radius, t.z, t.height,
                  ((t.x - :sx) * :ddx + (t.y - :sy) * :ddy) / (:rng * :rng) along,
                  ABS((t.x - :sx) * :ddy - (t.y - :sy) * :ddx) / :rng perp
             FROM things t
            WHERE t.kind IN ('monster', 'barrel', 'keen', 'brain') AND t.st NOT IN ('dying', 'dead') AND t.id <> :shooter) q
    WHERE q.along > 0 AND q.along < :wall_s AND q.perp < q.radius
+     AND :sz + :slope * q.along * :rng BETWEEN q.z AND q.z + q.height
    ORDER BY q.along
     INTO tgt, tgt_s;
 
@@ -812,12 +817,14 @@ BEGIN
   IF (tgt IS NOT NULL) THEN
   BEGIN
     EXECUTE PROCEDURE damage_thing(tgt, dmg);
-    EXECUTE PROCEDURE spawn_thing(9011, sx + ddx * tgt_s - COS(ang) * 8, sy + ddy * tgt_s - SIN(ang) * 8, sz - 8, 0)
+    EXECUTE PROCEDURE spawn_thing(9011, sx + ddx * tgt_s - COS(ang) * 8, sy + ddy * tgt_s - SIN(ang) * 8,
+                                  sz + slope * tgt_s * rng - 8, 0)
       RETURNING_VALUES dummy;
   END
   ELSE IF (wall_s < 1) THEN
   BEGIN
-    EXECUTE PROCEDURE spawn_thing(9010, sx + ddx * wall_s - COS(ang) * 4, sy + ddy * wall_s - SIN(ang) * 4, sz - 4, 0)
+    EXECUTE PROCEDURE spawn_thing(9010, sx + ddx * wall_s - COS(ang) * 4, sy + ddy * wall_s - SIN(ang) * 4,
+                                  sz + slope * wall_s * rng - 4, 0)
       RETURNING_VALUES dummy;
     IF (wall_sp = 46) THEN EXECUTE PROCEDURE activate_line(wall_line, 'shoot');
   END
@@ -1033,6 +1040,8 @@ DECLARE has_saw SMALLINT;
 DECLARE has_ssg SMALLINT;
 DECLARE shot_hit SMALLINT;
 DECLARE old_weapon SMALLINT;
+DECLARE bslope DOUBLE PRECISION;
+DECLARE tries INTEGER;
 BEGIN
   SELECT p.thing_id, t.x, t.y, t.z, t.angle, t.momx, t.momy, t.momz, p.dead, p.weapon, p.attack_tics, p.attack_len,
          p.bullets, p.shells, p.has_shotgun, p.has_chaingun, p.use_down, p.view_h,
@@ -1234,10 +1243,23 @@ BEGIN
                     WHEN has_bfg = 1 AND cells >= 40 THEN 7
                     ELSE 1 END;
     pellets = 0;
+    -- P_BulletSlope: the vertical slope to a monster straight ahead, else
+    -- 5.625° either side, else level; bullets keep their own heading.
+    -- Fist and chainsaw aim once, at melee range.
+    bslope = NULL;
+    tries = 0;
+    WHILE (tries < IIF(weapon IN (1, 8), 1, 3) AND bslope IS NULL) DO
+    BEGIN
+      EXECUTE PROCEDURE aim_slope(x, y, z + 32, ang + CASE tries WHEN 1 THEN 0.09817e0 WHEN 2 THEN -0.09817e0 ELSE 0 END,
+                                  IIF(weapon IN (1, 8), 65, 1024), tid)
+        RETURNING_VALUES bslope;
+      tries = tries + 1;
+    END
+    bslope = COALESCE(bslope, 0);
     IF (weapon = 1) THEN
     BEGIN
       attack_len = 18;
-      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang, 64, 2 * (1 + CAST(FLOOR(RAND() * 10) AS INTEGER)), tid)
+      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang, 64, 2 * (1 + CAST(FLOOR(RAND() * 10) AS INTEGER)), tid, bslope)
         RETURNING_VALUES shot_hit;
     END
     ELSE IF (weapon = 8) THEN
@@ -1245,7 +1267,7 @@ BEGIN
       -- A_Saw: 2d10 × 2 at MELEERANGE + 1, every 4 tics
       attack_len = 4;
       EXECUTE PROCEDURE hitscan(x, y, z + 32, ang + (RAND() - RAND()) * 0.04, 65,
-                                2 * (1 + CAST(FLOOR(RAND() * 10) AS INTEGER)), tid)
+                                2 * (1 + CAST(FLOOR(RAND() * 10) AS INTEGER)), tid, bslope)
         RETURNING_VALUES shot_hit;
     END
     ELSE IF (weapon = 9) THEN
@@ -1286,7 +1308,7 @@ BEGIN
     WHILE (i < pellets) DO
     BEGIN
       EXECUTE PROCEDURE hitscan(x, y, z + 32, ang + (RAND() - RAND()) * spread, 2048,
-                                5 * (1 + CAST(FLOOR(RAND() * 3) AS INTEGER)), tid)
+                                5 * (1 + CAST(FLOOR(RAND() * 3) AS INTEGER)), tid, bslope)
         RETURNING_VALUES shot_hit;
       i = i + 1;
     END
