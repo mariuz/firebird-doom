@@ -254,8 +254,17 @@ harmlessly (hell knights and barons count as one species). Zombie bullets hit wh
 line of fire, and splash damage remembers who caused it. Arch-viles follow DOOM's special rules:
 their attacks provoke nobody, but an arch-vile that gets hurt always turns on the attacker,
 grudge or not. Once it's fighting a monster, its flame dances on that monster and the blast lands
-there. Monsters aren't tossed into the air the way you are, because they have no vertical
-physics.
+there, tossing its victim into the air.
+
+Monsters have vertical physics (`P_ZMovement`). The arch-vile's blast throws its victim up at
+1000 / mass units per tic, with DOOM's masses: 10 for you or an imp, which fly about 55 units
+high, 2.5 for a demon and 1 for a baron. Gravity pulls things back at 1 unit/tic². They bump their
+heads on low ceilings, and a monster killed in mid-air falls before it lies down. A thing's floor
+and ceiling are the highest floor and lowest ceiling within its radius (`floorz`/`ceilingz`), so
+one half over a step stays on it. Cacodemons, lost souls and pain elementals fly
+(`MF_NOGRAVITY`): they don't fall, and they drift 4 units a tic towards their target's height
+(`MF_FLOAT`) until they die, when all but the lost soul drop. Lifts carry what stands on them,
+and push up what's in the air only if the floor catches it.
 
 Crushers work. Ceiling crushers (types 6, 25, 49, 73, 77 and the silent 141) cycle between
 their top and floor + 8. They deal 10 damage every 4 tics to whatever they squeeze, the slow ones

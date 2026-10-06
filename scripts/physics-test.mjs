@@ -428,13 +428,16 @@ if (sky) {
     let nearDemon = 0;
     let flameTics = 0;
     let rose = 0;
+    let demonRose = 0;
     for (let i = 0; i < 85; i++) {
       await tic();
-      const f = await one(`SELECT f.x fx, f.y fy, d.x dx, d.y dy, p.z pz, s.floor_h pf
-                             FROM things d CROSS JOIN things p JOIN sectors s ON s.id = p.sector_id
+      const f = await one(`SELECT f.x fx, f.y fy, d.x dx, d.y dy, p.z pz, s.floor_h pf, d.z - ds.floor_h dr
+                             FROM things d JOIN sectors ds ON ds.id = d.sector_id
+                             CROSS JOIN things p JOIN sectors s ON s.id = p.sector_id
                              LEFT JOIN things f ON f.kind = 'flame' AND f.owner_id = ${vile}
                             WHERE d.id = ${demon2} AND p.kind = 'player'`);
       rose = Math.max(rose, f.PZ - f.PF);
+      demonRose = Math.max(demonRose, f.DR);
       if (f.FX != null) {
         flameTics++;
         if (Math.hypot(f.FX - f.DX, f.FY - f.DY) < 30) nearDemon++;
@@ -447,6 +450,41 @@ if (sky) {
     // (hurt, the demon wakes and comes for the player – an arch-vile provokes nobody – so the
     //  player may get bitten, but must not be blasted into the air)
     assert(rose < 1, `and never blasts the player into the air (health ${php})`);
+    // the toss: 1000 / mass 400 = 2.5 units a tic up, gravity brings it back
+    assert(demonRose > 3 && demonRose < 6, `the blast tosses the demon ${demonRose.toFixed(1)} units up (momz 2.5)`);
+    await tic(10);
+    const dl = await one(`SELECT t.z - s.floor_h dr, t.momz FROM things t JOIN sectors s ON s.id = t.sector_id WHERE t.id = ${demon2}`);
+    assert(dl.DR === 0 && dl.MOMZ === 0, `…and it lands again (${dl.DR} above the floor, momz ${dl.MOMZ})`);
+    await db.exec(`DELETE FROM things WHERE id IN (${vile}, ${demon2}) OR kind IN ('flame', 'fx')`);
+
+    // vertical physics: an imp tossed at momz 10 (an arch-vile's 1000 / mass 100)
+    // rises 10 + 9 + … + 1 = 55 units and falls back; a corpse falls too
+    const height = async (id) => one(`SELECT t.z - s.floor_h dr, t.momz, t.st FROM things t JOIN sectors s ON s.id = t.sector_id WHERE t.id = ${id}`);
+    const tossed = await placeMon(3001, 200);
+    await db.exec(`UPDATE things SET momz = 10 WHERE id = ${tossed}`);
+    let impRose = 0;
+    for (let i = 0; i < 12; i++) { await tic(); impRose = Math.max(impRose, (await height(tossed)).DR); }
+    assert(impRose > 50 && impRose <= 56, `an imp tossed at momz 10 flies ${impRose} units up`);
+    await db.exec(`EXECUTE PROCEDURE damage_thing(${tossed}, 100000)`);
+    for (let i = 0; i < 40; i++) await tic();
+    const fell = await height(tossed);
+    assert(fell.DR === 0 && fell.MOMZ === 0 && fell.ST === 'dead', `killed in mid-air, it falls and lies on the floor (${fell.DR} up, ${fell.ST})`);
+    await db.exec(`DELETE FROM things WHERE id = ${tossed}`);
+
+    // a cacodemon flies: no gravity while alive, it drops when it dies
+    const caco = await placeMon(3005, 200);
+    // (as high as 40 units up as the ceiling allows)
+    await db.exec(`UPDATE things t SET z = (SELECT r.floor_z + MINVALUE(40, r.ceil_z - r.floor_z - t.height)
+                                              FROM z_range(t.x, t.y, t.radius) r) WHERE t.id = ${caco}`);
+    const c0 = await height(caco);
+    await tic(16);
+    const c1 = await height(caco);
+    assert(c0.DR > 24 && c1.DR === c0.DR, `a cacodemon hangs in the air (${c0.DR}, then ${c1.DR} up)`);
+    await db.exec(`EXECUTE PROCEDURE damage_thing(${caco}, 100000)`);
+    for (let i = 0; i < 40; i++) await tic();
+    const c2 = await height(caco);
+    assert(c2.DR === 0 && c2.ST === 'dead', `…and falls when it dies (${c2.DR} up, ${c2.ST})`);
+    await db.exec(`DELETE FROM things WHERE id = ${caco}`);
   } else console.log('(no open run from the player start for the infighting tests)');
 }
 

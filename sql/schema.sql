@@ -93,6 +93,8 @@ CREATE TABLE thing_types (
   pain_snd     VARCHAR(8),
   death_snd    VARCHAR(8),
   hang         SMALLINT DEFAULT 0 NOT NULL,  -- MF_SPAWNCEILING: hangs from the ceiling
+  mass         INTEGER DEFAULT 100 NOT NULL, -- how hard it is to toss (momz = 1000 / mass)
+  floats       SMALLINT DEFAULT 0 NOT NULL,  -- MF_FLOAT | MF_NOGRAVITY: flies
   -- a separate close-range attack (the revenant's fist)
   melee_fr      VARCHAR(8),
   melee_snd     VARCHAR(8),

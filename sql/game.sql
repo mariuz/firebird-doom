@@ -69,6 +69,30 @@ END^
 -- ── collision ─────────────────────────────────────────────────────────────
 -- P_CheckPosition: can a thing of this radius/height stand at (px, py)?
 -- Returns the floor and ceiling it would see, from every line it touches.
+-- A thing's floorz and ceilingz: the highest floor and lowest ceiling of
+-- every sector it overlaps, so one standing half over a step stays on it.
+CREATE OR ALTER PROCEDURE z_range (px DOUBLE PRECISION, py DOUBLE PRECISION, rad DOUBLE PRECISION)
+RETURNS (floor_z DOUBLE PRECISION, ceil_z DOUBLE PRECISION)
+AS
+BEGIN
+  SELECT se.floor_h, se.ceil_h FROM sectors se WHERE se.id = sector_at(:px, :py) INTO floor_z, ceil_z;
+  SELECT MAXVALUE(:floor_z, COALESCE(MAX(MAXVALUE(f.floor_h, b.floor_h)), :floor_z)),
+         MINVALUE(:ceil_z, COALESCE(MIN(MINVALUE(f.ceil_h, b.ceil_h)), :ceil_z))
+    FROM (SELECT l.*,
+                 MINVALUE(1e0, MAXVALUE(0e0, ((:px - l.x1) * l.dx + (:py - l.y1) * l.dy) / NULLIF(l.len2, 0))) t
+            FROM lines_in_box(:px - :rad, :py - :rad, :px + :rad, :py + :rad) lb
+            LEFT JOIN linedefs l ON l.id = lb.line_id
+           WHERE l.back_sector IS NOT NULL
+             AND l.minx <= :px + :rad AND l.maxx >= :px - :rad
+             AND l.miny <= :py + :rad AND l.maxy >= :py - :rad) q
+    JOIN sectors f ON f.id = q.front_sector
+    JOIN sectors b ON b.id = q.back_sector
+   WHERE (q.x1 + q.t * q.dx - :px) * (q.x1 + q.t * q.dx - :px)
+       + (q.y1 + q.t * q.dy - :py) * (q.y1 + q.t * q.dy - :py) < :rad * :rad
+    INTO floor_z, ceil_z;
+  SUSPEND;
+END^
+
 CREATE OR ALTER PROCEDURE check_position (
   self_id INTEGER, px DOUBLE PRECISION, py DOUBLE PRECISION, pz DOUBLE PRECISION,
   rad DOUBLE PRECISION, hgt DOUBLE PRECISION, is_monster SMALLINT)
@@ -732,8 +756,12 @@ BEGIN
         END
       END
       UPDATE sectors SET floor_h = :fh WHERE id = :sid;
+      -- what stands on it rides along; what's in the air (tossed, or flying
+      -- above it) is only pushed up if the floor overtakes it
       UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
-         AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type AND tt.hang = 1);
+         AND (t.momz = 0 OR t.z < :fh)
+         AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type
+                          AND (tt.hang = 1 OR (tt.floats = 1 AND t.st NOT IN ('dying', 'dead') AND t.z >= :fh)));
     END
     ELSE IF (k = 'crush') THEN
     BEGIN
@@ -761,8 +789,12 @@ BEGIN
       IF (dir = 1) THEN fh = MINVALUE(fh + spd, top_h); ELSE fh = MAXVALUE(fh - spd, top_h);
       IF (fh = top_h) THEN del = 1;
       UPDATE sectors SET floor_h = :fh WHERE id = :sid;
+      -- what stands on it rides along; what's in the air (tossed, or flying
+      -- above it) is only pushed up if the floor overtakes it
       UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
-         AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type AND tt.hang = 1);
+         AND (t.momz = 0 OR t.z < :fh)
+         AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type
+                          AND (tt.hang = 1 OR (tt.floats = 1 AND t.st NOT IN ('dying', 'dead') AND t.z >= :fh)));
       -- raiseFloorCrush: squeeze what rides it up against the ceiling
       IF (crush = 1) THEN
       BEGIN
@@ -1684,6 +1716,9 @@ DECLARE htype INTEGER;
 DECLARE otype INTEGER;
 DECLARE gang DOUBLE PRECISION;
 DECLARE vtgt INTEGER;
+DECLARE mass INTEGER;
+DECLARE fl SMALLINT;
+DECLARE grav SMALLINT;
 BEGIN
   SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
     INTO ppx, ppy, ppz, ppdead, ptid, pang;
@@ -1692,16 +1727,18 @@ BEGIN
              t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame, t.momz,
              tt.speed, tt.walk_fr, tt.atk_fr, tt.death_fr, tt.atk_kind, tt.missile_type,
              tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id, tt.see_snd, tt.atk_snd, tt.death_snd, t.thing_type,
-             tt.melee_fr, tt.melee_snd, tt.melee_hit_snd, tt.melee_dmg, tt.melee_rolls, t.target_id, t.threshold
+             tt.melee_fr, tt.melee_snd, tt.melee_hit_snd, tt.melee_dmg, tt.melee_rolls, t.target_id, t.threshold,
+             tt.mass, tt.floats
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        WHERE t.kind IN ('monster', 'barrel', 'missile', 'fx', 'keen', 'brain', 'shooter', 'cube', 'flame')
-         AND t.st NOT IN ('dead')
-         AND NOT (t.kind = 'barrel' AND t.st = 'idle')
-         AND NOT (t.st = 'idle' AND MOD(:tic + t.id, 8) <> 0)
+         AND (t.st <> 'dead' OR t.momz <> 0)          -- a corpse still falling
+         AND NOT (t.kind = 'barrel' AND t.st = 'idle' AND t.momz = 0)
+         AND NOT (t.st = 'idle' AND t.momz = 0 AND MOD(:tic + t.id, 8) <> 0)
         INTO id, k, x, y, z, ang, st, st_tics, st_len, step, reaction, rad, hgt, momx, momy, owner_id, flags, frame, momz,
              spd, walk_fr, atk_fr, death_fr, atk_kind, missile_type, dmg_lo, dmg_hi, shots, sec,
              see_snd, atk_snd, death_snd, ttype,
-             melee_fr, melee_snd, melee_hit_snd, melee_dmg, melee_rolls, target_id, threshold
+             melee_fr, melee_snd, melee_hit_snd, melee_dmg, melee_rolls, target_id, threshold,
+             mass, fl
   DO
   BEGIN
     -- The cursor is stable (since Firebird 3 it doesn't see changes made after
@@ -1709,10 +1746,10 @@ BEGIN
     -- monster may have hurt, killed or provoked it, and writing back the
     -- cursor's stale copy would undo that.
     ost = NULL;
-    SELECT t.st, t.st_tics, t.st_len, t.frame, t.reaction, t.target_id, t.threshold
+    SELECT t.st, t.st_tics, t.st_len, t.frame, t.reaction, t.target_id, t.threshold, t.z, t.momz
       FROM things t WHERE t.id = :id
-      INTO ost, st_tics, st_len, frame, reaction, target_id, threshold;
-    IF (ost IS NULL OR ost = 'dead') THEN CONTINUE;   -- gone (exploded, picked up) or just died
+      INTO ost, st_tics, st_len, frame, reaction, target_id, threshold, z, momz;
+    IF (ost IS NULL OR (ost = 'dead' AND momz = 0)) THEN CONTINUE;   -- gone (exploded, picked up) or just died
     st = ost;
     del = 0;
     -- whom is it after? the player, unless another monster provoked it
@@ -2071,8 +2108,11 @@ BEGIN
       BEGIN
         EXECUTE PROCEDURE play_sound('DSBAREXP', id, px, py);
         EXECUTE PROCEDURE hurt_target(tgt, 20, id);
-        -- the toss (1000 / mass 100); monsters here have no vertical physics
+        -- the toss: momz = 1000 / mass – 10 for you or an imp, 2.5 for a
+        -- demon, 1 for a baron
         IF (tgt IS NULL) THEN UPDATE things t SET momz = 10 WHERE t.kind = 'player';
+        ELSE UPDATE things t SET momz = 1000e0 / (SELECT tt.mass FROM thing_types tt WHERE tt.thing_type = t.thing_type)
+              WHERE t.id = :tgt;
         sx = px - COS(ang) * 24;
         sy = py - SIN(ang) * 24;
         UPDATE things t SET x = :sx, y = :sy WHERE t.kind = 'flame' AND t.owner_id = :id;
@@ -2221,10 +2261,45 @@ BEGIN
           BEGIN
             x = nx;
             y = ny;
-            z = fz;
+            -- on the ground it steps up and down with the floor; tossed or
+            -- flying, it keeps its height
+            IF (momz = 0 AND fl = 0) THEN z = fz; ELSE z = MAXVALUE(z, fz);
             ang = try_ang;
           END
         END
+      END
+    END
+
+    -- P_ZMovement for monsters, barrels and their corpses: tossed into the
+    -- air they rise and fall back (gravity 1 unit/tic²), bump their heads on
+    -- the ceiling and land on the floor. Fliers (MF_NOGRAVITY) don't fall:
+    -- they drift 4 units a tic up or down towards their target (MF_FLOAT) –
+    -- until they die, when all but the lost soul drop.
+    IF (del = 0 AND k IN ('monster', 'barrel') AND (momz <> 0 OR fl = 1)) THEN
+    BEGIN
+      EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES mfz, mcz;
+      grav = IIF(fl = 1 AND (st NOT IN ('dying', 'dead') OR ttype = 3006), 0, 1);
+      z = z + momz;
+      IF (grav = 0 AND st IN ('chase', 'attack', 'melee', 'pain') AND pdead = 0) THEN
+      BEGIN
+        nz = pz + hgt / 2 - z;
+        IF (nz < 0 AND dist < -nz * 3) THEN z = z - 4;
+        ELSE IF (nz > 0 AND dist < nz * 3) THEN z = z + 4;
+      END
+      IF (z + hgt > mcz) THEN
+      BEGIN
+        IF (momz > 0) THEN momz = 0;
+        z = mcz - hgt;
+      END
+      IF (z <= mfz) THEN
+      BEGIN
+        z = mfz;
+        IF (momz < 0) THEN momz = 0;
+      END
+      ELSE IF (grav = 1) THEN
+      BEGIN
+        momz = momz - 1;
+        IF (momz = 0) THEN momz = -1;   -- (zero momz means "standing")
       END
     END
 
@@ -2234,7 +2309,7 @@ BEGIN
       UPDATE things t
          SET x = :x, y = :y, z = :z, angle = :ang, st = :st, st_tics = :st_tics, st_len = :st_len,
              step = :step, reaction = :reaction, frame = :frame, sector_id = :sec,
-             target_id = :target_id, threshold = :threshold
+             target_id = :target_id, threshold = :threshold, momz = :momz
        WHERE t.id = :id;
   END
 END^

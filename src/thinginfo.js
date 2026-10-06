@@ -106,3 +106,16 @@ export const THING_TYPES = [
   D(18, 'POSS', { walk: 'L' }), D(19, 'SPOS', { walk: 'L' }), D(20, 'TROO', { walk: 'M' }),
   D(21, 'SARG', { walk: 'N' }), D(22, 'HEAD', { walk: 'L' }), D(23, 'SKUL', { walk: 'K' }),
 ];
+
+// info.c's mass (everything else, the player and barrels included, is 100):
+// the arch-vile's blast tosses its victim up at 1000 / mass units per tic.
+const MASS = {
+  3002: 400, 58: 400, 3006: 50, 3005: 400, 3003: 1000, 69: 1000, 16: 1000, 7: 1000,
+  64: 500, 66: 500, 67: 1000, 68: 600, 71: 400, 72: 10000000,
+};
+// MF_FLOAT | MF_NOGRAVITY: cacodemons, lost souls and pain elementals fly
+const FLOATERS = new Set([3005, 3006, 71]);
+for (const t of THING_TYPES) {
+  if (MASS[t.type]) t.mass = MASS[t.type];
+  if (FLOATERS.has(t.type)) t.floats = 1;
+}
