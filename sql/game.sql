@@ -268,7 +268,8 @@ BEGIN
   EXECUTE PROCEDURE play_sound(IIF(ROW_COUNT > 0, 'DSPLDETH', 'DSPLPAIN'), 0, NULL, NULL);
 END^
 
-CREATE OR ALTER PROCEDURE damage_thing (tid INTEGER, dmg INTEGER)
+-- P_DamageMobj. SRC is who did it (NULL: the world – crushers, slime).
+CREATE OR ALTER PROCEDURE damage_thing (tid INTEGER, dmg INTEGER, src INTEGER = NULL)
 AS
 DECLARE k VARCHAR(10);
 DECLARE hp INTEGER;
@@ -283,6 +284,10 @@ DECLARE ty DOUBLE PRECISION;
 DECLARE dummy INTEGER;
 DECLARE pain_snd VARCHAR(8);
 DECLARE death_snd VARCHAR(8);
+DECLARE skind VARCHAR(10);
+DECLARE satk VARCHAR(10);
+DECLARE vatk VARCHAR(10);
+DECLARE thr INTEGER;
 BEGIN
   SELECT t.kind, t.hp, t.st, tt.pain_chance, tt.pain_fr, tt.death_fr, tt.death_sprite, tt.drop_type, t.x, t.y,
          tt.pain_snd, tt.death_snd
@@ -308,6 +313,21 @@ BEGIN
   ELSE
   BEGIN
     UPDATE things t SET hp = :hp, reaction = 0, st = IIF(t.st = 'idle' AND t.kind = 'monster', 'chase', t.st) WHERE t.id = :tid;
+    -- infighting: a monster hurt by another monster goes after it, and won't
+    -- switch again for BASETHRESHOLD (100) chase steps. Hurt by the player
+    -- once that has worn off, it comes back for the player. (Arch-viles
+    -- neither provoke nor get provoked here: their attack only knows the player.)
+    IF (src IS NOT NULL AND src <> tid AND k = 'monster') THEN
+    BEGIN
+      SELECT s.kind, st2.atk_kind FROM things s JOIN thing_types st2 ON st2.thing_type = s.thing_type
+       WHERE s.id = :src INTO skind, satk;
+      SELECT t.threshold, tt3.atk_kind FROM things t JOIN thing_types tt3 ON tt3.thing_type = t.thing_type
+       WHERE t.id = :tid INTO thr, vatk;
+      IF (skind = 'player' AND thr = 0) THEN
+        UPDATE things t SET target_id = NULL WHERE t.id = :tid;
+      ELSE IF (skind = 'monster' AND satk IS DISTINCT FROM 'vile' AND vatk IS DISTINCT FROM 'vile' AND thr = 0) THEN
+        UPDATE things t SET target_id = :src, threshold = 100, st = IIF(t.st = 'idle', 'chase', t.st) WHERE t.id = :tid;
+    END
     IF (pain_fr IS NOT NULL AND RAND() * 256 < pain_chance) THEN
     BEGIN
       UPDATE things SET st = 'pain', st_tics = 6, st_len = 6, frame = SUBSTRING(:pain_fr FROM 1 FOR 1)
@@ -816,7 +836,7 @@ BEGIN
   hit = IIF(tgt IS NOT NULL, 1, 0);
   IF (tgt IS NOT NULL) THEN
   BEGIN
-    EXECUTE PROCEDURE damage_thing(tgt, dmg);
+    EXECUTE PROCEDURE damage_thing(tgt, dmg, shooter);
     EXECUTE PROCEDURE spawn_thing(9011, sx + ddx * tgt_s - COS(ang) * 8, sy + ddy * tgt_s - SIN(ang) * 8,
                                   sz + slope * tgt_s * rng - 8, 0)
       RETURNING_VALUES dummy;
@@ -921,7 +941,7 @@ BEGIN
     od = MAXVALUE(0, od);
     IF (od < dmg AND check_sight(bx, bdy, bz + 8, ox, oy, oz + 32) = 1) THEN
       IF (ok = 'player') THEN EXECUTE PROCEDURE damage_player(CAST(dmg - od AS INTEGER));
-      ELSE EXECUTE PROCEDURE damage_thing(oid, CAST(dmg - od AS INTEGER));
+      ELSE EXECUTE PROCEDURE damage_thing(oid, CAST(dmg - od AS INTEGER), src);
   END
 END^
 
@@ -971,7 +991,7 @@ BEGIN
         dmg = dmg + 1 + CAST(FLOOR(RAND() * 8) AS INTEGER);
         j = j + 1;
       END
-      EXECUTE PROCEDURE damage_thing(tgt, dmg);
+      EXECUTE PROCEDURE damage_thing(tgt, dmg, src);
       EXECUTE PROCEDURE spawn_thing(9012, tx, ty, tz + 16, 0) RETURNING_VALUES dummy;
     END
     i = i + 1;
@@ -1522,6 +1542,14 @@ BEGIN
   UPDATE things t SET st = 'chase', st_tics = 0, reaction = 0 WHERE t.id = :mid;
 END^
 
+-- A monster's attack lands on its target: the player (TGT NULL) or a monster.
+CREATE OR ALTER PROCEDURE hurt_target (tgt INTEGER, dmg INTEGER, src INTEGER)
+AS
+BEGIN
+  IF (tgt IS NULL) THEN EXECUTE PROCEDURE damage_player(dmg);
+  ELSE EXECUTE PROCEDURE damage_thing(tgt, dmg, src);
+END^
+
 -- A_BossDeath: when the last of a boss type dies, some maps open up or end.
 CREATE OR ALTER PROCEDURE boss_death (ttype INTEGER)
 AS
@@ -1643,15 +1671,25 @@ DECLARE nz DOUBLE PRECISION;
 DECLARE mfz DOUBLE PRECISION;
 DECLARE mcz DOUBLE PRECISION;
 DECLARE msky SMALLINT;
+DECLARE ppx DOUBLE PRECISION;
+DECLARE ppy DOUBLE PRECISION;
+DECLARE ppz DOUBLE PRECISION;
+DECLARE ppdead SMALLINT;
+DECLARE target_id INTEGER;
+DECLARE threshold INTEGER;
+DECLARE tgt INTEGER;
+DECLARE victim INTEGER;
+DECLARE htype INTEGER;
+DECLARE otype INTEGER;
 BEGIN
   SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
-    INTO px, py, pz, pdead, ptid, pang;
+    INTO ppx, ppy, ppz, ppdead, ptid, pang;
 
   FOR SELECT t.id, t.kind, t.x, t.y, t.z, t.angle, t.st, t.st_tics, t.st_len, t.step, t.reaction,
              t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame, t.momz,
              tt.speed, tt.walk_fr, tt.atk_fr, tt.death_fr, tt.atk_kind, tt.missile_type,
              tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id, tt.see_snd, tt.atk_snd, tt.death_snd, t.thing_type,
-             tt.melee_fr, tt.melee_snd, tt.melee_hit_snd, tt.melee_dmg, tt.melee_rolls
+             tt.melee_fr, tt.melee_snd, tt.melee_hit_snd, tt.melee_dmg, tt.melee_rolls, t.target_id, t.threshold
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        WHERE t.kind IN ('monster', 'barrel', 'missile', 'fx', 'keen', 'brain', 'shooter', 'cube', 'flame')
          AND t.st NOT IN ('dead')
@@ -1660,10 +1698,36 @@ BEGIN
         INTO id, k, x, y, z, ang, st, st_tics, st_len, step, reaction, rad, hgt, momx, momy, owner_id, flags, frame, momz,
              spd, walk_fr, atk_fr, death_fr, atk_kind, missile_type, dmg_lo, dmg_hi, shots, sec,
              see_snd, atk_snd, death_snd, ttype,
-             melee_fr, melee_snd, melee_hit_snd, melee_dmg, melee_rolls
+             melee_fr, melee_snd, melee_hit_snd, melee_dmg, melee_rolls, target_id, threshold
   DO
   BEGIN
     del = 0;
+    -- whom is it after? the player, unless another monster provoked it
+    -- (px/py/pz/pdead below always mean "the target")
+    px = ppx;
+    py = ppy;
+    pz = ppz;
+    pdead = ppdead;
+    tgt = NULL;
+    IF (k = 'monster' AND target_id IS NOT NULL) THEN
+    BEGIN
+      sx = NULL;
+      SELECT t.x, t.y, t.z FROM things t WHERE t.id = :target_id AND t.st NOT IN ('dying', 'dead')
+        INTO sx, sy, oz;
+      IF (sx IS NULL) THEN
+      BEGIN
+        target_id = NULL;              -- it died: back to hunting the player
+        threshold = 0;
+      END
+      ELSE
+      BEGIN
+        px = sx;
+        py = sy;
+        pz = oz;
+        pdead = 0;
+        tgt = target_id;
+      END
+    END
     dist = SQRT((px - x) * (px - x) + (py - y) * (py - y));
 
     IF (k = 'shooter') THEN
@@ -1787,7 +1851,7 @@ BEGIN
       IF (st_len - st_tics = 8) THEN EXECUTE PROCEDURE play_sound(melee_snd, id, x, y);
       IF (st_len - st_tics = 16 AND pdead = 0 AND dist < 60 + rad / 2 + 16) THEN
       BEGIN
-        EXECUTE PROCEDURE damage_player(melee_dmg * (1 + CAST(FLOOR(RAND() * melee_rolls) AS INTEGER)));
+        EXECUTE PROCEDURE hurt_target(tgt, melee_dmg * (1 + CAST(FLOOR(RAND() * melee_rolls) AS INTEGER)), id);
         EXECUTE PROCEDURE play_sound(melee_hit_snd, id, x, y);
       END
       IF (st_tics <= 0) THEN
@@ -1844,8 +1908,20 @@ BEGIN
              AND ABS(t.x - :nx) < t.radius + :rad AND ABS(t.y - :ny) < t.radius + :rad
              AND t.z <= :nz + :hgt AND t.z + t.height >= :nz
             INTO hit;
-        ELSE IF (SQRT((px - nx) * (px - nx) + (py - ny) * (py - ny)) < 16 + rad AND nz <= pz + 56 AND nz + hgt >= pz) THEN
-          hit = ptid;
+        ELSE
+        BEGIN
+          -- a monster's missile hits any monster in its way but its shooter…
+          SELECT FIRST 1 t.id, t.thing_type FROM things t
+           WHERE t.x BETWEEN :nx - 64 AND :nx + 64
+             AND t.kind IN ('monster', 'barrel', 'keen', 'brain') AND t.st NOT IN ('dying', 'dead')
+             AND t.id IS DISTINCT FROM :owner_id
+             AND ABS(t.x - :nx) < t.radius + :rad AND ABS(t.y - :ny) < t.radius + :rad
+             AND t.z <= :nz + :hgt AND t.z + t.height >= :nz
+            INTO hit, htype;
+          IF (hit IS NULL AND SQRT((px - nx) * (px - nx) + (py - ny) * (py - ny)) < 16 + rad
+              AND nz <= pz + 56 AND nz + hgt >= pz) THEN
+            hit = ptid;
+        END
         IF (hit = ptid) THEN
         BEGIN
           EXECUTE PROCEDURE damage_player(mdmg);
@@ -1853,7 +1929,12 @@ BEGIN
         END
         ELSE IF (hit IS NOT NULL) THEN
         BEGIN
-          EXECUTE PROCEDURE damage_thing(hit, mdmg);
+          -- …and against its own species (hell knights and barons are one)
+          -- it bursts without doing harm
+          otype = NULL;
+          IF (owner_id <> ptid) THEN SELECT o.thing_type FROM things o WHERE o.id = :owner_id INTO otype;
+          IF (otype IS NULL OR NOT (htype = otype OR (htype IN (69, 3003) AND otype IN (69, 3003)))) THEN
+            EXECUTE PROCEDURE damage_thing(hit, mdmg, owner_id);
           st = 'dying';
         END
         ELSE IF (check_sight(x, y, z, nx, ny, nz) = 0) THEN
@@ -1985,11 +2066,29 @@ BEGIN
         BEGIN
           IF (check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
           BEGIN
+            -- P_LineAttack: the first other monster (or barrel) on the line of
+            -- fire takes the bullets instead
+            victim = NULL;
+            SELECT FIRST 1 q.id
+              FROM (SELECT t.id, t.radius,
+                           ((t.x - :x) * (:px - :x) + (t.y - :y) * (:py - :y)) / (:dist * :dist) along,
+                           ABS((t.x - :x) * (:py - :y) - (t.y - :y) * (:px - :x)) / :dist perp
+                      FROM things t
+                     WHERE t.kind IN ('monster', 'barrel') AND t.st NOT IN ('dying', 'dead')
+                       AND t.id <> :id AND t.id IS DISTINCT FROM :tgt) q
+             WHERE q.along > 0 AND q.along < 1 AND q.perp < q.radius
+             ORDER BY q.along
+              INTO victim;
             n = 0;
             WHILE (n < shots) DO
             BEGIN
               IF (RAND() < MAXVALUE(0.15e0, 0.85e0 - dist / 1500)) THEN
-                EXECUTE PROCEDURE damage_player(3 * (1 + CAST(FLOOR(RAND() * 5) AS INTEGER)));
+              BEGIN
+                IF (victim IS NOT NULL) THEN
+                  EXECUTE PROCEDURE damage_thing(victim, 3 * (1 + CAST(FLOOR(RAND() * 5) AS INTEGER)), id);
+                ELSE
+                  EXECUTE PROCEDURE hurt_target(tgt, 3 * (1 + CAST(FLOOR(RAND() * 5) AS INTEGER)), id);
+              END
               n = n + 1;
             END
           END
@@ -1997,7 +2096,7 @@ BEGIN
         ELSE IF (atk_kind = 'melee' OR (atk_kind = 'missile' AND dist < melee_range)) THEN
         BEGIN
           IF (dist < melee_range + 16) THEN
-            EXECUTE PROCEDURE damage_player(dmg_lo + CAST(FLOOR(RAND() * (dmg_hi - dmg_lo + 1)) AS INTEGER));
+            EXECUTE PROCEDURE hurt_target(tgt, dmg_lo + CAST(FLOOR(RAND() * (dmg_hi - dmg_lo + 1)) AS INTEGER), id);
         END
         ELSE IF (atk_kind = 'missile' AND missile_type = 3006) THEN
           EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang);
@@ -2020,6 +2119,7 @@ BEGIN
         step = step + 1;
         frame = SUBSTRING(walk_fr FROM 1 + MOD(step, CHAR_LENGTH(walk_fr)) FOR 1);
         IF (reaction > 0) THEN reaction = reaction - 1;
+        IF (threshold > 0) THEN threshold = threshold - 1;
         melee_range = 60 + rad / 2;
         -- A_VileChase: a raisable corpse within reach, with room to stand up?
         -- (not lost souls, cyberdemons, spider masterminds or other arch-viles)
@@ -2113,7 +2213,8 @@ BEGIN
     ELSE
       UPDATE things t
          SET x = :x, y = :y, z = :z, angle = :ang, st = :st, st_tics = :st_tics, st_len = :st_len,
-             step = :step, reaction = :reaction, frame = :frame, sector_id = :sec
+             step = :step, reaction = :reaction, frame = :frame, sector_id = :sec,
+             target_id = :target_id, threshold = :threshold
        WHERE t.id = :id;
   END
 END^

@@ -240,7 +240,9 @@ CREATE TABLE things (
   owner_id   INTEGER,
   radius     DOUBLE PRECISION NOT NULL,
   height     DOUBLE PRECISION NOT NULL,
-  solid      SMALLINT DEFAULT 0 NOT NULL
+  solid      SMALLINT DEFAULT 0 NOT NULL,
+  target_id  INTEGER,                               -- who a monster is after (NULL = the player)
+  threshold  INTEGER DEFAULT 0 NOT NULL             -- chase steps before it may switch target again
 );
 CREATE INDEX things_kind ON things (kind);
 CREATE INDEX things_sector ON things (sector_id);

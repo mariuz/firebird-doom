@@ -292,6 +292,103 @@ if (sky) {
   }
 }
 
+// ── infighting ─────────────────────────────────────────────────────────
+{
+  /** A map whose start has a heading with open, level floor out to 300 units. */
+  let dir = null;
+  let pl;
+  for (const name of maps.slice(0, 10)) {
+  await loadMap(db, wad, res, name);
+  await db.exec('UPDATE player SET health = 100000');
+  await quiet();
+  pl = await one(`SELECT t.id, t.x, t.y, t.z, t.angle FROM things t WHERE t.kind = 'player'`);
+  for (let k = 0; k < 16 && dir === null; k++) {
+    const a = pl.ANGLE + (k * Math.PI) / 8;
+    let ok = true;
+    for (const d of [80, 140, 200, 260, 300]) {
+      const x = pl.X + Math.cos(a) * d;
+      const y = pl.Y + Math.sin(a) * d;
+      const r = (await db.query(`EXECUTE BLOCK RETURNS (ok SMALLINT, fz DOUBLE PRECISION, seen SMALLINT) AS
+          DECLARE cz DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION; DECLARE sec INTEGER;
+          BEGIN
+            EXECUTE PROCEDURE check_position(-1, ${x}, ${y}, ${pl.Z}, 32, 56, 1) RETURNING_VALUES ok, fz, cz, dz, sec;
+            seen = check_sight(${pl.X}, ${pl.Y}, ${pl.Z + 41}, ${x}, ${y}, ${pl.Z + 41});
+            SUSPEND;
+          END`)).rows[0];
+      if (!(r.OK === 1 && r.SEEN === 1 && Math.abs(r.FZ - pl.Z) < 1)) ok = false;
+    }
+    if (ok) dir = a;
+  }
+  if (dir !== null) { console.log(`(infighting tests on ${name})`); break; }
+  }
+  const at = (d) => [pl.X + Math.cos(dir) * d, pl.Y + Math.sin(dir) * d];
+  const placeMon = async (type, d, extra = '') => {
+    const [x, y] = at(d);
+    const id = await spawn(type, x, y);
+    await db.exec(`UPDATE things SET st = 'idle', flags = 8, hp = 1000 ${extra} WHERE id = ${id}`);
+    return id;
+  };
+  const fireball = async (owner, fromD, toward) => {
+    const [x, y] = at(fromD);
+    const a = toward > fromD ? dir : dir + Math.PI;
+    const fz = (await one(`SELECT z FROM things WHERE id = ${owner}`)).Z;
+    const id = await spawn(9000, x, y, fz + 32, a);
+    await db.exec(`UPDATE things SET momx = ${Math.cos(a) * 10}, momy = ${Math.sin(a) * 10}, owner_id = ${owner} WHERE id = ${id}`);
+    return id;
+  };
+  if (dir !== null) {
+    // an imp's fireball hits a demon: the demon turns on the imp
+    const imp = await placeMon(3001, 260);
+    const demon = await placeMon(3002, 160);
+    await fireball(imp, 200, 0);
+    await tic(8);
+    const d1 = await one(`SELECT hp, target_id, threshold, st FROM things WHERE id = ${demon}`);
+    assert(d1.HP < 1000 && d1.TARGET_ID === imp && d1.THRESHOLD > 0,
+      `an imp's fireball hurts a demon (${1000 - d1.HP}), which turns on the imp (threshold ${d1.THRESHOLD})`);
+    const impHp0 = (await one(`SELECT hp FROM things WHERE id = ${imp}`)).HP;
+    await db.exec(`UPDATE things SET flags = 0 WHERE id = ${demon}`);
+    for (let i = 0; i < 20; i++) await tic(5);
+    const impHp1 = (await one(`SELECT hp FROM things WHERE id = ${imp}`)).HP;
+    assert(impHp1 < impHp0, `…and goes and bites it (${impHp0 - impHp1} damage)`);
+
+    // the player can't win it back while the grudge lasts…
+    await db.exec(`EXECUTE PROCEDURE damage_thing(${demon}, 1, ${pl.ID})`);
+    assert((await one(`SELECT target_id t FROM things WHERE id = ${demon}`)).T === imp, 'while its threshold lasts, the player can\'t draw it off');
+    // …and when the imp dies, back it comes
+    await db.exec(`EXECUTE PROCEDURE damage_thing(${imp}, 100000)`);
+    await tic(8);
+    assert((await one(`SELECT target_id t FROM things WHERE id = ${demon}`)).T === null, 'its target dead, the demon hunts the player again');
+    await db.exec(`DELETE FROM things WHERE id IN (${imp}, ${demon}) OR thing_type IN (9000, 9011)`);
+
+    // same species: the fireball bursts harmlessly
+    const i1 = await placeMon(3001, 260);
+    const i2 = await placeMon(3001, 160);
+    const fb = await fireball(i1, 200, 0);
+    await tic(8);
+    const i2now = await one(`SELECT hp, target_id FROM things WHERE id = ${i2}`);
+    const fbNow = await one(`SELECT st FROM things WHERE id = ${fb}`);
+    assert(i2now.HP === 1000 && i2now.TARGET_ID === null && (!fbNow || fbNow.ST === 'dying'),
+      'an imp\'s fireball bursts on another imp without hurting it');
+    await db.exec(`DELETE FROM things WHERE id IN (${i1}, ${i2}) OR thing_type IN (9000, 9011)`);
+
+    // a zombieman shooting at the player hits an imp in the way, which then goes for the zombieman
+    const zombie = await placeMon(3004, 280, `, angle = ${dir + Math.PI}`);
+    const blocker = await placeMon(3001, 140);
+    let hit = false;
+    for (let i = 0; i < 10 && !hit; i++) {
+      await db.exec(`UPDATE things SET st = 'attack', st_len = 16, st_tics = 8 WHERE id = ${zombie}`);
+      await tic(2);
+      hit = (await one(`SELECT hp FROM things WHERE id = ${blocker}`)).HP < 1000;
+    }
+    const b = await one(`SELECT hp, target_id FROM things WHERE id = ${blocker}`);
+    assert(hit && b.TARGET_ID === zombie, `a zombieman's bullets hit an imp in the line of fire (${1000 - b.HP}), which turns on it`);
+    // and once the grudge wears off, the player can draw it back
+    await db.exec(`UPDATE things SET threshold = 0 WHERE id = ${blocker}`);
+    await db.exec(`EXECUTE PROCEDURE damage_thing(${blocker}, 1, ${pl.ID})`);
+    assert((await one(`SELECT target_id t FROM things WHERE id = ${blocker}`)).T === null, 'with its threshold spent, hurting it brings it back to the player');
+  } else console.log('(no open run from the player start for the infighting tests)');
+}
+
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'physics ok');
 process.exit(failures ? 1 : 0);

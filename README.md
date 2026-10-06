@@ -45,6 +45,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `EV_DoCeiling` crushers, `EV_CeilingCrushStop`, `raiseFloorCrush`, `P_ChangeSector` | the `crush` mover kind, `CRUSH_THINGS` |
 | `P_SpawnMissile` / `P_SpawnPlayerMissile` aiming, `P_AimLineAttack`, `P_ZMovement` for missiles | `MONSTER_MISSILE`, `FIRE_MISSILE`, `AIM_SLOPE`; 3D flight in `MONSTERS_THINK` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `MONSTERS_THINK` |
+| `P_DamageMobj` retargeting, `PIT_CheckThing` species rule (infighting) | `DAMAGE_THING(..., src)`, `THINGS.TARGET_ID` / `THRESHOLD`, `HURT_TARGET` |
 | `P_NoiseAlert`, `P_RecursiveSound` (gunfire wakes monsters) | `NOISE_ALERT` flooding `SOUND_LINKS`, `SECTORS.SOUND_HEARD` |
 | `A_Tracer`, `A_SkelFist` (revenant), `A_FatAttack1/2/3` (mancubus), `A_VileTarget` / `A_Fire` / `A_VileAttack` / `A_VileChase` (arch-vile), `A_PainShootSkull` / `A_PainDie` | `MONSTERS_THINK` (the `melee`, `heal` and `raise` states, the `flame` kind), `MONSTER_MISSILE`, `PAIN_SHOOT_SKULL` |
 | `A_BossDeath`, `A_KeenDie` | `BOSS_DEATH`, `KEEN_DIE` |
@@ -200,7 +201,9 @@ sounds, damage, splash and pickups.
 
 Use `WAD=public/wads/freedoom2.wad` for the Phase 2 parts. `npm run test:physics` drives real crushers (descent, damage, gibs, stop and resume, floor
 crushers) and checks missile slopes, autoaim with its 5.625° fallback, floor impacts and the sky.
-It checks that gunfire reaches open sectors but not past a closed door, that it wakes a monster
+It checks infighting: a fireball turns a demon on an imp, which it then bites, and the demon
+returns to you when the imp dies. A fireball bursts harmlessly on its own species, and a
+zombieman's stray bullets provoke an imp in the way. It checks that gunfire reaches open sectors but not past a closed door, that it wakes a monster
 out of sight in earshot but not one out of earshot or in ambush. It also checks that a level
 hitscan shot passes under a raised imp, that the right slope hits
 it, and that the pistol finds that slope itself but not beyond DOOM's aiming window.
@@ -241,6 +244,14 @@ you. The flood is a breadth-first search in SQL: each pass is one `MERGE` over `
 sector adjacency graph built at map load, and doors count live through the current sector
 heights. A shot costs 3 ms on E1M1 and about 40 ms on the largest maps. It reruns at most once a
 second from the same sector.
+
+Monsters fight each other, as in DOOM. When one monster's attack hurts another, the victim turns
+on the attacker and won't switch again for 100 chase steps (`BASETHRESHOLD`). After that, hurting
+it yourself brings it back to you, and once its target dies it hunts you again. Monster projectiles
+hit any monster in their way, except members of the shooter's own species, which they burst on
+harmlessly (hell knights and barons count as one species). Zombie bullets hit whoever stands in the
+line of fire, and splash damage remembers who caused it. Arch-viles don't take part, because their
+attack only knows how to target you.
 
 Crushers work. Ceiling crushers (types 6, 25, 49, 73, 77 and the silent 141) cycle between
 their top and floor + 8. They deal 10 damage every 4 tics to whatever they squeeze, the slow ones
