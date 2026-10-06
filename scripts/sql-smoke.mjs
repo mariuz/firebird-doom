@@ -85,6 +85,22 @@ for (let i = 0; i < 3; i++) {
   await tic([1, 0, 0, 0.3, 0, 0, 0, 0]);
 }
 
+// a spectre right in front: its sprite comes out flagged for fuzz, a demon's doesn't
+{
+  const p = (await db.query("SELECT x, y, angle FROM things WHERE kind = 'player'")).rows[0];
+  const at = (d, side) => [p.X + Math.cos(p.ANGLE) * d - Math.sin(p.ANGLE) * side, p.Y + Math.sin(p.ANGLE) * d + Math.cos(p.ANGLE) * side];
+  const [sx, sy] = at(60, 10);
+  const [dx, dy] = at(60, -10);
+  const ids = (await db.query(`EXECUTE BLOCK RETURNS (spectre INTEGER, demon INTEGER) AS BEGIN
+      EXECUTE PROCEDURE spawn_thing(58, ${sx}, ${sy}, NULL, 0) RETURNING_VALUES spectre;
+      EXECUTE PROCEDURE spawn_thing(3002, ${dx}, ${dy}, NULL, 0) RETURNING_VALUES demon;
+      SUSPEND;
+    END`)).rows[0];
+  const fz = Object.fromEntries((await db.query(`SELECT id, fuzz FROM frame_sprites WHERE id IN (${ids.SPECTRE}, ${ids.DEMON})`)).rows.map((r) => [r.ID, r.FUZZ]));
+  assert(fz[ids.SPECTRE] === 1 && fz[ids.DEMON] === 0, `a spectre is drawn as fuzz, a demon isn't (${JSON.stringify(fz)})`);
+  await db.exec(`DELETE FROM things WHERE id IN (${ids.SPECTRE}, ${ids.DEMON})`);
+}
+
 const a = await db.query('SELECT COUNT(*) n, SUM(col * 1000 + line_id) h FROM frame_walls');
 const b = await db.query('SELECT COUNT(*) n, SUM(col * 1000 + line_id) h FROM frame_walls_windowed');
 assert(a.rows[0].N === b.rows[0].N && a.rows[0].H === b.rows[0].H,

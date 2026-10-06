@@ -95,6 +95,7 @@ CREATE TABLE thing_types (
   hang         SMALLINT DEFAULT 0 NOT NULL,  -- MF_SPAWNCEILING: hangs from the ceiling
   mass         INTEGER DEFAULT 100 NOT NULL, -- how hard it is to toss (momz = 1000 / mass)
   floats       SMALLINT DEFAULT 0 NOT NULL,  -- MF_FLOAT | MF_NOGRAVITY: flies
+  shadow       SMALLINT DEFAULT 0 NOT NULL,  -- MF_SHADOW: drawn as fuzz (the spectre)
   -- a separate close-range attack (the revenant's fist)
   melee_fr      VARCHAR(8),
   melee_snd     VARCHAR(8),

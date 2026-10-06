@@ -59,6 +59,12 @@ class Visplanes {
   }
 }
 
+
+// r_draw.c's fuzzoffset[]: one row up (-1) or down (+1), 50 pixels long
+const FUZZ_OFFSETS = [
+  1, -1, 1, -1, 1, 1, -1, 1, 1, -1, 1, 1, 1, -1, 1, 1, 1, -1, -1, -1, -1, 1, -1, -1, 1,
+  1, 1, 1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, -1, -1, -1, 1, 1, 1, 1, -1, 1, 1, -1, 1,
+];
 export class Renderer {
   constructor(canvas, wad, res) {
     this.canvas = canvas;
@@ -85,6 +91,19 @@ export class Renderer {
         }
       }
     }
+    // …and back: which palette index is this framebuffer colour? (fuzz
+    // darkens what's already on screen through COLORMAP 6)
+    this.unlut = [];
+    for (let p = 0; p < npal; p++) {
+      const m = new Map();
+      for (let i = 0; i < 256; i++) {
+        const o = p * 768 + i * 3;
+        const rgba = (0xff000000 | (pal[o + 2] << 16) | (pal[o + 1] << 8) | pal[o]) >>> 0;
+        if (!m.has(rgba)) m.set(rgba, i);
+      }
+      this.unlut.push(m);
+    }
+    this.fuzzPos = 0;
     this.setSize(320, 168);
   }
 
@@ -149,7 +168,7 @@ export class Renderer {
    *   view:    { x, y, z, angle, tic, palette }
    *   walls:   FRAME_WALLS rows [col, depth, u, line, backView, openTop, openBot, clipTop, clipBot,
    *                               fsec, cTop, cBot, fTop, fBot]  (the last four: visplane rows)
-   *   sprites: FRAME_SPRITES rows [id, depth, lump, flip, x1, x2, y1, y2, light]
+   *   sprites: FRAME_SPRITES rows [id, depth, lump, flip, x1, x2, y1, y2, light, fuzz]
    *   map:     { lines: Map, sides: Map, sectors: Map, skyTex }
    */
   drawView(view, walls, sprites, map) {
@@ -255,7 +274,7 @@ export class Renderer {
 
     // Masked middles and sprites, far to near, clipped by the walls in front.
     const items = masked.map((m) => ({ ...m, kind: 0 }));
-    for (const s of sprites) items.push({ kind: 1, depth: s[1], lump: s[2], flip: s[3], x1: s[4], x2: s[5], y1: s[6], y2: s[7], light: s[8] });
+    for (const s of sprites) items.push({ kind: 1, depth: s[1], lump: s[2], flip: s[3], x1: s[4], x2: s[5], y1: s[6], y2: s[7], light: s[8], fuzz: s[9] });
     items.sort((a, b) => b.depth - a.depth);
     for (const it of items) {
       if (it.kind === 0) {
@@ -362,6 +381,11 @@ export class Renderer {
   spriteDraw(s, walls, colStart, palBase) {
     const pic = this.picture(s.lump);
     const { fb, w, h } = this;
+    // R_DrawFuzzColumn: a shadow's pixels aren't its own – each one takes the
+    // pixel just above or below it (FUZZTABLE) and darkens it (COLORMAP 6)
+    const fuzz = s.fuzz === 1;
+    const unlut = this.unlut[palBase / (34 * 256)];
+    const dark = palBase + 6 * 256;
     const cm = palBase + (s.light >= 255 ? 0 : this.lightIndex(s.light, s.depth)) * 256;
     const xa = Math.max(0, Math.ceil(s.x1 - 0.5));
     const xb = Math.min(w - 1, Math.ceil(s.x2 - 0.5) - 1);
@@ -386,7 +410,11 @@ export class Renderer {
       for (let y = y0; y < y1; y++) {
         const py = Math.floor((y + 0.5 - s.y1) * sy);
         if (py < 0 || py >= pic.h || !pic.alpha[off + py]) continue;
-        fb[y * w + x] = this.lut[cm + pic.pix[off + py]];
+        if (fuzz) {
+          const sy = Math.min(h - 1, Math.max(0, y + FUZZ_OFFSETS[this.fuzzPos]));
+          this.fuzzPos = (this.fuzzPos + 1) % FUZZ_OFFSETS.length;
+          fb[y * w + x] = this.lut[dark + (unlut.get(fb[sy * w + x]) ?? 0)];
+        } else fb[y * w + x] = this.lut[cm + pic.pix[off + py]];
       }
     }
   }

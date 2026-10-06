@@ -115,7 +115,10 @@ const MASS = {
 };
 // MF_FLOAT | MF_NOGRAVITY: cacodemons, lost souls and pain elementals fly
 const FLOATERS = new Set([3005, 3006, 71]);
+// MF_SHADOW: the spectre is a demon drawn as a shimmer of fuzz
+const SHADOWS = new Set([58]);
 for (const t of THING_TYPES) {
+  if (SHADOWS.has(t.type)) t.shadow = 1;
   if (MASS[t.type]) t.mass = MASS[t.type];
   if (FLOATERS.has(t.type)) t.floats = 1;
 }

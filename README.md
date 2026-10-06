@@ -14,6 +14,7 @@ keyboard and paints the rows Firebird returns.
 |---|---|
 | ![Two monsters, sprites picked and projected by FRAME_SPRITES](docs/screenshot-monster.png) | ![E1M2: pillars, steps and a lit doorway](docs/screenshot-e1m2.png) |
 | ![Phase 2 MAP11: Commander Keen hanging in his alcove](docs/screenshot-keen.png) | ![Phase 2 MAP30: the Icon of Sin's brain](docs/screenshot-icon.png) |
+| ![A spectre in E1M2: a shimmer of fuzz, darker than what's behind it](docs/screenshot-spectre.png) | |
 
 <sub>These screenshots come from `npm run screenshots`, which runs the same SQL and
 rasteriser as the page, headless in Node.</sub>
@@ -59,7 +60,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `R_RenderBSPNode`, `R_CheckBBox`, `R_ClipSolidWallSegment` (solidsegs) | `RENDER_SLICES_BSP` ([sql/render.sql](sql/render.sql)) |
 | `r_segs.c` clip arrays, `markceiling` / `markfloor` | `RENDER_WALLS` / `FRAME_WALLS` (or `FRAME_WALLS_WINDOWED`) |
 | `r_plane.c` visplanes: `R_FindPlane`, `R_CheckPlane`, `R_MakeSpans`, `R_MapPlane` | `c_top`/`c_bot`/`f_top`/`f_bot` per slice, `FRAME_VISPLANES`; spans in [src/renderer.js](src/renderer.js) |
-| `r_things.c` | `RENDER_SPRITES` / `FRAME_SPRITES` |
+| `r_things.c`, `R_DrawFuzzColumn` (`MF_SHADOW`) | `RENDER_SPRITES` / `FRAME_SPRITES` (its `fuzz` column); fuzz in [src/renderer.js](src/renderer.js) |
 | `S_StartSound` (+ `sfxinfo` sounds per monster) | `PLAY_SOUND` / `SECTOR_SOUND` → `SOUND_EVENTS`; played by [src/audio.js](src/audio.js) |
 | `I_PlaySong` with the OPL `GENMIDI` bank | [src/music.js](src/music.js): MUS + MIDI parser, FM synthesiser |
 
@@ -129,6 +130,16 @@ draws each row span with one distance and light lookup, stepping the texture coo
 linearly. `SELECT * FROM frame_visplanes` shows the current frame's planes in the SQL console,
 and the stats line under the view counts them. Across Freedoom's maps the busiest frame
 needs 42, comfortably under vanilla DOOM's `MAXVISPLANES` of 128.
+
+### Spectres: fuzz
+
+The spectre (`MF_SHADOW`, the `shadow` flag in `THING_TYPES`) comes out of `FRAME_SPRITES` with
+`fuzz = 1`, and the rasteriser draws it with `R_DrawFuzzColumn`. None of the sprite's own colours
+reach the screen. Each opaque pixel copies the pixel one row above or below it, chosen by DOOM's
+50-entry `fuzzoffset` table, and darkens it through `COLORMAP` 6. The table position carries
+from pixel to pixel and from frame to frame, so the outline ripples as you watch. The
+framebuffer holds RGBA, so a reverse palette lookup turns each pixel back into its palette index
+before darkening. In a dim room a spectre is as hard to see as in DOOM.
 
 ### Sound and music
 

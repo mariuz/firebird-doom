@@ -148,6 +148,29 @@ map = await mapState('E1M2');
 await db.query('SELECT * FROM doom_tic(20, 1, 0, 0.6, 0, 0, 0, 0)');
 await shoot(map, 'screenshot-e1m2.png');
 
+// a spectre (MF_SHADOW): just a shimmer of fuzz over whatever is behind it
+{
+  const p = (await db.query("SELECT t.x, t.y, t.angle FROM things t WHERE t.kind = 'player'")).rows[0];
+  for (const d of [128, 112, 96, 80]) {
+    const x = p.X + Math.cos(p.ANGLE) * d;
+    const y = p.Y + Math.sin(p.ANGLE) * d;
+    const ok = (await db.query(`EXECUTE BLOCK RETURNS (ok SMALLINT) AS
+        DECLARE fz DOUBLE PRECISION; DECLARE cz DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION; DECLARE sec INTEGER;
+        BEGIN
+          EXECUTE PROCEDURE check_position(-1, ${x}, ${y}, (SELECT floor_h FROM sectors WHERE id = sector_at(${x}, ${y})), 30, 56, 1)
+            RETURNING_VALUES ok, fz, cz, dz, sec;
+          SUSPEND;
+        END`)).rows[0].OK;
+    if (ok !== 1) continue;
+    await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
+        EXECUTE PROCEDURE spawn_thing(58, ${x}, ${y}, NULL, ${p.ANGLE + Math.PI}) RETURNING_VALUES id;
+        UPDATE things SET st = 'pain', st_tics = 99, st_len = 99, frame = 'A' WHERE id = :id;   -- (hold still for the photo)
+      END`);
+    await shoot(map, 'screenshot-spectre.png');
+    break;
+  }
+}
+
 // Phase 2 extras: Commander Keen and the Icon of Sin
 const wad2Path = path.join(root, 'public/wads/freedoom2.wad');
 if (!process.env.WAD && fs.existsSync(wad2Path)) {
@@ -155,7 +178,7 @@ if (!process.env.WAD && fs.existsSync(wad2Path)) {
   const res2 = await loadResources(db, wad2);
   const r2 = new Renderer(canvas, wad2, res2);
   Object.assign(renderer, { wad: wad2, res: res2, textures: r2.textures, flats: r2.flats, pictures: r2.pictures,
-    texAnim: r2.texAnim, flatAnim: r2.flatAnim, lut: r2.lut });
+    texAnim: r2.texAnim, flatAnim: r2.flatAnim, lut: r2.lut, unlut: r2.unlut });
   const mapState2 = async (name) => {
     const m = await mapState(name);
     m.skyTex = res2.texId.get(Number(name.slice(3)) < 12 ? 'SKY1' : Number(name.slice(3)) < 21 ? 'SKY2' : 'SKY3') ?? 0;
