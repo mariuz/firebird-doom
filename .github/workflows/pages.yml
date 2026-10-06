@@ -63,6 +63,14 @@ jobs:
         env:
           WAD: public/wads/freedoom2.wad
 
+      - name: Physics, Phase 1 (crushers, 3D projectile aiming)
+        run: npm run test:physics
+
+      - name: Physics, Phase 2 (adds a floor crusher)
+        run: npm run test:physics
+        env:
+          WAD: public/wads/freedoom2.wad
+
       # BSP + solidsegs must find exactly the walls brute force finds
       - name: Renderer equivalence (BSP vs brute force)
         run: npm run test:renderers -- E1M1 E1M2 E1M3

@@ -296,12 +296,14 @@ CREATE TABLE sound_events (
 -- Moving floors and ceilings: doors, lifts, platforms.
 CREATE TABLE movers (
   sector_id INTEGER NOT NULL PRIMARY KEY,
-  kind      VARCHAR(8) NOT NULL,        -- door lift floor ceil
-  dir       SMALLINT NOT NULL,          -- 1 up, -1 down, 0 waiting
+  kind      VARCHAR(8) NOT NULL,        -- door lift floor crush
+  dir       SMALLINT NOT NULL,          -- 1 up, -1 down, 0 waiting (or a stopped crusher)
   speed     DOUBLE PRECISION NOT NULL,
   top_h     DOUBLE PRECISION NOT NULL,
   bottom_h  DOUBLE PRECISION NOT NULL,
   wait_tics INTEGER NOT NULL,
   wait_left INTEGER DEFAULT 0 NOT NULL,
-  stay      SMALLINT DEFAULT 0 NOT NULL -- 1 = do not return after reaching target
+  stay      SMALLINT DEFAULT 0 NOT NULL, -- 1 = do not return after reaching target
+  crush     SMALLINT DEFAULT 0 NOT NULL, -- damages what it squeezes
+  silent    SMALLINT DEFAULT 0 NOT NULL  -- type 141: no grinding noise
 );

@@ -395,14 +395,19 @@ BEGIN
           WHEN sp IN (11, 52) THEN 'exit'
           WHEN sp IN (51, 124) THEN 'secret'
           WHEN sp IN (39, 97) THEN 'teleport'
+          WHEN sp IN (6, 25, 49, 73, 77, 141) THEN 'crush'
+          WHEN sp IN (57, 74) THEN 'crushstop'
+          WHEN sp IN (55, 56, 65, 94) THEN 'fl_crush'
+          WHEN sp = 44 THEN 'ceilcrush'
         END;
   trig = CASE
+           WHEN sp IN (6, 25, 44, 56, 57, 73, 74, 77, 94, 141) THEN 'walk'
            WHEN sp IN (2, 3, 4, 5, 8, 10, 19, 36, 38, 39, 52, 58, 75, 82, 83, 86, 88, 90, 91, 92, 97, 98,
                        105, 106, 107, 108, 109, 110, 119, 120, 121, 124, 128) THEN 'walk'
            WHEN sp = 46 THEN 'shoot'
            ELSE 'use'
          END;
-  repeatable = IIF(sp IN (1, 26, 27, 28, 117, 42, 45, 46, 60, 61, 62, 63, 64, 69, 70, 75, 82, 83, 86, 88,
+  repeatable = IIF(sp IN (65, 73, 74, 77, 94, 1, 26, 27, 28, 117, 42, 45, 46, 60, 61, 62, 63, 64, 69, 70, 75, 82, 83, 86, 88,
                           90, 91, 92, 97, 98, 99, 105, 106, 107, 114, 115, 116, 120, 123, 128, 134, 136), 1, 0);
   IF (act IS NULL OR trig <> how) THEN EXIT;
 
@@ -462,7 +467,19 @@ BEGIN
   BEGIN
     FOR SELECT id, floor_h, ceil_h, floor_flat FROM sectors WHERE tag = :tg INTO sec, fh, ch, flat DO
     BEGIN
-      IF (NOT EXISTS (SELECT 1 FROM movers WHERE sector_id = :sec)) THEN
+      IF (act = 'crushstop') THEN
+      BEGIN
+        -- EV_CeilingCrushStop: remember which way it was going
+        UPDATE movers SET wait_left = dir, dir = 0 WHERE sector_id = :sec AND kind = 'crush' AND dir <> 0;
+        did = 1;
+      END
+      ELSE IF (act = 'crush' AND EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = :sec AND m.kind = 'crush' AND m.dir = 0)) THEN
+      BEGIN
+        -- P_ActivateInStasisCeiling: a stopped crusher starts again
+        UPDATE movers SET dir = IIF(wait_left = 0, -1, wait_left) WHERE sector_id = :sec;
+        did = 1;
+      END
+      ELSE IF (NOT EXISTS (SELECT 1 FROM movers WHERE sector_id = :sec)) THEN
       BEGIN
         did = 1;
         IF (act = 'door_ow') THEN EXECUTE PROCEDURE door_start(sec, spd, 0, 'open');
@@ -495,6 +512,15 @@ BEGIN
             INTO h;
           EXECUTE PROCEDURE floor_start(sec, h, 1);
         END
+        ELSE IF (act = 'crush') THEN
+          INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
+          VALUES (:sec, 'crush', -1, IIF(:sp IN (6, 77), 2, 1), :ch, :fh + 8, 0, 0, 1, IIF(:sp = 141, 1, 0));
+        ELSE IF (act = 'ceilcrush') THEN
+          INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
+          VALUES (:sec, 'crush', -1, 1, :ch, :fh + 8, 0, 1, 1, 0);
+        ELSE IF (act = 'fl_crush') THEN
+          INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
+          VALUES (:sec, 'floor', 1, 1, :ch - 8, :ch - 8, 0, 1, 1, 0);
         ELSE IF (act = 'stairs') THEN
         BEGIN
           -- EV_BuildStairs: raise this sector by 8, then keep stepping into the
@@ -545,6 +571,46 @@ BEGIN
     UPDATE linedefs SET special = 0 WHERE id = :line_id;
 END^
 
+-- P_ChangeSector / PIT_ChangeSector: squeeze everything in a sector whose
+-- ceiling has come down to CH. Corpses turn to gibs; the living take 10
+-- damage every 4 tics and bleed. Returns 1 if anything alive was crushed.
+CREATE OR ALTER PROCEDURE crush_things (sid INTEGER, ch DOUBLE PRECISION)
+RETURNS (crushed SMALLINT)
+AS
+DECLARE tid INTEGER;
+DECLARE k VARCHAR(10);
+DECLARE st VARCHAR(8);
+DECLARE tx DOUBLE PRECISION;
+DECLARE ty DOUBLE PRECISION;
+DECLARE tz DOUBLE PRECISION;
+DECLARE th DOUBLE PRECISION;
+DECLARE tic INTEGER;
+DECLARE dummy INTEGER;
+BEGIN
+  crushed = 0;
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  FOR SELECT t.id, t.kind, t.st, t.x, t.y, t.z, t.height
+        FROM things t
+       WHERE t.sector_id = :sid AND t.z + t.height > :ch AND t.kind IN ('monster', 'player', 'barrel')
+        INTO tid, k, st, tx, ty, tz, th
+  DO
+  BEGIN
+    IF (st = 'dead') THEN
+      UPDATE things SET sprite = 'POL5', frame = 'A', height = 0, solid = 0 WHERE id = :tid;   -- S_GIBS
+    ELSE IF (st <> 'dying') THEN
+    BEGIN
+      crushed = 1;
+      IF (MOD(tic, 4) = 0) THEN
+      BEGIN
+        IF (k = 'player') THEN EXECUTE PROCEDURE damage_player(10);
+        ELSE EXECUTE PROCEDURE damage_thing(tid, 10);
+        EXECUTE PROCEDURE spawn_thing(9011, tx + (RAND() - 0.5e0) * 16, ty + (RAND() - 0.5e0) * 16, tz + th / 2, 0)
+          RETURNING_VALUES dummy;
+      END
+    END
+  END
+END^
+
 CREATE OR ALTER PROCEDURE movers_think
 AS
 DECLARE sid INTEGER;
@@ -560,11 +626,16 @@ DECLARE fh DOUBLE PRECISION;
 DECLARE ch DOUBLE PRECISION;
 DECLARE nh DOUBLE PRECISION;
 DECLARE del SMALLINT;
+DECLARE crush SMALLINT;
+DECLARE silent SMALLINT;
+DECLARE crushed SMALLINT;
+DECLARE tic INTEGER;
 BEGIN
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
   FOR SELECT m.sector_id, m.kind, m.dir, m.speed, m.top_h, m.bottom_h, m.wait_tics, m.wait_left, m.stay,
-             s.floor_h, s.ceil_h
+             s.floor_h, s.ceil_h, m.crush, m.silent
         FROM movers m JOIN sectors s ON s.id = m.sector_id
-        INTO sid, k, dir, spd, top_h, bottom_h, wait_tics, wait_left, stay, fh, ch
+        INTO sid, k, dir, spd, top_h, bottom_h, wait_tics, wait_left, stay, fh, ch, crush, silent
   DO
   BEGIN
     del = 0;
@@ -643,6 +714,26 @@ BEGIN
       UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
          AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type AND tt.hang = 1);
     END
+    ELSE IF (k = 'crush') THEN
+    BEGIN
+      -- T_MoveCeiling for crushers: down to floor + 8 squeezing everything
+      -- (the slow ones slow to an eighth while they crush), back up, again –
+      -- or stop at the bottom for a one-shot (stay = 1); dir 0 means stopped
+      IF (dir = -1) THEN
+      BEGIN
+        EXECUTE PROCEDURE crush_things(sid, ch - spd) RETURNING_VALUES crushed;
+        ch = MAXVALUE(ch - IIF(crushed = 1 AND spd <= 1, spd / 8, spd), bottom_h);
+        IF (ch <= bottom_h) THEN
+          IF (stay = 1) THEN del = 1; ELSE dir = 1;
+      END
+      ELSE IF (dir = 1) THEN
+      BEGIN
+        ch = MINVALUE(ch + spd, top_h);
+        IF (ch >= top_h) THEN dir = -1;
+      END
+      IF (dir <> 0 AND silent = 0 AND MOD(tic, 8) = 0) THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
+      UPDATE sectors SET ceil_h = :ch WHERE id = :sid;
+    END
     ELSE
     BEGIN
       -- plain floor mover: top_h is the target
@@ -651,6 +742,13 @@ BEGIN
       UPDATE sectors SET floor_h = :fh WHERE id = :sid;
       UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
          AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type AND tt.hang = 1);
+      -- raiseFloorCrush: squeeze what rides it up against the ceiling
+      IF (crush = 1) THEN
+      BEGIN
+        UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind = 'player' AND t.z < :fh;
+        EXECUTE PROCEDURE crush_things(sid, ch) RETURNING_VALUES crushed;
+        IF (silent = 0 AND MOD(tic, 8) = 0) THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
+      END
     END
 
     IF (del = 1) THEN
@@ -725,16 +823,72 @@ BEGIN
   END
 END^
 
--- P_SpawnPlayerMissile: a projectile leaving the shooter at gun height.
+-- P_AimLineAttack, simplified: the slope from (SX, SY, SZ) to the nearest
+-- shootable thing along ANG within RNG that can be seen and sits inside
+-- DOOM's vertical aiming window (±100/160); NULL if there is none.
+CREATE OR ALTER PROCEDURE aim_slope (
+  sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION, ang DOUBLE PRECISION,
+  rng DOUBLE PRECISION, shooter INTEGER)
+RETURNS (slope DOUBLE PRECISION)
+AS
+DECLARE ddx DOUBLE PRECISION;
+DECLARE ddy DOUBLE PRECISION;
+DECLARE tx DOUBLE PRECISION;
+DECLARE ty DOUBLE PRECISION;
+DECLARE tmid DOUBLE PRECISION;
+DECLARE along DOUBLE PRECISION;
+BEGIN
+  slope = NULL;
+  ddx = COS(ang);
+  ddy = SIN(ang);
+  FOR SELECT q.x, q.y, q.mid, q.along
+        FROM (SELECT t.x, t.y, t.z + t.height / 2 mid, t.radius,
+                     (t.x - :sx) * :ddx + (t.y - :sy) * :ddy along,
+                     ABS((t.x - :sx) * :ddy - (t.y - :sy) * :ddx) perp
+                FROM things t
+               WHERE t.kind IN ('monster', 'barrel', 'keen', 'brain') AND t.st NOT IN ('dying', 'dead')
+                 AND t.id <> :shooter) q
+       WHERE q.along > 0 AND q.along < :rng AND q.perp < q.radius
+         AND ABS(q.mid - :sz) <= q.along * 100 / 160
+       ORDER BY q.along
+        INTO tx, ty, tmid, along
+  DO
+  BEGIN
+    IF (check_sight(sx, sy, sz, tx, ty, tmid) = 1) THEN
+    BEGIN
+      slope = (tmid - sz) / along;
+      EXIT;
+    END
+  END
+END^
+
+-- P_SpawnPlayerMissile: a projectile leaving the shooter at gun height,
+-- autoaimed: straight ahead, else 5.625° either side, else level.
 CREATE OR ALTER PROCEDURE fire_missile (
   mtype INTEGER, owner INTEGER, sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION, ang DOUBLE PRECISION)
 AS
 DECLARE mid INTEGER;
 DECLARE spd DOUBLE PRECISION;
+DECLARE slope DOUBLE PRECISION;
+DECLARE aim DOUBLE PRECISION;
+DECLARE tries INTEGER = 0;
 BEGIN
   SELECT speed FROM thing_types WHERE thing_type = :mtype INTO spd;
-  EXECUTE PROCEDURE spawn_thing(mtype, sx, sy, sz + 32, ang) RETURNING_VALUES mid;
-  UPDATE things t SET momx = COS(:ang) * :spd, momy = SIN(:ang) * :spd, owner_id = :owner WHERE t.id = :mid;
+  slope = NULL;
+  WHILE (tries < 3 AND slope IS NULL) DO
+  BEGIN
+    aim = ang + CASE tries WHEN 1 THEN 0.09817e0 WHEN 2 THEN -0.09817e0 ELSE 0 END;
+    EXECUTE PROCEDURE aim_slope(sx, sy, sz + 32, aim, 1024, owner) RETURNING_VALUES slope;
+    tries = tries + 1;
+  END
+  IF (slope IS NULL) THEN
+  BEGIN
+    slope = 0;
+    aim = ang;
+  END
+  EXECUTE PROCEDURE spawn_thing(mtype, sx, sy, sz + 32, aim) RETURNING_VALUES mid;
+  UPDATE things t SET momx = COS(:aim) * :spd, momy = SIN(:aim) * :spd, momz = :spd * :slope, owner_id = :owner
+   WHERE t.id = :mid;
 END^
 
 -- P_RadiusAttack: DMG at the centre, minus the distance (box distance less
@@ -1256,15 +1410,22 @@ END^
 -- chest height, flying along ANG.
 CREATE OR ALTER PROCEDURE monster_missile (
   owner INTEGER, mtype INTEGER, sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION,
-  rad DOUBLE PRECISION, ang DOUBLE PRECISION)
+  rad DOUBLE PRECISION, ang DOUBLE PRECISION,
+  tx DOUBLE PRECISION, ty DOUBLE PRECISION, tz DOUBLE PRECISION)
 AS
 DECLARE mid INTEGER;
 DECLARE spd DOUBLE PRECISION;
+DECLARE flight DOUBLE PRECISION;
 BEGIN
   SELECT speed FROM thing_types WHERE thing_type = :mtype INTO spd;
   EXECUTE PROCEDURE spawn_thing(mtype, sx + COS(ang) * (rad + 8), sy + SIN(ang) * (rad + 8), sz + 32, ang)
     RETURNING_VALUES mid;
-  UPDATE things t SET momx = COS(:ang) * :spd, momy = SIN(:ang) * :spd, owner_id = :owner WHERE t.id = :mid;
+  -- momz = (dest z − source z) / tics of flight: feet to feet, so a missile
+  -- launched at chest height arrives at chest height
+  flight = MAXVALUE(1e0, SQRT((tx - sx) * (tx - sx) + (ty - sy) * (ty - sy)) / spd);
+  UPDATE things t SET momx = COS(:ang) * :spd, momy = SIN(:ang) * :spd, momz = (:tz - :sz) / :flight,
+                      owner_id = :owner
+   WHERE t.id = :mid;
 END^
 
 -- A_PainShootSkull: a lost soul from in front of a pain elemental, charging
@@ -1409,13 +1570,18 @@ DECLARE melee_rolls INTEGER;
 DECLARE corpse INTEGER;
 DECLARE cx DOUBLE PRECISION;
 DECLARE cy DOUBLE PRECISION;
+DECLARE momz DOUBLE PRECISION;
+DECLARE nz DOUBLE PRECISION;
+DECLARE mfz DOUBLE PRECISION;
+DECLARE mcz DOUBLE PRECISION;
+DECLARE msky SMALLINT;
 BEGIN
   SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
     INTO px, py, pz, pdead, ptid, pang;
   SELECT g.noise_tic FROM game g WHERE g.id = 1 INTO noise_tic;
 
   FOR SELECT t.id, t.kind, t.x, t.y, t.z, t.angle, t.st, t.st_tics, t.st_len, t.step, t.reaction,
-             t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame,
+             t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame, t.momz,
              tt.speed, tt.walk_fr, tt.atk_fr, tt.death_fr, tt.atk_kind, tt.missile_type,
              tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id, tt.see_snd, tt.atk_snd, tt.death_snd, t.thing_type,
              tt.melee_fr, tt.melee_snd, tt.melee_hit_snd, tt.melee_dmg, tt.melee_rolls
@@ -1424,7 +1590,7 @@ BEGIN
          AND t.st NOT IN ('dead')
          AND NOT (t.kind = 'barrel' AND t.st = 'idle')
          AND NOT (t.st = 'idle' AND MOD(:tic + t.id, 8) <> 0)
-        INTO id, k, x, y, z, ang, st, st_tics, st_len, step, reaction, rad, hgt, momx, momy, owner_id, flags, frame,
+        INTO id, k, x, y, z, ang, st, st_tics, st_len, step, reaction, rad, hgt, momx, momy, owner_id, flags, frame, momz,
              spd, walk_fr, atk_fr, death_fr, atk_kind, missile_type, dmg_lo, dmg_hi, shots, sec,
              see_snd, atk_snd, death_snd, ttype,
              melee_fr, melee_snd, melee_hit_snd, melee_dmg, melee_rolls
@@ -1590,12 +1756,17 @@ BEGIN
           ELSE ang = ang + SIGN(a0) * 0.29452e0;
           momx = COS(ang) * spd;
           momy = SIN(ang) * spd;
-          UPDATE things t SET momx = :momx, momy = :momy WHERE t.id = :id;
+          -- …and nudges its climb by 1/8 towards the player's eye height
+          momz = momz + IIF((pz + 40 - z) / MAXVALUE(1e0, SQRT((px - x) * (px - x) + (py - y) * (py - y)) / spd) < momz,
+                            -0.125e0, 0.125e0);
+          UPDATE things t SET momx = :momx, momy = :momy, momz = :momz WHERE t.id = :id;
           EXECUTE PROCEDURE spawn_thing(9010, x - momx, y - momy, z, 0) RETURNING_VALUES mid;
         END
         nx = x + momx;
         ny = y + momy;
+        nz = z + momz;
         frame = SUBSTRING(walk_fr FROM 1 + MOD(tic / 4, CHAR_LENGTH(walk_fr)) FOR 1);
+        SELECT se.floor_h, se.ceil_h, se.sky FROM sectors se WHERE se.id = sector_at(:nx, :ny) INTO mfz, mcz, msky;
         -- P_CheckMissileSpawn / PIT_CheckThing: what does it hit this tic?
         mdmg = dmg_lo * (1 + CAST(FLOOR(RAND() * 8) AS INTEGER));
         hit = NULL;
@@ -1604,8 +1775,9 @@ BEGIN
            WHERE t.x BETWEEN :nx - 64 AND :nx + 64
              AND t.kind IN ('monster', 'barrel', 'keen', 'brain') AND t.st NOT IN ('dying', 'dead')
              AND ABS(t.x - :nx) < t.radius + :rad AND ABS(t.y - :ny) < t.radius + :rad
+             AND t.z <= :nz + :hgt AND t.z + t.height >= :nz
             INTO hit;
-        ELSE IF (SQRT((px - nx) * (px - nx) + (py - ny) * (py - ny)) < 16 + rad AND z >= pz - 8 AND z <= pz + 64) THEN
+        ELSE IF (SQRT((px - nx) * (px - nx) + (py - ny) * (py - ny)) < 16 + rad AND nz <= pz + 56 AND nz + hgt >= pz) THEN
           hit = ptid;
         IF (hit = ptid) THEN
         BEGIN
@@ -1617,12 +1789,23 @@ BEGIN
           EXECUTE PROCEDURE damage_thing(hit, mdmg);
           st = 'dying';
         END
-        ELSE IF (check_sight(x, y, z, nx, ny, z) = 0) THEN
+        ELSE IF (check_sight(x, y, z, nx, ny, nz) = 0) THEN
           st = 'dying';
+        ELSE IF (nz + hgt >= mcz AND msky = 1) THEN
+          del = 1;                                   -- into the sky: gone, no explosion
+        ELSE IF (nz <= mfz OR nz + hgt >= mcz) THEN
+        BEGIN
+          x = nx;                                    -- hit the floor or the ceiling
+          y = ny;
+          z = MINVALUE(MAXVALUE(nz, mfz), mcz - hgt);
+          sec = sector_at(x, y);
+          st = 'dying';
+        END
         ELSE
         BEGIN
           x = nx;
           y = ny;
+          z = nz;
           sec = sector_at(x, y);
         END
         IF (st = 'dying') THEN
@@ -1700,9 +1883,9 @@ BEGIN
         n = (st_len - st_tics - 8) / 24;                        -- volley 0, 1, 2
         EXECUTE PROCEDURE play_sound('DSFIRSHT', id, x, y);
         EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad,
-          ang + CASE n WHEN 2 THEN -0.09817e0 ELSE 0 END);
+          ang + CASE n WHEN 2 THEN -0.09817e0 ELSE 0 END, px, py, pz);
         EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad,
-          ang + CASE n WHEN 0 THEN 0.19635e0 WHEN 1 THEN -0.39270e0 ELSE 0.09817e0 END);
+          ang + CASE n WHEN 0 THEN 0.19635e0 WHEN 1 THEN -0.39270e0 ELSE 0.09817e0 END, px, py, pz);
       END
       -- A_VileTarget (frame H): conjure the flame on the player.
       -- A_VileAttack (frame O): if we can still see them, 20 damage, a toss
@@ -1751,7 +1934,7 @@ BEGIN
         ELSE IF (atk_kind = 'missile' AND missile_type = 3006) THEN
           EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang);
         ELSE IF (atk_kind = 'missile') THEN
-          EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad, ang);
+          EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad, ang, px, py, pz);
       END
       IF (st_tics <= 0) THEN
       BEGIN

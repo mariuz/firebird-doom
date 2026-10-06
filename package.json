@@ -13,7 +13,8 @@
     "test:renderers": "node scripts/compare-renderers.mjs",
     "screenshots": "node scripts/screenshot.mjs",
     "test:weapons": "node scripts/weapons-test.mjs",
-    "test:specials": "node scripts/specials-test.mjs"
+    "test:specials": "node scripts/specials-test.mjs",
+    "test:physics": "node scripts/physics-test.mjs"
   },
   "license": "MIT",
   "dependencies": {

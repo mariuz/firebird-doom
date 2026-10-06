@@ -28,12 +28,15 @@ for (const name of wad.mapNames()) {
     const s = await db.query('SELECT COUNT(*) n FROM frame_sprites');
     const frameMs = performance.now() - t;
     let tele = '';
-    const tl = (await db.query('SELECT FIRST 1 id FROM linedefs WHERE special IN (39, 97) AND tag > 0')).rows[0];
+    const tl = (await db.query('SELECT FIRST 1 id, tag FROM linedefs WHERE special IN (39, 97) AND tag > 0')).rows[0];
     if (tl) {
-      const before = (await db.query("SELECT x, y FROM things WHERE kind = 'player'")).rows[0];
       await db.exec(`EXECUTE PROCEDURE activate_line(${tl.ID}, 'walk')`);
       const after = (await db.query("SELECT x, y FROM things WHERE kind = 'player'")).rows[0];
-      tele = before.X !== after.X || before.Y !== after.Y ? ' teleport ok' : ' TELEPORT FAILED';
+      // success = standing on the destination (the walk may already have used a teleporter to it)
+      const dest = (await db.query(`SELECT FIRST 1 t.x, t.y FROM things t JOIN sectors s ON s.id = t.sector_id
+                                      WHERE t.thing_type = 14 AND s.tag = ${tl.TAG}`)).rows[0];
+      tele = dest && after.X === dest.X && after.Y === dest.Y ? ' teleport ok'
+        : dest ? ' TELEPORT FAILED' : ' (no destination)';
       if (tele.includes('FAILED')) failures++;
     }
     const ok = w.rows[0].C === 320;

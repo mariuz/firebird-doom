@@ -42,6 +42,8 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_CheckPosition`, `P_TryMove` | `CHECK_POSITION`, plus wall sliding in `PLAYER_THINK` |
 | `P_CheckSight` | `CHECK_SIGHT()` walks the blockmap cells along the sight line |
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
+| `EV_DoCeiling` crushers, `EV_CeilingCrushStop`, `raiseFloorCrush`, `P_ChangeSector` | the `crush` mover kind, `CRUSH_THINGS` |
+| `P_SpawnMissile` / `P_SpawnPlayerMissile` aiming, `P_AimLineAttack`, `P_ZMovement` for missiles | `MONSTER_MISSILE`, `FIRE_MISSILE`, `AIM_SLOPE`; 3D flight in `MONSTERS_THINK` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `MONSTERS_THINK` |
 | `A_Tracer`, `A_SkelFist` (revenant), `A_FatAttack1/2/3` (mancubus), `A_VileTarget` / `A_Fire` / `A_VileAttack` / `A_VileChase` (arch-vile), `A_PainShootSkull` / `A_PainDie` | `MONSTERS_THINK` (the `melee`, `heal` and `raise` states, the `flame` kind), `MONSTER_MISSILE`, `PAIN_SHOOT_SKULL` |
 | `A_BossDeath`, `A_KeenDie` | `BOSS_DEATH`, `KEEN_DIE` |
@@ -195,7 +197,9 @@ sounds, damage, splash and pickups.
   arch-vile's flame follows you before the blast throws you upwards, the arch-vile raises a
   corpse, and a dying pain elemental releases lost souls (but never past 20)
 
-Use `WAD=public/wads/freedoom2.wad` for the Phase 2 parts. `npm run test:renderers` compares the
+Use `WAD=public/wads/freedoom2.wad` for the Phase 2 parts. `npm run test:physics` drives real crushers (descent, damage, gibs, stop and resume, floor
+crushers) and checks missile slopes, autoaim with its 5.625° fallback, floor impacts and the sky.
+`npm run test:renderers` compares the
 BSP and brute-force renderers from several spots and headings on every map, and reports the
 speed-up. `npm run screenshots` regenerates
 `docs/*.png`. `node scripts/bench.mjs queries.sql` times SQL statements against a loaded map, with
@@ -223,8 +227,18 @@ GitHub Pages. Pull requests run everything except the deploy.
 ## Simplifications
 
 Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
-Projectiles fly flat, and there are no crushers. The DOOM II monsters' signature attacks follow
-DOOM's code:
+Crushers work. Ceiling crushers (types 6, 25, 49, 73, 77 and the silent 141) cycle between
+their top and floor + 8. They deal 10 damage every 4 tics to whatever they squeeze, the slow ones
+drop to ⅛ speed while crushing, and corpses turn to gibs. Types 57 and 74 stop them, and
+triggering one again resumes it. Floor crushers (55, 56, 65, 94) rise to ceiling − 8, and type 44
+lowers a ceiling once.
+
+Projectiles fly in 3D. Monster missiles climb or dive towards your height, and revenant tracers
+steer vertically too. Your rockets, plasma and BFG autoaim vertically at the first monster in line
+(straight ahead, else 5.625° either side, as DOOM does). Missiles burst on floors and ceilings,
+vanish into the sky, and only hit what they actually reach. Hitscan weapons still ignore height.
+
+The DOOM II monsters' signature attacks follow DOOM's code:
 
 - revenant missiles home like `A_Tracer`, turning up to 16.875° every 4 tics and trailing smoke
 - the revenant punches at close range (`A_SkelFist`, 6 × 1d10)
