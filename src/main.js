@@ -15,6 +15,7 @@ import { Renderer } from './renderer.js';
 import { drawStatusBar, drawText, drawWeapon } from './hud.js';
 import { AM_COLORS, automapColor } from './automap.js';
 import { clevMap, idmusMap, makeCheatReader, makeParamCheatReader } from './cheats.js';
+import { nextMap } from './progress.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -219,24 +220,6 @@ async function startMap(name, newGame) {
   running = true;
 }
 
-function nextMap(name, secret) {
-  const m = /^E(\d)M(\d)$/.exec(name);
-  if (m) {
-    const e = Number(m[1]);
-    const n = Number(m[2]);
-    const secretFrom = { 1: 3, 2: 5, 3: 6, 4: 2 }[e];
-    let next;
-    if (secret) next = `E${e}M9`;
-    else if (n === 9) next = `E${e}M${secretFrom + 1}`;
-    else if (n === 8) next = `E${e + 1}M1`;
-    else next = `E${e}M${n + 1}`;
-    return wad.lump(next) ? next : wad.mapNames()[0];
-  }
-  const n = Number(name.slice(3));
-  const next = `MAP${String(n + 1).padStart(2, '0')}`;
-  return wad.lump(next) ? next : wad.mapNames()[0];
-}
-
 // ── the loop ─────────────────────────────────────────────────────────────
 // requestAnimationFrame, with a timer as backstop: rAF stalls in occluded
 // panes and iframes even while the page counts as visible.
@@ -275,7 +258,7 @@ async function frame() {
       else {
         setStatus(`${map.name} finished — ${stats}`);
         await new Promise((r) => setTimeout(r, 1500));
-        await startMap(nextMap(map.name, kind === 2), false);
+        await startMap(nextMap(map.name, kind === 2, wad.mapNames()), false);
       }
       nextFrame();
       return;

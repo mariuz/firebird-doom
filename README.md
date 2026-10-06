@@ -43,6 +43,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_CheckPosition`, `P_TryMove` | `CHECK_POSITION`, plus wall sliding in `PLAYER_THINK` |
 | `P_CheckSight` | `CHECK_SIGHT()` walks the blockmap cells along the sight line |
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
+| `G_DoCompleted`: which map comes next, secret exits included | [src/progress.js](src/progress.js) |
 | `EV_DoCeiling` crushers, `EV_CeilingCrushStop`, `raiseFloorCrush`, `P_ChangeSector` | the `crush` mover kind, `CRUSH_THINGS` |
 | `P_SpawnMissile` / `P_SpawnPlayerMissile` aiming, `P_AimLineAttack`, `P_ZMovement` for missiles | `MONSTER_MISSILE`, `FIRE_MISSILE`, `AIM_SLOPE`; 3D flight in `MONSTERS_THINK` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `MONSTERS_THINK` |
@@ -192,6 +193,15 @@ shows every line, hidden (`ML_DONTDRAW`) and unseen ones included, with flat two
 in grey (`TSWALLCOLORS`). Twice also draws every thing in the level as a green triangle facing
 its way (`AM_drawThings`), read live from `THINGS`. A third time turns it off. Like DOOM, the cheat
 prints no message and isn't stored in the database.
+
+### Level order
+
+When you leave a level, [src/progress.js](src/progress.js) picks the next one, as `G_DoCompleted`
+does. On DOOM I, a secret exit leads to E?M9, and E?M9 returns to the map after the one with the
+secret exit. E?M8 carries on into the next episode, since there's no finale screen. On DOOM II,
+MAP15's secret exit leads to MAP31 and MAP31's to MAP32, and the normal exits of both secret
+levels return to MAP16. A secret exit on any other map counts as a normal one. MAP30 ends the
+game, so it's back to MAP01.
 
 ### Cheats
 

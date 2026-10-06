@@ -683,6 +683,42 @@ if (slimeMap) {
   assert(clevBad.length === 0, `IDCLEV parsing (${clevCases.length} cases${clevBad.length ? `; wrong: ${clevBad.join(', ')}` : ''})`);
 }
 
+// ── which map comes next (G_DoCompleted) ─────────────────────────────────
+{
+  const { nextMap } = await import('../src/progress.js');
+  const d1 = ['E1M1', 'E1M2', 'E1M3', 'E1M4', 'E1M8', 'E1M9', 'E2M1', 'E2M5', 'E2M6', 'E2M9'];
+  const d2 = Array.from({ length: 32 }, (_, i) => `MAP${String(i + 1).padStart(2, '0')}`);
+  const cases = [
+    [nextMap('E1M1', false, d1), 'E1M2', 'E1M1 → E1M2'],
+    [nextMap('E1M3', true, d1), 'E1M9', 'E1M3, secret exit → E1M9'],
+    [nextMap('E1M9', false, d1), 'E1M4', 'E1M9 → E1M4, after the secret exit\'s map'],
+    [nextMap('E1M8', false, d1), 'E2M1', 'E1M8 → the next episode'],
+    [nextMap('E2M9', false, d1), 'E2M6', 'E2M9 → E2M6'],
+    [nextMap('MAP01', false, d2), 'MAP02', 'MAP01 → MAP02'],
+    [nextMap('MAP15', false, d2), 'MAP16', 'MAP15, normal exit → MAP16'],
+    [nextMap('MAP15', true, d2), 'MAP31', 'MAP15, secret exit → MAP31'],
+    [nextMap('MAP31', true, d2), 'MAP32', 'MAP31, secret exit → MAP32'],
+    [nextMap('MAP31', false, d2), 'MAP16', 'MAP31, normal exit → back to MAP16'],
+    [nextMap('MAP32', false, d2), 'MAP16', 'MAP32 → back to MAP16'],
+    [nextMap('MAP07', true, d2), 'MAP08', 'a secret exit elsewhere is a plain one'],
+    [nextMap('MAP30', false, d2), 'MAP01', 'MAP30 ends the game: back to MAP01'],
+    [nextMap('MAP15', true, d2.slice(0, 30)), 'MAP01', 'no MAP31 in the WAD: the first map'],
+  ];
+  const bad = cases.filter(([g, w]) => g !== w).map(([g, , what]) => `${what} (got ${g})`);
+  assert(bad.length === 0, `map order (${cases.length} cases${bad.length ? `; wrong: ${bad.join(', ')}` : ''})`);
+
+  // in this WAD: MAP15's and MAP31's secret exit lines really do raise the secret exit
+  for (const [m, to] of [['MAP15', 'MAP31'], ['MAP31', 'MAP32']]) {
+    if (!maps.includes(m)) continue;
+    await loadMap(db, wad, res, m);
+    const l = await one(`SELECT FIRST 1 l.id FROM linedefs l WHERE l.special IN (51, 124) ORDER BY l.id`);
+    if (!l) { assert(false, `${m} has a secret exit line`); continue; }
+    await db.exec(`EXECUTE PROCEDURE activate_line(${l.ID}, ${(await one(`SELECT special FROM linedefs WHERE id = ${l.ID}`)).SPECIAL === 124 ? "'walk'" : "'use'"})`);
+    const kind = (await one('SELECT exit_kind FROM game')).EXIT_KIND;
+    assert(kind === 2 && nextMap(m, kind === 2, maps) === to, `${m}: its secret exit (line ${l.ID}) leads to ${nextMap(m, kind === 2, maps)}`);
+  }
+}
+
 // ── IDCLIP: through a wall and out the other side ───────────────────────
 {
   await loadMap(db, wad, res, maps[0]);
