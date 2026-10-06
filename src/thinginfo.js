@@ -13,9 +13,9 @@ const I = (type, sprite, pickup, amount, o = {}) => ({ type, sprite, kind: 'item
 export const THING_TYPES = [
   // player start + projectiles + effects (spawned by SQL, never by maps)
   { type: 1, sprite: 'PLAY', kind: 'player', radius: 16, height: 56, solid: 1, hp: 100, walk: 'ABCD', pain: 'G', death: 'HIJKLMN' },
-  { type: 9000, sprite: 'BAL1', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, deathSnd: 'DSFIRXPL' },
-  { type: 9001, sprite: 'BAL2', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, deathSnd: 'DSFIRXPL' },
-  { type: 9002, sprite: 'BAL7', kind: 'missile', radius: 6, height: 16, speed: 15, walk: 'AB', death: 'CDE', bright: 1, deathSnd: 'DSFIRXPL' },
+  { type: 9000, sprite: 'BAL1', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 3, dmgHi: 24, deathSnd: 'DSFIRXPL' },
+  { type: 9001, sprite: 'BAL2', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL' },
+  { type: 9002, sprite: 'BAL7', kind: 'missile', radius: 6, height: 16, speed: 15, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 8, dmgHi: 64, deathSnd: 'DSFIRXPL' },
   { type: 14, sprite: 'TFOG', kind: 'marker', radius: 1, height: 1, walk: 'A' }, // teleport destination
   // the player's projectiles: damage is dmgLo × (1..8), like DOOM's ((P_Random()%8)+1)*damage
   { type: 9003, sprite: 'MISL', kind: 'missile', radius: 11, height: 8, speed: 20, walk: 'A', death: 'BCD', bright: 1, dmgLo: 20, dmgHi: 160, deathSnd: 'DSBAREXP' },

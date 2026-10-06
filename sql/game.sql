@@ -256,7 +256,7 @@ DECLARE saved INTEGER;
 DECLARE is_dead SMALLINT;
 BEGIN
   SELECT armor, dead FROM player WHERE id = 1 INTO arm, is_dead;
-  IF (is_dead = 1 OR dmg <= 0) THEN EXIT;
+  IF (is_dead = 1 OR COALESCE(dmg, 0) <= 0) THEN EXIT;
   saved = IIF(arm > 0, MINVALUE(arm, dmg / 3), 0);
   UPDATE player
      SET armor = armor - :saved,
@@ -289,7 +289,8 @@ BEGIN
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
    WHERE t.id = :tid
     INTO k, hp, st, pain_chance, pain_fr, death_fr, death_sprite, drop_type, tx, ty, pain_snd, death_snd;
-  IF (k IS NULL OR k NOT IN ('monster', 'barrel', 'keen', 'brain') OR st IN ('dying', 'dead')) THEN EXIT;
+  IF (k IS NULL OR k NOT IN ('monster', 'barrel', 'keen', 'brain') OR st IN ('dying', 'dead')
+      OR COALESCE(dmg, 0) <= 0) THEN EXIT;
   hp = hp - dmg;
   IF (hp <= 0) THEN
   BEGIN
@@ -1266,6 +1267,31 @@ BEGIN
   UPDATE things t SET momx = COS(:ang) * :spd, momy = SIN(:ang) * :spd, owner_id = :owner WHERE t.id = :mid;
 END^
 
+-- A_PainShootSkull: a lost soul from in front of a pain elemental, charging
+-- at once – unless 20 are already about, or there is no room for it.
+CREATE OR ALTER PROCEDURE pain_shoot_skull (
+  sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION, rad DOUBLE PRECISION, ang DOUBLE PRECISION)
+AS
+DECLARE prestep DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION;
+DECLARE ny DOUBLE PRECISION;
+DECLARE ok SMALLINT;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
+DECLARE dz DOUBLE PRECISION;
+DECLARE sec INTEGER;
+DECLARE mid INTEGER;
+BEGIN
+  IF ((SELECT COUNT(*) FROM things s WHERE s.thing_type = 3006 AND s.st NOT IN ('dying', 'dead')) >= 20) THEN EXIT;
+  prestep = 4 + 3 * (rad + 16) / 2;
+  nx = sx + COS(ang) * prestep;
+  ny = sy + SIN(ang) * prestep;
+  EXECUTE PROCEDURE check_position(-1, nx, ny, sz, 16, 56, 0) RETURNING_VALUES ok, fz, cz, dz, sec;
+  IF (ok = 0 OR check_sight(sx, sy, sz + 32, nx, ny, sz + 32) = 0) THEN EXIT;
+  EXECUTE PROCEDURE spawn_thing(3006, nx, ny, NULL, ang) RETURNING_VALUES mid;
+  UPDATE things t SET st = 'chase', st_tics = 0, reaction = 0 WHERE t.id = :mid;
+END^
+
 -- A_BossDeath: when the last of a boss type dies, some maps open up or end.
 CREATE OR ALTER PROCEDURE boss_death (ttype INTEGER)
 AS
@@ -1380,6 +1406,9 @@ DECLARE melee_snd VARCHAR(8);
 DECLARE melee_hit_snd VARCHAR(8);
 DECLARE melee_dmg INTEGER;
 DECLARE melee_rolls INTEGER;
+DECLARE corpse INTEGER;
+DECLARE cx DOUBLE PRECISION;
+DECLARE cy DOUBLE PRECISION;
 BEGIN
   SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
     INTO px, py, pz, pdead, ptid, pang;
@@ -1491,6 +1520,30 @@ BEGIN
         IF (MOD(tic, 16) = 0) THEN EXECUTE PROCEDURE play_sound('DSFLAME', id, x, y);   -- A_FireCrackle
       END
     END
+    ELSE IF (st = 'heal') THEN
+    BEGIN
+      st_tics = st_tics - 1;
+      frame = SUBSTRING('[\]' FROM 1 + MINVALUE(2, (st_len - st_tics) / 10) FOR 1);
+      IF (st_tics <= 0) THEN
+      BEGIN
+        st = 'chase';
+        st_tics = 0;
+      END
+    END
+    ELSE IF (st = 'raise') THEN
+    BEGIN
+      -- the death frames in reverse, 5 tics each, then back on the hunt
+      st_tics = st_tics - 1;
+      idx = MINVALUE(CHAR_LENGTH(death_fr) - 1, (st_len - st_tics) / 5);
+      frame = SUBSTRING(death_fr FROM CHAR_LENGTH(death_fr) - idx FOR 1);
+      IF (st_tics <= 0) THEN
+      BEGIN
+        st = 'chase';
+        st_tics = 0;
+        step = 0;
+        frame = SUBSTRING(walk_fr FROM 1 FOR 1);
+      END
+    END
     ELSE IF (st = 'melee') THEN
     BEGIN
       -- A_SkelWhoosh then A_SkelFist: swing on the second frame, hit on the third
@@ -1597,6 +1650,13 @@ BEGIN
         -- A_Explode: 128 damage, falling off with distance
         EXECUTE PROCEDURE radius_attack(x, y, z, 128, id);
       END
+      -- A_PainDie (death frame L): three lost souls, at 90°, 180° and 270°
+      IF (ttype = 71 AND st_len - st_tics = 20) THEN
+      BEGIN
+        EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI() / 2);
+        EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI());
+        EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI() * 3 / 2);
+      END
       IF (st_tics <= 0) THEN
       BEGIN
         IF (k = 'barrel') THEN del = 1;
@@ -1652,7 +1712,7 @@ BEGIN
       IF (atk_kind = 'vile' AND pdead = 0 AND st_len - st_tics = 8) THEN
       BEGIN
         EXECUTE PROCEDURE spawn_thing(9015, px + COS(pang) * 24, py + SIN(pang) * 24, pz, 0) RETURNING_VALUES mid;
-        UPDATE things t SET owner_id = :id WHERE t.id = :mid;
+        UPDATE things t SET owner_id = :id, st = 'burn' WHERE t.id = :mid;     -- (idle things only think every 8 tics)
         EXECUTE PROCEDURE play_sound('DSFLAMST', mid, px, py);
       END
       IF (atk_kind = 'vile' AND pdead = 0 AND st_len - st_tics = 72
@@ -1688,11 +1748,10 @@ BEGIN
           IF (dist < melee_range + 16) THEN
             EXECUTE PROCEDURE damage_player(dmg_lo + CAST(FLOOR(RAND() * (dmg_hi - dmg_lo + 1)) AS INTEGER));
         END
-        ELSE IF (atk_kind = 'missile' AND NOT (missile_type = 3006 AND
-                 (SELECT COUNT(*) FROM things s WHERE s.thing_type = 3006 AND s.st NOT IN ('dying', 'dead')) >= 20)) THEN
-        BEGIN
+        ELSE IF (atk_kind = 'missile' AND missile_type = 3006) THEN
+          EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang);
+        ELSE IF (atk_kind = 'missile') THEN
           EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad, ang);
-        END
       END
       IF (st_tics <= 0) THEN
       BEGIN
@@ -1711,7 +1770,39 @@ BEGIN
         frame = SUBSTRING(walk_fr FROM 1 + MOD(step, CHAR_LENGTH(walk_fr)) FOR 1);
         IF (reaction > 0) THEN reaction = reaction - 1;
         melee_range = 60 + rad / 2;
-        IF (pdead = 0 AND reaction = 0 AND dist < 2048
+        -- A_VileChase: a raisable corpse within reach, with room to stand up?
+        -- (not lost souls, cyberdemons, spider masterminds or other arch-viles)
+        corpse = NULL;
+        IF (atk_kind = 'vile') THEN
+          SELECT FIRST 1 t.id, t.x, t.y
+            FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+           WHERE t.x BETWEEN :x - 96 AND :x + 96
+             AND t.kind = 'monster' AND t.st = 'dead' AND t.thing_type NOT IN (3006, 16, 7, 64)
+             AND SQRT((t.x - :x) * (t.x - :x) + (t.y - :y) * (t.y - :y)) < tt.radius + :rad + :spd
+             AND NOT EXISTS (SELECT 1 FROM things o
+                              WHERE o.solid = 1 AND o.id <> t.id AND o.id <> :id
+                                AND o.x BETWEEN t.x - 96 AND t.x + 96
+                                AND ABS(o.x - t.x) < o.radius + tt.radius AND ABS(o.y - t.y) < o.radius + tt.radius)
+            INTO corpse, cx, cy;
+        IF (corpse IS NOT NULL) THEN
+        BEGIN
+          -- S_VILE_HEAL: the arch-vile turns to it, hands aglow…
+          st = 'heal';
+          st_len = 30;
+          st_tics = 30;
+          frame = '[';
+          ang = ATAN2(cy - y, cx - x);
+          EXECUTE PROCEDURE play_sound('DSSLOP', corpse, cx, cy);
+          -- …and the corpse gets up: full health, solid and shootable at once,
+          -- its death animation played backwards
+          UPDATE things t
+             SET st = 'raise', hp = (SELECT tt.hp FROM thing_types tt WHERE tt.thing_type = t.thing_type),
+                 solid = 1, reaction = 0, sprite = NULL,
+                 st_len = 5 * (SELECT CHAR_LENGTH(tt.death_fr) FROM thing_types tt WHERE tt.thing_type = t.thing_type),
+                 st_tics = 5 * (SELECT CHAR_LENGTH(tt.death_fr) FROM thing_types tt WHERE tt.thing_type = t.thing_type)
+           WHERE t.id = :corpse;
+        END
+        ELSE IF (pdead = 0 AND reaction = 0 AND dist < 2048
             AND ((atk_kind = 'melee' AND dist < melee_range)
                  OR (atk_kind IN ('hitscan', 'missile')
                      AND (dist < melee_range OR RAND() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2)))

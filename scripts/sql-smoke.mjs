@@ -104,6 +104,22 @@ for (let a = 0; a < 8; a++) {
   assert(r.rows[0].C === 320, `heading ${a * 45}°: all columns closed by a wall`);
 }
 
+// every monster projectile hurts (a NULL damage once aborted the whole tic)
+const nodmg = (await db.query("SELECT LIST(thing_type) l FROM thing_types WHERE kind = 'missile' AND dmg_lo IS NULL")).rows[0].L;
+assert(!nodmg, `every projectile type has damage (${nodmg ?? 'none missing'})`);
+for (const mtype of (await db.query("SELECT thing_type FROM thing_types WHERE kind = 'missile' AND thing_type < 9003 ORDER BY 1")).rows.map((r) => r.THING_TYPE)) {
+  await db.exec('UPDATE player SET health = 1000, armor = 0');
+  const pl = (await db.query("SELECT x, y, z FROM things WHERE kind = 'player'")).rows[0];
+  await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
+      EXECUTE PROCEDURE spawn_thing(${mtype}, ${pl.X + 30}, ${pl.Y}, ${pl.Z + 32}, ${Math.PI}) RETURNING_VALUES id;
+      UPDATE things SET momx = -10, momy = 0, owner_id = -1 WHERE id = :id;
+    END`);
+  for (let i = 0; i < 4; i++) await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  const hp = (await db.query('SELECT health FROM player')).rows[0].HEALTH;
+  assert(hp < 1000, `projectile ${mtype} hurts the player (${1000 - hp})`);
+}
+await db.exec('UPDATE player SET health = 100');
+
 // open a door: stand in front of a DR door (special 1), face it, press USE
 const door = (await db.query(
   `SELECT FIRST 1 l.x1, l.y1, l.dx, l.dy, l.len, l.back_sector, s.ceil_h

@@ -211,6 +211,7 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
     const v0 = (await one('SELECT health FROM player')).HEALTH;
     let flameTics = 0;
     let closeTics = 0;
+    let orphanTics = 0;
     let rise = 0;
     const heard = new Set();
     for (let i = 0; i < 90; i++) {
@@ -220,6 +221,8 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
                              FROM things t JOIN sectors s ON s.id = t.sector_id
                              LEFT JOIN things f ON f.kind = 'flame'
                             WHERE t.kind = 'player'`);
+      const vst = (await one(`SELECT LIST(st) s FROM things WHERE thing_type = 64`)).S ?? '';
+      if (f.X != null && !vst.includes('attack')) orphanTics++;
       if (f.X != null) {
         flameTics++;
         if (Math.hypot(f.X - f.PX, f.Y - f.PY) < 30) closeTics++;
@@ -231,13 +234,74 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
     }
     const v1 = (await one('SELECT health FROM player')).HEALTH;
     const vsnd = [...heard].sort().join(',');
-    const left = (await one(`SELECT COUNT(*) n FROM things WHERE kind = 'flame'`)).N;
+
     // (A_Fire only follows while the arch-vile can see you, so strafing out of sight leaves it behind)
     assert(flameTics > 50 && closeTics / flameTics > 0.75, `arch-vile's flame follows the player (${closeTics} of ${flameTics} tics within 30 units)`);
     assert(v0 - v1 >= 20, `arch-vile blast hurts (${v0 - v1} damage: 20 plus up to 70 splash)`);
     assert(rise > 20, `the blast throws the player into the air (${rise.toFixed(0)} units up)`);
     assert(['DSVILATK', 'DSFLAMST', 'DSBAREXP'].every((n) => vsnd.includes(n)), `arch-vile sounds (${vsnd})`);
-    assert(left === 0, 'the flame is gone once the attack ends');
+    assert(orphanTics <= 2, `the flame goes out when the attack ends (outlived it by ${orphanTics} tics)`);
+
+    // the arch-vile raises a corpse: heal frames, the corpse's death in reverse, full health
+    await db.exec(`DELETE FROM things WHERE thing_type IN (64, 9015)`);
+    const c = await db.query(`EXECUTE BLOCK RETURNS (corpse INTEGER, vile INTEGER) AS BEGIN
+        EXECUTE PROCEDURE spawn_thing(3001, ${s2.x}, ${s2.y}, ${s2.z}, 0) RETURNING_VALUES corpse;
+        UPDATE things SET st = 'dead', hp = 0, solid = 0, frame = 'M' WHERE id = :corpse;
+        EXECUTE PROCEDURE spawn_thing(64, ${s2.x - Math.cos(dir) * 50}, ${s2.y - Math.sin(dir) * 50}, ${s2.z}, ${dir}) RETURNING_VALUES vile;
+        UPDATE things SET st = 'chase', st_tics = 1, reaction = 5 WHERE id = :vile;
+        SUSPEND;
+      END`);
+    const { CORPSE: corpse, VILE: vile } = c.rows[0];
+    const vileStates = new Set();
+    const raiseFrames = [];
+    for (let i = 0; i < 45; i++) {
+      await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
+      const r = await one(`SELECT (SELECT st || ':' || COALESCE(frame, '') FROM things WHERE id = ${vile}) v,
+                                  (SELECT st FROM things WHERE id = ${corpse}) cst,
+                                  (SELECT frame FROM things WHERE id = ${corpse}) cfr FROM rdb$database`);
+      if (r.V) vileStates.add(r.V);
+      if (r.CST === 'raise' && raiseFrames.at(-1) !== r.CFR.trim()) raiseFrames.push(r.CFR.trim());
+    }
+    const back = await one(`SELECT st, hp, solid FROM things WHERE id = ${corpse}`);
+    const slop = (await one(`SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSSLOP'`)).N;
+    assert([...vileStates].some((v) => v.startsWith('heal:')), `arch-vile casts its heal (${[...vileStates].filter((v) => v.startsWith('heal')).join(' ')})`);
+    assert(raiseFrames.join('') === 'MLKJI', `the corpse rises through its death frames in reverse (${raiseFrames.join('')})`);
+    assert(back.ST !== 'dead' && back.HP === 60 && back.SOLID === 1 && slop > 0, `the imp is back: ${back.ST}, ${back.HP} hp, solid`);
+    await db.exec(`DELETE FROM things WHERE id IN (${corpse}, ${vile})`);
+
+    // the pain elemental's death: lost souls at 90°, 180° and 270°
+    const pe = (await db.query(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN
+        EXECUTE PROCEDURE spawn_thing(71, ${s2.x}, ${s2.y}, ${s2.z}, ${dir + Math.PI}) RETURNING_VALUES id;
+        SUSPEND;
+      END`)).rows[0].ID;
+    const before = new Set((await db.query('SELECT id FROM things WHERE thing_type = 3006')).rows.map((r) => r.ID));
+    await db.exec(`EXECUTE PROCEDURE damage_thing(${pe}, 10000)`);
+    for (let i = 0; i < 22; i++) {
+      await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
+      if ((await one('SELECT COUNT(*) n FROM things WHERE thing_type = 3006')).N > before.size) break;
+    }
+    const souls = (await db.query(`SELECT id, x, y FROM things WHERE thing_type = 3006`)).rows.filter((r) => !before.has(r.ID));
+    // (each soul charges as soon as it appears, so allow for its first step)
+    const bearings = souls.map((r) => Math.round(((Math.atan2(r.Y - s2.y, r.X - s2.x) - (dir + Math.PI)) * 180) / Math.PI + 720) % 360).sort((a, b) => a - b);
+    const near = (b) => [90, 180, 270].some((w) => Math.abs(b - w) <= 12);
+    const dists = souls.map((r) => Math.hypot(r.X - s2.x, r.Y - s2.y));
+    assert(souls.length >= 2 && bearings.every(near) && dists.every((d) => Math.abs(d - 74.5) < 30),
+      `pain elemental dies spitting ${souls.length} lost souls (at ${bearings.join('°, ')}° from its facing)`);
+    await db.exec('DELETE FROM things WHERE thing_type IN (71, 3006)');
+
+    // …but never past 20
+    await db.query(`EXECUTE BLOCK AS DECLARE i INTEGER = 0; DECLARE id INTEGER; BEGIN
+        WHILE (i < 20) DO BEGIN
+          EXECUTE PROCEDURE spawn_thing(3006, ${p.X}, ${p.Y}, NULL, 0) RETURNING_VALUES id;
+          UPDATE things SET solid = 0, st = 'idle' WHERE id = :id;
+          i = i + 1;
+        END
+        EXECUTE PROCEDURE spawn_thing(71, ${s2.x}, ${s2.y}, ${s2.z}, 0) RETURNING_VALUES id;
+        EXECUTE PROCEDURE damage_thing(id, 10000);
+      END`);
+    for (let i = 0; i < 22; i++) await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
+    const total = (await one(`SELECT COUNT(*) n FROM things WHERE thing_type = 3006 AND st NOT IN ('dying', 'dead')`)).N;
+    assert(total === 20, `with 20 lost souls about, a dying pain elemental adds none (${total})`);
   }
 }
 

@@ -43,7 +43,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_CheckSight` | `CHECK_SIGHT()` walks the blockmap cells along the sight line |
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `MONSTERS_THINK` |
-| `A_Tracer`, `A_SkelFist` (revenant), `A_FatAttack1/2/3` (mancubus), `A_VileTarget` / `A_Fire` / `A_VileAttack` (arch-vile) | `MONSTERS_THINK` (the `melee` state and the `flame` kind), `MONSTER_MISSILE` |
+| `A_Tracer`, `A_SkelFist` (revenant), `A_FatAttack1/2/3` (mancubus), `A_VileTarget` / `A_Fire` / `A_VileAttack` / `A_VileChase` (arch-vile), `A_PainShootSkull` / `A_PainDie` | `MONSTERS_THINK` (the `melee`, `heal` and `raise` states, the `flame` kind), `MONSTER_MISSILE`, `PAIN_SHOOT_SKULL` |
 | `A_BossDeath`, `A_KeenDie` | `BOSS_DEATH`, `KEEN_DIE` |
 | `A_BrainSpit`, `A_SpawnFly`, `A_BrainScream` (the Icon of Sin) | the `shooter`, `cube` and `brain` kinds in `MONSTERS_THINK` |
 | `MF_SPAWNCEILING` (hanging bodies, Commander Keen) | `THING_TYPES.HANG`, placed in `INIT_MAP` |
@@ -192,7 +192,8 @@ sounds, damage, splash and pickups.
 - that the Icon of Sin spits cubes, spawns monsters and ends the game when its brain dies
 - the DOOM II attacks: revenant missiles turn exactly 16.875° per update and find you, the
   revenant punches, a mancubus attack fires six fireballs at DOOM's spread angles, and the
-  arch-vile's flame follows you before the blast throws you upwards
+  arch-vile's flame follows you before the blast throws you upwards, the arch-vile raises a
+  corpse, and a dying pain elemental releases lost souls (but never past 20)
 
 Use `WAD=public/wads/freedoom2.wad` for the Phase 2 parts. `npm run test:renderers` compares the
 BSP and brute-force renderers from several spots and headings on every map, and reports the
@@ -232,8 +233,11 @@ DOOM's code:
   20 and throws you upwards, while the flame explodes for 70 (`A_VileTarget`, `A_Fire`,
   `A_VileAttack`)
 
-The arch-vile doesn't resurrect corpses, and the pain elemental doesn't burst into lost souls when
-it dies.
+- the arch-vile raises corpses it walks past (`A_VileChase`): glowing hands, then the corpse plays
+  its death backwards and gets up with full health; it won't raise lost souls, cyberdemons, spider
+  masterminds or other arch-viles
+- the pain elemental spits lost souls (`A_PainShootSkull`), and three more when it dies
+  (`A_PainDie`), never past 20 and only where there's room
 
 Large maps with many monsters awake at once can still drop below 10 fps. The *Low* detail setting
 (160 columns, like DOOM's own) halves the render cost.
