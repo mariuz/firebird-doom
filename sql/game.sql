@@ -274,7 +274,7 @@ DECLARE k VARCHAR(10);
 DECLARE hp INTEGER;
 DECLARE st VARCHAR(8);
 DECLARE pain_chance INTEGER;
-DECLARE pain_fr VARCHAR(8);
+DECLARE pain_fr VARCHAR(16);
 DECLARE death_fr VARCHAR(16);
 DECLARE death_sprite CHAR(4);
 DECLARE drop_type INTEGER;
@@ -661,6 +661,7 @@ END^
 CREATE OR ALTER PROCEDURE hitscan (
   sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION,
   ang DOUBLE PRECISION, rng DOUBLE PRECISION, dmg INTEGER, shooter INTEGER)
+RETURNS (hit SMALLINT)
 AS
 DECLARE ddx DOUBLE PRECISION;
 DECLARE ddy DOUBLE PRECISION;
@@ -705,6 +706,7 @@ BEGIN
    ORDER BY q.along
     INTO tgt, tgt_s;
 
+  hit = IIF(tgt IS NOT NULL, 1, 0);
   IF (tgt IS NOT NULL) THEN
   BEGIN
     EXECUTE PROCEDURE damage_thing(tgt, dmg);
@@ -869,15 +871,19 @@ DECLARE maxc INTEGER;
 DECLARE has_rl SMALLINT;
 DECLARE has_pl SMALLINT;
 DECLARE has_bfg SMALLINT;
+DECLARE has_saw SMALLINT;
+DECLARE has_ssg SMALLINT;
+DECLARE shot_hit SMALLINT;
+DECLARE old_weapon SMALLINT;
 BEGIN
   SELECT p.thing_id, t.x, t.y, t.z, t.angle, t.momx, t.momy, t.momz, p.dead, p.weapon, p.attack_tics, p.attack_len,
          p.bullets, p.shells, p.has_shotgun, p.has_chaingun, p.use_down, p.view_h,
-         p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg
+         p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg, p.has_chainsaw, p.has_ssg
     FROM player p JOIN things t ON t.id = p.thing_id
    WHERE p.id = 1
     INTO tid, x, y, z, ang, momx, momy, momz, is_dead, weapon, attack_tics, attack_len,
          bullets, shells, has_sg, has_cg, use_down, view_h,
-         rockets, cells, has_rl, has_pl, has_bfg;
+         rockets, cells, has_rl, has_pl, has_bfg, has_saw, has_ssg;
 
   IF (is_dead = 1) THEN
   BEGIN
@@ -1027,24 +1033,40 @@ BEGIN
   END
 
   -- weapon selection (only weapons we own)
-  IF (weapon_sel = 1 OR weapon_sel = 2 OR (weapon_sel = 3 AND has_sg = 1) OR (weapon_sel = 4 AND has_cg = 1)
+  -- (1 cycles fist/chainsaw and 3 shotgun/super shotgun, as in DOOM II)
+  old_weapon = weapon;
+  IF (weapon_sel = 1) THEN
+    weapon = IIF(has_saw = 1 AND weapon <> 8, 8, 1);
+  ELSE IF (weapon_sel = 3 AND (has_sg = 1 OR has_ssg = 1)) THEN
+    weapon = IIF(has_ssg = 1 AND weapon <> 9 AND shells >= 2, 9, IIF(has_sg = 1, 3, 9));
+  ELSE IF (weapon_sel = 2 OR (weapon_sel = 4 AND has_cg = 1)
       OR (weapon_sel = 5 AND has_rl = 1) OR (weapon_sel = 6 AND has_pl = 1) OR (weapon_sel = 7 AND has_bfg = 1)) THEN
     weapon = weapon_sel;
+  IF (weapon = 8 AND old_weapon <> 8) THEN EXECUTE PROCEDURE play_sound('DSSAWUP', 0, NULL, NULL);
 
   -- A_FirePistol / A_FireShotgun / A_FireCGun / A_Punch
   IF (attack_tics > 0) THEN attack_tics = attack_tics - 1;
   -- A_FireBFG: the ball leaves 20 tics after the trigger, once the gun has charged
   IF (weapon = 7 AND attack_len = 60 AND attack_tics = 40) THEN
     EXECUTE PROCEDURE fire_missile(9005, tid, x, y, z, ang);
+  -- A_OpenShotgun2 / A_LoadShotgun2 / A_CloseShotgun2
+  IF (weapon = 9 AND attack_len = 57) THEN
+    EXECUTE PROCEDURE play_sound(CASE attack_tics WHEN 42 THEN 'DSDBOPN' WHEN 30 THEN 'DSDBLOAD'
+                                                  WHEN 18 THEN 'DSDBCLS' END, 0, NULL, NULL);
+  -- A_WeaponReady: the chainsaw idles noisily
+  IF (weapon = 8 AND fire = 0 AND attack_tics = 0 AND MOD(tic, 8) = 0) THEN
+    EXECUTE PROCEDURE play_sound('DSSAWIDL', 0, NULL, NULL);
   IF (fire = 1 AND attack_tics = 0) THEN
   BEGIN
     -- P_CheckAmmo: out of ammo, switch to the best weapon that has some
     IF ((weapon IN (2, 4) AND bullets = 0) OR (weapon = 3 AND shells = 0) OR (weapon = 5 AND rockets = 0)
-        OR (weapon = 6 AND cells = 0) OR (weapon = 7 AND cells < 40)) THEN
+        OR (weapon = 6 AND cells = 0) OR (weapon = 7 AND cells < 40) OR (weapon = 9 AND shells < 2)) THEN
       weapon = CASE WHEN has_pl = 1 AND cells > 0 THEN 6
+                    WHEN has_ssg = 1 AND shells >= 2 THEN 9
                     WHEN has_cg = 1 AND bullets > 0 THEN 4
                     WHEN has_sg = 1 AND shells > 0 THEN 3
                     WHEN bullets > 0 THEN 2
+                    WHEN has_saw = 1 THEN 8
                     WHEN has_rl = 1 AND rockets > 0 THEN 5
                     WHEN has_bfg = 1 AND cells >= 40 THEN 7
                     ELSE 1 END;
@@ -1052,7 +1074,24 @@ BEGIN
     IF (weapon = 1) THEN
     BEGIN
       attack_len = 18;
-      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang, 64, 2 * (1 + CAST(FLOOR(RAND() * 10) AS INTEGER)), tid);
+      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang, 64, 2 * (1 + CAST(FLOOR(RAND() * 10) AS INTEGER)), tid)
+        RETURNING_VALUES shot_hit;
+    END
+    ELSE IF (weapon = 8) THEN
+    BEGIN
+      -- A_Saw: 2d10 × 2 at MELEERANGE + 1, every 4 tics
+      attack_len = 4;
+      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang + (RAND() - RAND()) * 0.04, 65,
+                                2 * (1 + CAST(FLOOR(RAND() * 10) AS INTEGER)), tid)
+        RETURNING_VALUES shot_hit;
+    END
+    ELSE IF (weapon = 9) THEN
+    BEGIN
+      -- A_FireShotgun2: 20 pellets, two shells, a wide horizontal spread
+      attack_len = 57;
+      pellets = 20;
+      spread = 0.196;
+      shells = shells - 2;
     END
     ELSE IF (weapon = 2) THEN BEGIN attack_len = 14; pellets = 1; spread = 0.04; bullets = bullets - 1; END
     ELSE IF (weapon = 3) THEN BEGIN attack_len = 37; pellets = 7; spread = 0.10; shells = shells - 1; END
@@ -1076,16 +1115,19 @@ BEGIN
     END
     attack_tics = attack_len;
     EXECUTE PROCEDURE play_sound(CASE weapon WHEN 1 THEN 'DSPUNCH' WHEN 3 THEN 'DSSHOTGN' WHEN 5 THEN 'DSRLAUNC'
-                                             WHEN 6 THEN 'DSPLASMA' WHEN 7 THEN 'DSBFG' ELSE 'DSPISTOL' END,
+                                             WHEN 6 THEN 'DSPLASMA' WHEN 7 THEN 'DSBFG'
+                                             WHEN 8 THEN IIF(shot_hit = 1, 'DSSAWHIT', 'DSSAWFUL')
+                                             WHEN 9 THEN 'DSDSHTGN' ELSE 'DSPISTOL' END,
                                  0, NULL, NULL);
     i = 0;
     WHILE (i < pellets) DO
     BEGIN
       EXECUTE PROCEDURE hitscan(x, y, z + 32, ang + (RAND() - RAND()) * spread, 2048,
-                                5 * (1 + CAST(FLOOR(RAND() * 3) AS INTEGER)), tid);
+                                5 * (1 + CAST(FLOOR(RAND() * 3) AS INTEGER)), tid)
+        RETURNING_VALUES shot_hit;
       i = i + 1;
     END
-    IF (weapon > 1) THEN UPDATE game SET noise_tic = :tic WHERE id = 1;
+    IF (weapon > 1) THEN UPDATE game SET noise_tic = :tic WHERE id = 1;   -- the chainsaw too
   END
 
   UPDATE things SET x = :x, y = :y, z = :z, angle = :ang, momx = :momx, momy = :momy, momz = :momz,
@@ -1109,6 +1151,7 @@ BEGIN
       FROM player p WHERE p.id = 1
       INTO health, armor, bullets, shells, maxb, maxs, has_sg, has_cg,
            rockets, cells, maxr, maxc, has_rl, has_pl, has_bfg;
+    SELECT p.has_chainsaw, p.has_ssg FROM player p WHERE p.id = 1 INTO has_saw, has_ssg;
     took = 1;
     IF (pk = 'health') THEN
       IF (health >= 100) THEN took = 0; ELSE health = MINVALUE(100, health + amt);
@@ -1154,6 +1197,22 @@ BEGIN
       has_bfg = 1;
       cells = MINVALUE(maxc, cells + amt);
     END
+    ELSE IF (pk = 'chainsaw') THEN
+    BEGIN
+      IF (has_saw = 0) THEN weapon = 8;
+      has_saw = 1;
+    END
+    ELSE IF (pk = 'ssg') THEN
+    BEGIN
+      IF (has_ssg = 0) THEN weapon = 9;
+      has_ssg = 1;
+      shells = MINVALUE(maxs, shells + amt);
+    END
+    ELSE IF (pk = 'mega') THEN
+    BEGIN
+      health = 200;
+      armor = 200;
+    END
     ELSE IF (pk = 'backpack') THEN
     BEGIN
       maxb = 400;
@@ -1173,12 +1232,13 @@ BEGIN
              max_bullets = :maxb, max_shells = :maxs, has_shotgun = :has_sg, has_chaingun = :has_cg,
              rockets = :rockets, cells = :cells, max_rockets = :maxr, max_cells = :maxc,
              has_launcher = :has_rl, has_plasma = :has_pl, has_bfg = :has_bfg,
+             has_chainsaw = :has_saw, has_ssg = :has_ssg,
              weapon = :weapon, items = items + 1, bonus_count = 6,
              keycards = IIF(:pk = 'key', BIN_OR(keycards, :amt), keycards),
              msg = 'Picked up ' || :lbl || '.', msg_tics = 70
        WHERE id = 1;
-      EXECUTE PROCEDURE play_sound(CASE WHEN pk IN ('shotgun', 'chaingun', 'launcher', 'plasma', 'bfg') THEN 'DSWPNUP'
-                                        WHEN pk = 'none' THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
+      EXECUTE PROCEDURE play_sound(CASE WHEN pk IN ('shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'chainsaw', 'ssg') THEN 'DSWPNUP'
+                                        WHEN pk IN ('none', 'mega') THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
     END
   END
 END^
@@ -1213,7 +1273,7 @@ DECLARE flags INTEGER;
 DECLARE frame CHAR(1);
 DECLARE spd DOUBLE PRECISION;
 DECLARE walk_fr VARCHAR(16);
-DECLARE atk_fr VARCHAR(8);
+DECLARE atk_fr VARCHAR(16);
 DECLARE death_fr VARCHAR(16);
 DECLARE atk_kind VARCHAR(10);
 DECLARE missile_type INTEGER;
@@ -1389,7 +1449,8 @@ BEGIN
           IF (dist < melee_range + 16) THEN
             EXECUTE PROCEDURE damage_player(dmg_lo + CAST(FLOOR(RAND() * (dmg_hi - dmg_lo + 1)) AS INTEGER));
         END
-        ELSE IF (atk_kind = 'missile') THEN
+        ELSE IF (atk_kind = 'missile' AND NOT (missile_type = 3006 AND
+                 (SELECT COUNT(*) FROM things s WHERE s.thing_type = 3006 AND s.st NOT IN ('dying', 'dead')) >= 20)) THEN
         BEGIN
           EXECUTE PROCEDURE spawn_thing(missile_type, x + COS(ang) * (rad + 8), y + SIN(ang) * (rad + 8), z + 32, ang)
             RETURNING_VALUES mid;
@@ -1496,6 +1557,7 @@ RETURNS (
   tic INTEGER, health INTEGER, armor INTEGER, bullets INTEGER, shells INTEGER, weapon SMALLINT,
   has_shotgun SMALLINT, has_chaingun SMALLINT, keycards INTEGER,
   rockets INTEGER, cells INTEGER, has_launcher SMALLINT, has_plasma SMALLINT, has_bfg SMALLINT,
+  has_chainsaw SMALLINT, has_ssg SMALLINT,
   max_bullets INTEGER, max_shells INTEGER, max_rockets INTEGER, max_cells INTEGER,
   attack_tics INTEGER, attack_len INTEGER, damage_count INTEGER, bonus_count INTEGER,
   msg VARCHAR(80), dead SMALLINT, exit_kind SMALLINT,
@@ -1524,7 +1586,7 @@ BEGIN
     i = i + 1;
   END
   SELECT g.tic, p.health, p.armor, p.bullets, p.shells, p.weapon, p.has_shotgun, p.has_chaingun, p.keycards,
-         p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg,
+         p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg, p.has_chainsaw, p.has_ssg,
          p.max_bullets, p.max_shells, p.max_rockets, p.max_cells,
          p.attack_tics, p.attack_len, p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
          p.dead, g.exit_kind, p.kills, g.total_kills, p.items, g.total_items, p.secrets, g.total_secrets,
@@ -1532,7 +1594,7 @@ BEGIN
     FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g
    WHERE p.id = 1 AND g.id = 1
     INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards,
-         rockets, cells, has_launcher, has_plasma, has_bfg,
+         rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg,
          max_bullets, max_shells, max_rockets, max_cells,
          attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind,
          kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z,
@@ -1680,6 +1742,7 @@ BEGIN
     UPDATE player
        SET health = 100, armor = 0, bullets = 50, shells = 0, max_bullets = 200, max_shells = 50,
            weapon = 2, has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0,
+           has_chainsaw = 0, has_ssg = 0,
            rockets = 0, cells = 0, max_rockets = 50, max_cells = 300
      WHERE id = 1;
   UPDATE player

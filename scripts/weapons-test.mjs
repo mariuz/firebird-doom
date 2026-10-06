@@ -45,7 +45,7 @@ async function lineUp() {
   return null;
 }
 
-await loadMap(db, wad, res, 'E1M1');
+await loadMap(db, wad, res, wad.mapNames()[0]);
 await db.exec(`UPDATE player SET has_launcher = 1, has_plasma = 1, has_bfg = 1, rockets = 10, cells = 200, health = 200`);
 
 for (const [w, name, ammoCol, sound, ticsToHit] of [[5, 'rocket launcher', 'ROCKETS', 'DSRLAUNC', 20], [6, 'plasma gun', 'CELLS', 'DSPLASMA', 12], [7, 'BFG', 'CELLS', 'DSBFG', 40]]) {
@@ -66,6 +66,46 @@ for (const [w, name, ammoCol, sound, ticsToHit] of [[5, 'rocket launcher', 'ROCK
 }
 const spray = (await db.query(`SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSRXPLOD'`)).rows[0].N;
 assert(spray > 0, 'BFG ball exploded');
+
+// the chainsaw: melee every 4 tics, with a hit sound when it bites
+{
+  const target = await lineUp();
+  // step in to 50 units: lineUp leaves us 200 away, facing the monster
+  await db.exec(`UPDATE things t SET x = t.x + COS(t.angle) * 150, y = t.y + SIN(t.angle) * 150 WHERE t.kind = 'player'`);
+  await db.exec(`UPDATE things t SET sector_id = sector_at(t.x, t.y) WHERE t.kind = 'player'`);
+  await db.exec('UPDATE player SET has_chainsaw = 1');
+  const hp0 = (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0].HP;
+  let s = await tic([1, 0, 0, 0, 0, 0, 1, 0]);
+  assert(s.WEAPON === 8, `chainsaw: key 1 selects it (weapon ${s.WEAPON})`);
+  for (let i = 0; i < 16; i++) s = await tic([1, 0, 0, 0, 1, 0, 0, 0]);
+  const hp1 = (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0]?.HP ?? 0;
+  const snd = (await db.query("SELECT LIST(DISTINCT sound) l FROM sound_events WHERE sound STARTING WITH 'DSSAW'")).rows[0].L ?? '';
+  assert(hp1 < hp0, `chainsaw: the monster took ${hp0 - hp1} damage`);
+  assert(snd.includes('DSSAWUP') && snd.includes('DSSAWHIT'), `chainsaw: played ${snd}`);
+  s = await tic([1, 0, 0, 0, 0, 0, 1, 0]);
+  assert(s.WEAPON === 1, 'chainsaw: key 1 again goes back to the fist');
+}
+
+// the super shotgun, where the WAD has its graphics (DOOM II / Phase 2)
+if (wad.lump('SHT2A0')) {
+  const target = await lineUp();
+  await db.exec('UPDATE player SET has_ssg = 1, has_shotgun = 1, shells = 20');
+  let s = await tic([1, 0, 0, 0, 0, 0, 3, 0]);
+  assert(s.WEAPON === 9, `super shotgun: key 3 selects it (weapon ${s.WEAPON})`);
+  const hp0 = (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0].HP;
+  s = await tic([1, 0, 0, 0, 1, 0, 0, 0]);
+  const hp1 = (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0]?.HP ?? 0;
+  assert(s.SHELLS === 18, `super shotgun: two shells per shot (${s.SHELLS} left)`);
+  assert(hp1 < hp0, `super shotgun: 20 pellets did ${hp0 - hp1} damage`);
+  for (let i = 0; i < 60; i++) await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  const snd = (await db.query("SELECT LIST(DISTINCT sound) l FROM sound_events WHERE sound IN ('DSDSHTGN', 'DSDBOPN', 'DSDBLOAD', 'DSDBCLS')")).rows[0].L ?? '';
+  assert(['DSDSHTGN', 'DSDBOPN', 'DSDBLOAD', 'DSDBCLS'].every((n) => snd.includes(n)), `super shotgun: fire and reload sounds (${snd})`);
+  s = await tic([1, 0, 0, 0, 0, 0, 3, 0]);
+  assert(s.WEAPON === 3, 'super shotgun: key 3 again goes back to the shotgun');
+} else {
+  console.log('(this WAD has no super shotgun graphics; skipping it)');
+}
+
 
 // rockets hurt whoever is close, including you
 await db.exec(`UPDATE player SET health = 100, armor = 0, dead = 0`);

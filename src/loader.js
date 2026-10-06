@@ -14,6 +14,7 @@ const ITEM_LABELS = {
   BSKU: 'a blue skull key', YSKU: 'a yellow skull key', RSKU: 'a red skull key',
   PSTR: 'a berserk pack!', PMAP: 'a computer area map', PINV: 'an invulnerability sphere',
   PINS: 'a partial invisibility sphere', SUIT: 'a radiation suit', PVIS: 'light amplification goggles',
+  CSAW: 'a chainsaw! Find some meat!', SGN2: 'the super shotgun!', MEGA: 'a megasphere!',
   LAUN: 'the rocket launcher!', PLAS: 'the plasma gun!', BFUG: 'the BFG9000! Oh, yes.',
   ROCK: 'a rocket', BROK: 'a box of rockets', CELL: 'an energy cell', CELP: 'an energy cell pack',
 };

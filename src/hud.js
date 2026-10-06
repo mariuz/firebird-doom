@@ -16,7 +16,7 @@ export function drawStatusBar(renderer, hud, palette) {
   const bar = renderer.pictureByName('STBAR');
   if (!bar) return;
   renderer.patch(bar, 0, 168, pb);
-  const ammo = { 1: null, 2: hud.BULLETS, 3: hud.SHELLS, 4: hud.BULLETS, 5: hud.ROCKETS, 6: hud.CELLS, 7: hud.CELLS }[hud.WEAPON] ?? null;
+  const ammo = { 1: null, 2: hud.BULLETS, 3: hud.SHELLS, 4: hud.BULLETS, 5: hud.ROCKETS, 6: hud.CELLS, 7: hud.CELLS, 8: null, 9: hud.SHELLS }[hud.WEAPON] ?? null;
   if (ammo !== null) drawNum(renderer, ammo, 44, 171, 'STTNUM', pb);
   drawNum(renderer, hud.HEALTH, 90, 171, 'STTNUM', pb);
   renderer.patch(renderer.pictureByName('STTPRCNT'), 90, 171, pb);
@@ -24,7 +24,7 @@ export function drawStatusBar(renderer, hud, palette) {
   renderer.patch(renderer.pictureByName('STTPRCNT'), 221, 171, pb);
   renderer.patch(renderer.pictureByName('STARMS'), 104, 168, pb);
   // arms: weapons 2..7
-  const owned = [true, hud.HAS_SHOTGUN === 1, hud.HAS_CHAINGUN === 1, hud.HAS_LAUNCHER === 1, hud.HAS_PLASMA === 1, hud.HAS_BFG === 1];
+  const owned = [true, hud.HAS_SHOTGUN === 1 || hud.HAS_SSG === 1, hud.HAS_CHAINGUN === 1, hud.HAS_LAUNCHER === 1, hud.HAS_PLASMA === 1, hud.HAS_BFG === 1];
   for (let i = 0; i < 6; i++) {
     renderer.patch(renderer.pictureByName(`${owned[i] ? 'STYSNUM' : 'STGNUM'}${i + 2}`), 111 + (i % 3) * 12, 172 + Math.floor(i / 3) * 10, pb);
   }
@@ -78,6 +78,14 @@ export function drawWeapon(renderer, hud, palette) {
     gun = p < 0 ? 'SHTGA0' : `SHTG${'AABCDCBA'[Math.min(7, Math.floor(p * 8))]}0`;
     if (p >= 0 && p < 0.08) flash = 'SHTFA0';
     else if (p >= 0.08 && p < 0.16) flash = 'SHTFB0';
+  } else if (w === 8) {
+    // the chainsaw: SAWG C/D while idling, A/B while cutting
+    gun = p < 0 ? `SAWG${(hud.TIC >> 2) & 1 ? 'D' : 'C'}0` : `SAWG${(hud.TIC >> 1) & 1 ? 'B' : 'A'}0`;
+  } else if (w === 9) {
+    // A_FireShotgun2, then open, load and close: SHT2 A–H, muzzle flash I/J
+    gun = p < 0 ? 'SHT2A0' : `SHT2${'AABCDEFGHA'[Math.min(9, Math.floor(p * 10))]}0`;
+    if (p >= 0 && p < 0.05) flash = 'SHT2I0';
+    else if (p >= 0.05 && p < 0.1) flash = 'SHT2J0';
   } else if (w === 4) {
     gun = p < 0 ? 'CHGGA0' : `CHGG${(hud.TIC >> 1) & 1 ? 'B' : 'A'}0`;
     if (p >= 0) flash = `CHGF${(hud.TIC >> 1) & 1 ? 'B' : 'A'}0`;

@@ -21,6 +21,10 @@ export const THING_TYPES = [
   { type: 9003, sprite: 'MISL', kind: 'missile', radius: 11, height: 8, speed: 20, walk: 'A', death: 'BCD', bright: 1, dmgLo: 20, dmgHi: 160, deathSnd: 'DSBAREXP' },
   { type: 9004, sprite: 'PLSS', kind: 'missile', radius: 13, height: 8, speed: 25, walk: 'AB', death: 'ABCDE', deathSprite: 'PLSE', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL' },
   { type: 9005, sprite: 'BFS1', kind: 'missile', radius: 13, height: 8, speed: 25, walk: 'AB', death: 'ABCDEF', deathSprite: 'BFE1', bright: 1, dmgLo: 100, dmgHi: 800, deathSnd: 'DSRXPLOD' },
+  // DOOM II monsters' projectiles
+  { type: 9006, sprite: 'FATB', kind: 'missile', radius: 11, height: 8, speed: 10, walk: 'AB', death: 'ABC', deathSprite: 'FBXP', bright: 1, dmgLo: 10, dmgHi: 80, deathSnd: 'DSBAREXP' },
+  { type: 9007, sprite: 'MANF', kind: 'missile', radius: 6, height: 8, speed: 20, walk: 'AB', death: 'BCD', deathSprite: 'MISL', bright: 1, dmgLo: 8, dmgHi: 64, deathSnd: 'DSFIRXPL' },
+  { type: 9008, sprite: 'APLS', kind: 'missile', radius: 13, height: 8, speed: 25, walk: 'AB', death: 'ABCDE', deathSprite: 'APBX', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL' },
   { type: 9012, sprite: 'BFE2', kind: 'fx', radius: 1, height: 1, walk: 'ABCD', bright: 1 },
   { type: 9010, sprite: 'PUFF', kind: 'fx', radius: 1, height: 1, walk: 'ABCD', bright: 1 },
   { type: 9011, sprite: 'BLUD', kind: 'fx', radius: 1, height: 1, walk: 'CBA' },
@@ -36,6 +40,17 @@ export const THING_TYPES = [
   M(3005, 'HEAD', { hp: 400, speed: 8, radius: 31, painChance: 128, walk: 'A', attack: 'BCD', pain: 'EF', death: 'GHIJKL', atk: 'missile', missile: 9001, dmgLo: 5, dmgHi: 40, seeSnd: 'DSCACSIT', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSCACDTH' }),
   M(3003, 'BOSS', { hp: 1000, speed: 8, radius: 24, height: 64, painChance: 50, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMNO', atk: 'missile', missile: 9002, dmgLo: 8, dmgHi: 64, seeSnd: 'DSBRSSIT', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSBRSDTH' }),
   M(69, 'BOS2', { hp: 500, speed: 8, radius: 24, height: 64, painChance: 50, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMNO', atk: 'missile', missile: 9002, dmgLo: 8, dmgHi: 64, seeSnd: 'DSBRSSIT', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSBRSDTH' }),
+  // the bosses
+  M(16, 'CYBR', { hp: 4000, speed: 16, radius: 40, height: 110, painChance: 20, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKLMNOP', atk: 'missile', missile: 9003, dmgLo: 20, dmgHi: 160, seeSnd: 'DSCYBSIT', atkSnd: 'DSRLAUNC', painSnd: 'DSDMPAIN', deathSnd: 'DSCYBDTH' }),
+  M(7, 'SPID', { hp: 3000, speed: 12, radius: 128, height: 100, painChance: 40, walk: 'ABCDEF', attack: 'GH', pain: 'I', death: 'JKLMNOPQRS', atk: 'hitscan', shots: 3, dmgLo: 3, dmgHi: 15, seeSnd: 'DSSPISIT', atkSnd: 'DSSHOTGN', painSnd: 'DSDMPAIN', deathSnd: 'DSSPIDTH' }),
+  // DOOM II: behaviours reuse the attack kinds above (approximations)
+  M(64, 'VILE', { hp: 700, speed: 15, painChance: 10, walk: 'ABCDEF', attack: 'GHIJKLMNOP', pain: 'Q', death: 'QRSTUVWXYZ', atk: 'hitscan', shots: 3, dmgLo: 3, dmgHi: 15, seeSnd: 'DSVILSIT', atkSnd: 'DSVILATK', painSnd: 'DSVIPAIN', deathSnd: 'DSVILDTH' }),
+  M(66, 'SKEL', { hp: 300, speed: 10, painChance: 100, walk: 'ABCDEF', attack: 'JK', pain: 'L', death: 'LMNOP', atk: 'missile', missile: 9006, dmgLo: 10, dmgHi: 60, seeSnd: 'DSSKESIT', atkSnd: 'DSSKEATK', painSnd: 'DSPOPAIN', deathSnd: 'DSSKEDTH' }),
+  M(67, 'FATT', { hp: 600, speed: 8, radius: 48, height: 64, painChance: 80, walk: 'ABCDEF', attack: 'GHGH', pain: 'J', death: 'KLMNOPQRST', atk: 'missile', missile: 9007, dmgLo: 8, dmgHi: 64, seeSnd: 'DSMANSIT', atkSnd: 'DSMANATK', painSnd: 'DSMNPAIN', deathSnd: 'DSMANDTH' }),
+  M(68, 'BSPI', { hp: 500, speed: 12, radius: 64, height: 64, painChance: 128, walk: 'ABCDEF', attack: 'GH', pain: 'I', death: 'JKLMNOP', atk: 'missile', missile: 9008, dmgLo: 5, dmgHi: 40, seeSnd: 'DSBSPSIT', atkSnd: 'DSPLASMA', painSnd: 'DSDMPAIN', deathSnd: 'DSBSPDTH' }),
+  // the pain elemental's "missile" is a lost soul (A_PainAttack), capped at 20
+  M(71, 'PAIN', { hp: 400, speed: 8, radius: 31, painChance: 128, walk: 'ABC', attack: 'DEF', pain: 'G', death: 'HIJKLM', atk: 'missile', missile: 3006, dmgLo: 3, dmgHi: 24, seeSnd: 'DSPESIT', atkSnd: 'DSSKLATK', painSnd: 'DSPEPAIN', deathSnd: 'DSPEDTH' }),
+  M(84, 'SSWV', { hp: 50, speed: 8, painChance: 170, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLM', atk: 'hitscan', shots: 1, dmgLo: 3, dmgHi: 15, drop: 2007, seeSnd: 'DSSSSIT', atkSnd: 'DSPISTOL', painSnd: 'DSPOPAIN', deathSnd: 'DSSSDTH' }),
   // shootable barrel – "dies" by exploding
   { type: 2035, sprite: 'BAR1', kind: 'barrel', radius: 10, height: 42, solid: 1, hp: 20, walk: 'AB', death: 'ABCDE', deathSprite: 'BEXP', bright: 0, deathSnd: 'DSBAREXP' },
 
@@ -48,12 +63,13 @@ export const THING_TYPES = [
   I(2008, 'SHEL', 'shells', 4), I(2049, 'SBOX', 'shells', 20),
   I(2001, 'SHOT', 'shotgun', 8), I(2002, 'MGUN', 'chaingun', 20),
   I(8, 'BPAK', 'backpack', 10),
+  I(82, 'SGN2', 'ssg', 8), I(83, 'MEGA', 'mega', 200, { walk: 'ABCD', bright: 1 }),
   I(5, 'BKEY', 'key', 1, { walk: 'AB' }), I(6, 'YKEY', 'key', 2, { walk: 'AB' }), I(13, 'RKEY', 'key', 4, { walk: 'AB' }),
   I(40, 'BSKU', 'key', 1, { walk: 'AB' }), I(39, 'YSKU', 'key', 2, { walk: 'AB' }), I(38, 'RSKU', 'key', 4, { walk: 'AB' }),
   I(2023, 'PSTR', 'health', 100, { bright: 1 }), I(2026, 'PMAP', 'none', 0, { walk: 'ABCDCB', bright: 1 }),
   I(2022, 'PINV', 'none', 0, { walk: 'ABCD', bright: 1 }), I(2024, 'PINS', 'none', 0, { walk: 'ABCD', bright: 1 }),
   I(2025, 'SUIT', 'none', 0, { bright: 1 }), I(2045, 'PVIS', 'none', 0, { walk: 'AB', bright: 1 }),
-  I(2003, 'LAUN', 'launcher', 2), I(2004, 'PLAS', 'plasma', 40), I(2005, 'CSAW', 'none', 0), I(2006, 'BFUG', 'bfg', 40),
+  I(2003, 'LAUN', 'launcher', 2), I(2004, 'PLAS', 'plasma', 40), I(2005, 'CSAW', 'chainsaw', 0), I(2006, 'BFUG', 'bfg', 40),
   I(2010, 'ROCK', 'rockets', 1), I(2046, 'BROK', 'rockets', 5), I(17, 'CELP', 'cells', 100), I(2047, 'CELL', 'cells', 20),
 
   // solid decorations

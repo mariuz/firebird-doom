@@ -34,7 +34,7 @@ jobs:
         id: wad
         uses: actions/cache@v4
         with:
-          path: public/wads/freedoom1.wad
+          path: public/wads/
           key: freedoom1-0.13.0-${{ hashFiles('scripts/fetch-wad.mjs') }}
 
       - name: Fetch Freedoom
@@ -47,8 +47,13 @@ jobs:
       - name: SQL smoke test
         run: npm test
 
-      - name: Weapons (rocket launcher, plasma gun, BFG)
+      - name: Weapons, Phase 1 (fist to BFG, chainsaw)
         run: npm run test:weapons
+
+      - name: Weapons, Phase 2 (adds the super shotgun)
+        run: npm run test:weapons
+        env:
+          WAD: public/wads/freedoom2.wad
 
       # BSP + solidsegs must find exactly the walls brute force finds
       - name: Renderer equivalence (BSP vs brute force)

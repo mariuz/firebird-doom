@@ -1,8 +1,8 @@
-// fetch-wad.mjs – download Freedoom (BSD-licensed), extract freedoom1.wad,
-// and strip what this port never uses (PC-speaker sounds, demos) so the page
-// downloads less.
+// fetch-wad.mjs – download Freedoom (BSD-licensed), extract freedoom1.wad and
+// freedoom2.wad, and strip what this port never uses (PC-speaker sounds,
+// demos) so the page downloads less.
 //
-//   node scripts/fetch-wad.mjs [--from path/to/freedoom-x.zip|wad]
+//   node scripts/fetch-wad.mjs [--from path/to/freedoom-x.zip]
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -77,17 +77,21 @@ function slim(wad) {
 }
 
 const fromIdx = process.argv.indexOf('--from');
-let wad;
+let zip;
 if (fromIdx > 0) {
-  const src = fs.readFileSync(process.argv[fromIdx + 1]);
-  wad = src.subarray(0, 4).toString() === 'PK\x03\x04' ? unzipOne(src, 'freedoom1.wad') : src;
+  zip = fs.readFileSync(process.argv[fromIdx + 1]);
 } else {
   console.log(`downloading ${URL_ZIP}`);
   const resp = await fetch(URL_ZIP);
   if (!resp.ok) throw new Error(`download failed: ${resp.status}`);
-  wad = unzipOne(Buffer.from(await resp.arrayBuffer()), 'freedoom1.wad');
+  zip = Buffer.from(await resp.arrayBuffer());
 }
-const small = slim(wad);
 fs.mkdirSync(outDir, { recursive: true });
-fs.writeFileSync(path.join(outDir, 'freedoom1.wad'), small);
-console.log(`public/wads/freedoom1.wad: ${(wad.length / 1e6).toFixed(1)} MB → ${(small.length / 1e6).toFixed(1)} MB`);
+// Phase 1 is the DOOM-style game (episodes E1–E4); Phase 2 the DOOM II-style
+// one (MAP01–MAP32, with the super shotgun and DOOM II's monsters).
+for (const name of ['freedoom1.wad', 'freedoom2.wad']) {
+  const wad = unzipOne(zip, name);
+  const small = slim(wad);
+  fs.writeFileSync(path.join(outDir, name), small);
+  console.log(`public/wads/${name}: ${(wad.length / 1e6).toFixed(1)} MB → ${(small.length / 1e6).toFixed(1)} MB`);
+}

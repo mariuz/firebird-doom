@@ -33,7 +33,7 @@ let running = false;
 let paused = false;
 let lastTic = 0;
 // settings, remembered per browser
-const settings = { detail: 'high', renderer: 'bsp', sfx: 70, music: 50 };
+const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', sfx: 70, music: 50 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('firebird-doom:settings') || '{}'));
 } catch { /* storage unavailable: defaults */ }
@@ -423,15 +423,21 @@ async function useWad(buffer, label) {
   await startMap(maps[0], true);
 }
 
+/** Fetch one of the bundled Freedoom IWADs and load it into Firebird. */
+async function loadGame(game) {
+  const file = game === 'freedoom2' ? 'freedoom2.wad' : 'freedoom1.wad';
+  setStatus(`Downloading ${file}…`);
+  const resp = await fetch(new URL(`./wads/${file}`, location.href));
+  if (!resp.ok) throw new Error(`could not fetch ${file} (${resp.status}); pick a WAD file instead`);
+  await useWad(await resp.arrayBuffer(), file);
+}
+
 async function boot() {
   try {
     db = await openDatabase();
     // for the devtools console: await doom.sql('SELECT * FROM player')
     window.doom = { db, audio, sql: (q, p) => db.query(q, p).then((r) => r.rows) };
-    setStatus('Downloading Freedoom…');
-    const resp = await fetch(new URL('./wads/freedoom1.wad', location.href));
-    if (!resp.ok) throw new Error(`could not fetch freedoom1.wad (${resp.status}); pick a WAD file instead`);
-    await useWad(await resp.arrayBuffer(), 'freedoom1.wad');
+    await loadGame(settings.game);
     nextFrame();
   } catch (err) {
     console.error(err);
@@ -444,6 +450,17 @@ $('wadfile').addEventListener('change', async (e) => {
   if (!f || !db) return;
   try {
     await useWad(await f.arrayBuffer(), f.name);
+  } catch (err) {
+    setStatus(err.message, true);
+  }
+});
+$('game').value = settings.game;
+$('game').addEventListener('change', async (e) => {
+  settings.game = e.target.value;
+  saveSettings();
+  if (!db) return;
+  try {
+    await loadGame(settings.game);
   } catch (err) {
     setStatus(err.message, true);
   }

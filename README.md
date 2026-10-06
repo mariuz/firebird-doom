@@ -43,6 +43,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `MONSTERS_THINK` |
 | `P_LineAttack` (pistol, shotgun, chaingun, fist) | `HITSCAN` |
+| `A_Saw`, `A_FireShotgun2` (chainsaw, super shotgun) | `HITSCAN` at melee range / 20 pellets; reload sounds timed in `PLAYER_THINK` |
 | `P_SpawnPlayerMissile`, `P_RadiusAttack`, `A_BFGSpray` (rocket launcher, plasma gun, BFG) | `FIRE_MISSILE`, `RADIUS_ATTACK`, `BFG_SPRAY`; projectiles fly in `MONSTERS_THINK` |
 | `P_TouchSpecialThing` | pickups in `PLAYER_THINK` |
 | light flashes, strobes, glows | `LIGHTS_THINK` |
@@ -162,8 +163,10 @@ npm test
 npm run serve
 ```
 
-`npm run fetch-wad` downloads Freedoom and writes `public/wads/freedoom1.wad`, minus PC-speaker
-sounds and demos. `npm test` runs the game SQL in the real WASM engine under Node. `npm run serve` builds
+`npm run fetch-wad` downloads Freedoom and writes `public/wads/freedoom1.wad` and
+`freedoom2.wad`, minus PC-speaker sounds and demos. The page's **Game** setting switches between
+them. *Phase 1* plays like DOOM (E1M1–E4M9). *Phase 2* plays like DOOM II (MAP01–MAP32), with
+the super shotgun, the megasphere and DOOM II's monsters. Phase 2 downloads only when you pick it. `npm test` runs the game SQL in the real WASM engine under Node. `npm run serve` builds
 `dist/` and serves it on http://localhost:8080 **without** COOP/COEP headers, just like
 GitHub Pages. That way the service worker is what makes the page cross-origin isolated
 (Firebird's pthreads need `SharedArrayBuffer`).
@@ -172,8 +175,9 @@ You can also load your own `DOOM1.WAD` / `DOOM.WAD` / `DOOM2.WAD` with the file 
 is uploaded anywhere.
 
 `npm run test:all-maps` loads, plays and renders every map in the WAD, and fires each map's first
-teleporter. `npm run test:weapons` fires the rocket launcher, plasma gun and BFG at a monster and checks
-ammo, sounds, damage, splash and pickups. `npm run test:renderers` compares the BSP and brute-force renderers from several
+teleporter. `npm run test:weapons` fires the rocket launcher, plasma gun, BFG, chainsaw and, when the WAD
+has it (`WAD=public/wads/freedoom2.wad`), the super shotgun at a monster. It checks ammo,
+sounds, damage, splash and pickups. `npm run test:renderers` compares the BSP and brute-force renderers from several
 spots and headings on every map, and reports the speed-up. `npm run screenshots` regenerates
 `docs/*.png`. `node scripts/bench.mjs queries.sql` times SQL statements against a loaded map, with
 statements separated by `-- @@` lines.
@@ -183,7 +187,8 @@ statements separated by `-- @@` lines.
 Click the view to capture the mouse. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the
 arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd> uses,
 <kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>7</kbd> pick weapons (fist, pistol, shotgun, chaingun, rocket
-launcher, plasma gun, BFG9000), <kbd>Tab</kbd> shows the
+launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggles the chainsaw and
+<kbd>3</kbd> again the super shotgun. <kbd>Tab</kbd> shows the
 automap, and <kbd>P</kbd> pauses. Under the view you can set **Detail** (320 or 160 columns) and
 **Renderer** (BSP + solidsegs, or brute force), plus **Sound** and **Music** volume. These settings
 are remembered in your browser. The SQL console under the game queries the live game
@@ -199,7 +204,10 @@ GitHub Pages. Pull requests run everything except the deploy.
 ## Simplifications
 
 Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
-Projectiles fly flat. There's no chainsaw or super shotgun, and no crushers. Music is an approximation of OPL2
+Projectiles fly flat, and there are no crushers. The DOOM II monsters (arch-vile, revenant,
+mancubus, arachnotron, pain elemental, SS) and the two bosses reuse the existing attack kinds:
+the arch-vile's fire is a hitscan, revenant missiles don't home, and the mancubus fires one
+volley. Commander Keen, the hanging bodies, and the Icon of Sin aren't implemented. Music is an approximation of OPL2
 FM synthesis, not a cycle-exact emulator.
 Large maps with many monsters awake at once can still drop below 10 fps. The *Low* detail setting (160
 columns, like DOOM's own) halves the render cost.
