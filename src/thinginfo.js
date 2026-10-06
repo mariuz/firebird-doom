@@ -51,6 +51,16 @@ export const THING_TYPES = [
   // the pain elemental's "missile" is a lost soul (A_PainAttack), capped at 20
   M(71, 'PAIN', { hp: 400, speed: 8, radius: 31, painChance: 128, walk: 'ABC', attack: 'DEF', pain: 'G', death: 'HIJKLM', atk: 'missile', missile: 3006, dmgLo: 3, dmgHi: 24, seeSnd: 'DSPESIT', atkSnd: 'DSSKLATK', painSnd: 'DSPEPAIN', deathSnd: 'DSPEDTH' }),
   M(84, 'SSWV', { hp: 50, speed: 8, painChance: 170, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLM', atk: 'hitscan', shots: 1, dmgLo: 3, dmgHi: 15, drop: 2007, seeSnd: 'DSSSSIT', atkSnd: 'DSPISTOL', painSnd: 'DSPOPAIN', deathSnd: 'DSSSDTH' }),
+  // Commander Keen, hanging in MAP32: killing every Keen opens the sectors tagged 666
+  { type: 72, sprite: 'KEEN', kind: 'keen', radius: 16, height: 72, solid: 1, hang: 1, hp: 100, painChance: 256, walk: 'A', pain: 'M', death: 'BCDEFGHIJKL', painSnd: 'DSKEENPN', deathSnd: 'DSKEENDT' },
+  // the Icon of Sin: the brain (shoot it to win), the shooter that spits cubes
+  // at the target spots, and the cube that turns into a monster where it lands
+  { type: 88, sprite: 'BBRN', kind: 'brain', radius: 16, height: 16, solid: 1, hp: 250, painChance: 256, walk: 'A', pain: 'B', death: 'A', painSnd: 'DSBOSPN', deathSnd: 'DSBOSDTH' },
+  { type: 89, sprite: 'BOSF', kind: 'shooter', radius: 20, height: 32, walk: 'A' },
+  { type: 87, sprite: 'BOSF', kind: 'marker', radius: 1, height: 1, walk: 'A' },
+  { type: 9009, sprite: 'BOSF', kind: 'cube', radius: 6, height: 32, speed: 10, walk: 'ABCD', bright: 1 },
+  { type: 9013, sprite: 'MISL', kind: 'fx', radius: 1, height: 1, walk: 'BCD', bright: 1 },
+  { type: 9014, sprite: 'FIRE', kind: 'fx', radius: 1, height: 1, walk: 'ABCDEFGH', bright: 1 },
   // shootable barrel – "dies" by exploding
   { type: 2035, sprite: 'BAR1', kind: 'barrel', radius: 10, height: 42, solid: 1, hp: 20, walk: 'AB', death: 'ABCDE', deathSprite: 'BEXP', bright: 0, deathSnd: 'DSBAREXP' },
 
@@ -80,9 +90,14 @@ export const THING_TYPES = [
   S(55, 'SMBT', { walk: 'ABCD', bright: 1 }), S(56, 'SMGT', { walk: 'ABCD', bright: 1 }), S(57, 'SMRT', { walk: 'ABCD', bright: 1 }),
   S(70, 'FCAN', { walk: 'ABC', bright: 1 }), S(85, 'TLMP', { walk: 'ABCD', bright: 1 }), S(86, 'TLP2', { walk: 'ABCD', bright: 1 }),
   S(25, 'POL1'), S(26, 'POL6', { walk: 'AB' }), S(27, 'POL4'), S(28, 'POL2'), S(29, 'POL3', { walk: 'AB' }),
-  S(49, 'GOR1', { walk: 'ABCB' }), S(50, 'GOR2'), S(51, 'GOR3'), S(52, 'GOR4'), S(53, 'GOR5'),
+  // hanging from the ceiling (MF_SPAWNCEILING), at their DOOM heights
+  S(49, 'GOR1', { walk: 'ABCB', height: 68, hang: 1 }), S(50, 'GOR2', { height: 84, hang: 1 }), S(51, 'GOR3', { height: 84, hang: 1 }),
+  S(52, 'GOR4', { height: 68, hang: 1 }), S(53, 'GOR5', { height: 52, hang: 1 }),
+  S(73, 'HDB1', { height: 88, hang: 1 }), S(74, 'HDB2', { height: 88, hang: 1 }), S(75, 'HDB3', { height: 64, hang: 1 }),
+  S(76, 'HDB4', { height: 64, hang: 1 }), S(77, 'HDB5', { height: 64, hang: 1 }), S(78, 'HDB6', { height: 64, hang: 1 }),
   // non-solid decorations
-  D(34, 'CAND', { bright: 1 }), D(59, 'GOR2'), D(60, 'GOR4'), D(61, 'GOR3'), D(62, 'GOR5'), D(63, 'GOR1', { walk: 'ABCB' }),
+  D(34, 'CAND', { bright: 1 }), D(59, 'GOR2', { height: 84, hang: 1 }), D(60, 'GOR4', { height: 68, hang: 1 }), D(61, 'GOR3', { height: 52, hang: 1 }),
+  D(62, 'GOR5', { height: 52, hang: 1 }), D(63, 'GOR1', { walk: 'ABCB', height: 68, hang: 1 }),
   D(24, 'POL5'), D(79, 'POB1'), D(80, 'POB2'), D(81, 'BRS1'),
   D(15, 'PLAY', { walk: 'N' }), D(10, 'PLAY', { walk: 'W' }), D(12, 'PLAY', { walk: 'W' }),
   D(18, 'POSS', { walk: 'L' }), D(19, 'SPOS', { walk: 'L' }), D(20, 'TROO', { walk: 'M' }),

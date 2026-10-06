@@ -473,7 +473,7 @@ BEGIN
              th.sector_id, tt.walk_fr, tt.bright
         FROM things th
         LEFT JOIN thing_types tt ON tt.thing_type = th.thing_type
-       WHERE th.kind NOT IN ('player', 'marker')
+       WHERE th.kind NOT IN ('player', 'marker', 'shooter')
         INTO id, tx, ty, tz, tang, kind, fr, spr, sec, walk_fr, bright
   DO
   BEGIN

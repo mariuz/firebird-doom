@@ -289,7 +289,7 @@ BEGIN
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
    WHERE t.id = :tid
     INTO k, hp, st, pain_chance, pain_fr, death_fr, death_sprite, drop_type, tx, ty, pain_snd, death_snd;
-  IF (k IS NULL OR k NOT IN ('monster', 'barrel') OR st IN ('dying', 'dead')) THEN EXIT;
+  IF (k IS NULL OR k NOT IN ('monster', 'barrel', 'keen', 'brain') OR st IN ('dying', 'dead')) THEN EXIT;
   hp = hp - dmg;
   IF (hp <= 0) THEN
   BEGIN
@@ -298,14 +298,15 @@ BEGIN
            st_tics = CHAR_LENGTH(:death_fr) * 5, st_len = CHAR_LENGTH(:death_fr) * 5,
            frame = SUBSTRING(:death_fr FROM 1 FOR 1), sprite = :death_sprite
      WHERE id = :tid;
-    IF (k = 'monster') THEN UPDATE player SET kills = kills + 1 WHERE id = 1;
+    IF (k IN ('monster', 'keen')) THEN UPDATE player SET kills = kills + 1 WHERE id = 1;
+    IF (k = 'brain') THEN UPDATE things SET st_tics = 100, st_len = 100 WHERE id = :tid;   -- A_BrainScream
     EXECUTE PROCEDURE play_sound(death_snd, tid, tx, ty);
     IF (drop_type IS NOT NULL) THEN
       EXECUTE PROCEDURE spawn_thing(drop_type, tx, ty, NULL, 0) RETURNING_VALUES dummy;
   END
   ELSE
   BEGIN
-    UPDATE things t SET hp = :hp, reaction = 0, st = IIF(t.st = 'idle', 'chase', t.st) WHERE t.id = :tid;
+    UPDATE things t SET hp = :hp, reaction = 0, st = IIF(t.st = 'idle' AND t.kind = 'monster', 'chase', t.st) WHERE t.id = :tid;
     IF (pain_fr IS NOT NULL AND RAND() * 256 < pain_chance) THEN
     BEGIN
       UPDATE things SET st = 'pain', st_tics = 6, st_len = 6, frame = SUBSTRING(:pain_fr FROM 1 FOR 1)
@@ -638,7 +639,8 @@ BEGIN
         END
       END
       UPDATE sectors SET floor_h = :fh WHERE id = :sid;
-      UPDATE things SET z = :fh WHERE sector_id = :sid AND kind NOT IN ('player', 'missile', 'fx');
+      UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
+         AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type AND tt.hang = 1);
     END
     ELSE
     BEGIN
@@ -646,7 +648,8 @@ BEGIN
       IF (dir = 1) THEN fh = MINVALUE(fh + spd, top_h); ELSE fh = MAXVALUE(fh - spd, top_h);
       IF (fh = top_h) THEN del = 1;
       UPDATE sectors SET floor_h = :fh WHERE id = :sid;
-      UPDATE things SET z = :fh WHERE sector_id = :sid AND kind NOT IN ('player', 'missile', 'fx');
+      UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
+         AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type AND tt.hang = 1);
     END
 
     IF (del = 1) THEN
@@ -701,7 +704,7 @@ BEGIN
                  ((t.x - :sx) * :ddx + (t.y - :sy) * :ddy) / (:rng * :rng) along,
                  ABS((t.x - :sx) * :ddy - (t.y - :sy) * :ddx) / :rng perp
             FROM things t
-           WHERE t.kind IN ('monster', 'barrel') AND t.st NOT IN ('dying', 'dead') AND t.id <> :shooter) q
+           WHERE t.kind IN ('monster', 'barrel', 'keen', 'brain') AND t.st NOT IN ('dying', 'dead') AND t.id <> :shooter) q
    WHERE q.along > 0 AND q.along < :wall_s AND q.perp < q.radius
    ORDER BY q.along
     INTO tgt, tgt_s;
@@ -749,7 +752,7 @@ BEGIN
   FOR SELECT t.id, t.kind, MAXVALUE(ABS(t.x - :bx), ABS(t.y - :bdy)) - t.radius, t.x, t.y, t.z
         FROM things t
        WHERE t.x BETWEEN :bx - :dmg - 32 AND :bx + :dmg + 32
-         AND t.kind IN ('monster', 'barrel', 'player') AND t.st NOT IN ('dying', 'dead')
+         AND t.kind IN ('monster', 'barrel', 'keen', 'brain', 'player') AND t.st NOT IN ('dying', 'dead')
         INTO oid, ok, od, ox, oy, oz
   DO
   BEGIN
@@ -793,7 +796,7 @@ BEGIN
                    ((t.x - :sx) * :ddx + (t.y - :sy) * :ddy) / (1024e0 * 1024) along,
                    ABS((t.x - :sx) * :ddy - (t.y - :sy) * :ddx) / 1024 perp
               FROM things t
-             WHERE t.kind IN ('monster', 'barrel') AND t.st NOT IN ('dying', 'dead')) q
+             WHERE t.kind IN ('monster', 'barrel', 'keen', 'brain') AND t.st NOT IN ('dying', 'dead')) q
      WHERE q.along > 0 AND q.along < 1 AND q.perp < q.radius
      ORDER BY q.along
       INTO tgt, tx, ty, tz;
@@ -1243,6 +1246,49 @@ BEGIN
   END
 END^
 
+-- A_BossDeath: when the last of a boss type dies, some maps open up or end.
+CREATE OR ALTER PROCEDURE boss_death (ttype INTEGER)
+AS
+DECLARE mn VARCHAR(8);
+DECLARE sec INTEGER;
+DECLARE fh DOUBLE PRECISION;
+DECLARE h DOUBLE PRECISION;
+BEGIN
+  IF (EXISTS (SELECT 1 FROM things t WHERE t.thing_type = :ttype AND t.st NOT IN ('dying', 'dead'))) THEN EXIT;
+  SELECT g.map_name FROM game g WHERE g.id = 1 INTO mn;
+  IF ((mn = 'E2M8' AND ttype = 16) OR (mn = 'E3M8' AND ttype = 7)) THEN
+    UPDATE game SET exit_kind = 1 WHERE id = 1;
+  ELSE IF ((mn = 'E1M8' AND ttype = 3003) OR (mn = 'E4M8' AND ttype = 7) OR (mn = 'MAP07' AND ttype = 67)) THEN
+    -- lowerFloorToLowest, tag 666
+    FOR SELECT id, floor_h FROM sectors WHERE tag = 666 INTO sec, fh DO
+      EXECUTE PROCEDURE floor_start(sec, MINVALUE(fh, COALESCE(neighbor_h(sec, 'min_floor'), fh)), 1);
+  ELSE IF (mn = 'E4M6' AND ttype = 16) THEN
+    -- blazeOpen, tag 666
+    FOR SELECT id FROM sectors WHERE tag = 666 INTO sec DO
+      EXECUTE PROCEDURE door_start(sec, 8, 1, 'open');
+  ELSE IF (mn = 'MAP07' AND ttype = 68) THEN
+    -- raiseToTexture, tag 667: by the height of the shortest lower texture around it
+    FOR SELECT id, floor_h FROM sectors WHERE tag = 667 INTO sec, fh DO
+    BEGIN
+      SELECT MIN(tx.h) FROM linedefs l
+        JOIN sidedefs sd ON sd.id IN (l.front_side, l.back_side)
+        JOIN textures tx ON tx.id = sd.lower_tex
+       WHERE l.front_sector = :sec OR l.back_sector = :sec
+        INTO h;
+      EXECUTE PROCEDURE floor_start(sec, fh + COALESCE(h, 24), 1);
+    END
+END^
+
+-- A_KeenDie: the last Keen opens the doors tagged 666.
+CREATE OR ALTER PROCEDURE keen_die
+AS
+DECLARE sec INTEGER;
+BEGIN
+  IF (EXISTS (SELECT 1 FROM things t WHERE t.kind = 'keen' AND t.st NOT IN ('dying', 'dead'))) THEN EXIT;
+  FOR SELECT id FROM sectors WHERE tag = 666 INTO sec DO
+    EXECUTE PROCEDURE door_start(sec, 2, 1, 'open');
+END^
+
 -- ── monsters, missiles, effects ───────────────────────────────────────────
 -- A_Look / A_Chase / A_FaceTarget / A_PosAttack / A_TroopAttack / A_SargAttack,
 -- collapsed into one state machine per thing.
@@ -1302,6 +1348,10 @@ DECLARE ptid INTEGER;
 DECLARE ttype INTEGER;
 DECLARE hit INTEGER;
 DECLARE mdmg INTEGER;
+DECLARE spot INTEGER;
+DECLARE sx DOUBLE PRECISION;
+DECLARE sy DOUBLE PRECISION;
+DECLARE r DOUBLE PRECISION;
 BEGIN
   SELECT t.x, t.y, t.z, p.dead, p.thing_id FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
     INTO px, py, pz, pdead, ptid;
@@ -1312,7 +1362,7 @@ BEGIN
              tt.speed, tt.walk_fr, tt.atk_fr, tt.death_fr, tt.atk_kind, tt.missile_type,
              tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id, tt.see_snd, tt.atk_snd, tt.death_snd, t.thing_type
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-       WHERE t.kind IN ('monster', 'barrel', 'missile', 'fx')
+       WHERE t.kind IN ('monster', 'barrel', 'missile', 'fx', 'keen', 'brain', 'shooter', 'cube')
          AND t.st NOT IN ('dead')
          AND NOT (t.kind = 'barrel' AND t.st = 'idle')
          AND NOT (t.st = 'idle' AND MOD(:tic + t.id, 8) <> 0)
@@ -1324,7 +1374,74 @@ BEGIN
     del = 0;
     dist = SQRT((px - x) * (px - x) + (py - y) * (py - y));
 
-    IF (k = 'fx') THEN
+    IF (k = 'shooter') THEN
+    BEGIN
+      -- A_BrainSpit: every 150 tics, a cube towards a random target spot
+      IF (st = 'idle') THEN
+      BEGIN
+        st = 'active';
+        st_tics = 105;
+      END
+      ELSE
+      BEGIN
+        st_tics = st_tics - 1;
+        IF (st_tics <= 0 AND pdead = 0) THEN
+        BEGIN
+          st_tics = 150;
+          spot = NULL;
+          SELECT FIRST 1 t.id, t.x, t.y FROM things t WHERE t.thing_type = 87 ORDER BY RAND() INTO spot, sx, sy;
+          IF (spot IS NOT NULL) THEN
+          BEGIN
+            ang = ATAN2(sy - y, sx - x);
+            EXECUTE PROCEDURE spawn_thing(9009, x, y, z, ang) RETURNING_VALUES mid;
+            UPDATE things t SET momx = COS(:ang) * 10, momy = SIN(:ang) * 10, owner_id = :spot, st = 'fly'
+             WHERE t.id = :mid;
+            EXECUTE PROCEDURE play_sound('DSBOSPIT', 0, NULL, NULL);
+          END
+        END
+      END
+    END
+    ELSE IF (k = 'cube') THEN
+    BEGIN
+      -- the cube flies through walls to its spot, then A_SpawnFly
+      SELECT t.x, t.y FROM things t WHERE t.id = :owner_id INTO sx, sy;
+      IF (sx IS NULL) THEN del = 1;
+      ELSE IF (SQRT((sx - x) * (sx - x) + (sy - y) * (sy - y)) <= spd) THEN
+      BEGIN
+        del = 1;
+        EXECUTE PROCEDURE spawn_thing(9014, sx, sy, NULL, 0) RETURNING_VALUES mid;
+        r = RAND() * 256;
+        EXECUTE PROCEDURE spawn_thing(
+          CASE WHEN r < 50 THEN 3001 WHEN r < 90 THEN 3002 WHEN r < 120 THEN 58 WHEN r < 130 THEN 71
+               WHEN r < 160 THEN 3005 WHEN r < 162 THEN 64 WHEN r < 172 THEN 66 WHEN r < 192 THEN 68
+               WHEN r < 222 THEN 67 WHEN r < 246 THEN 69 ELSE 3003 END,
+          sx, sy, NULL, ATAN2(py - sy, px - sx)) RETURNING_VALUES mid;
+        UPDATE things t SET st = 'chase', reaction = 2 WHERE t.id = :mid;
+        EXECUTE PROCEDURE play_sound('DSTELEPT', mid, sx, sy);
+      END
+      ELSE
+      BEGIN
+        x = x + momx;
+        y = y + momy;
+        sec = sector_at(x, y);
+      END
+    END
+    ELSE IF (k = 'brain' AND st = 'dying') THEN
+    BEGIN
+      -- A_BrainScream: rockets bursting all along the wall, then the end
+      st_tics = st_tics - 1;
+      IF (MOD(st_tics, 5) = 0) THEN
+      BEGIN
+        EXECUTE PROCEDURE spawn_thing(9013, x - 320 + RAND() * 640, y - 320, z + 128 + RAND() * 384, 0) RETURNING_VALUES mid;
+        IF (MOD(st_tics, 15) = 0) THEN EXECUTE PROCEDURE play_sound('DSBAREXP', 0, NULL, NULL);
+      END
+      IF (st_tics <= 0) THEN
+      BEGIN
+        st = 'dead';
+        UPDATE game SET exit_kind = 1 WHERE id = 1;
+      END
+    END
+    ELSE IF (k = 'fx') THEN
     BEGIN
       st_tics = st_tics - 1;
       IF (st_tics <= 0) THEN del = 1;
@@ -1349,7 +1466,7 @@ BEGIN
         IF (owner_id = ptid) THEN
           SELECT FIRST 1 t.id FROM things t
            WHERE t.x BETWEEN :nx - 64 AND :nx + 64
-             AND t.kind IN ('monster', 'barrel') AND t.st NOT IN ('dying', 'dead')
+             AND t.kind IN ('monster', 'barrel', 'keen', 'brain') AND t.st NOT IN ('dying', 'dead')
              AND ABS(t.x - :nx) < t.radius + :rad AND ABS(t.y - :ny) < t.radius + :rad
             INTO hit;
         ELSE IF (SQRT((px - nx) * (px - nx) + (py - ny) * (py - ny)) < 16 + rad AND z >= pz - 8 AND z <= pz + 64) THEN
@@ -1400,18 +1517,23 @@ BEGIN
       IF (st_tics <= 0) THEN
       BEGIN
         IF (k = 'barrel') THEN del = 1;
-        ELSE st = 'dead';
+        ELSE
+        BEGIN
+          st = 'dead';
+          IF (k = 'keen') THEN EXECUTE PROCEDURE keen_die;
+          ELSE EXECUTE PROCEDURE boss_death(ttype);
+        END
       END
     END
     ELSE IF (st = 'pain') THEN
     BEGIN
       st_tics = st_tics - 1;
-      IF (st_tics <= 0) THEN BEGIN st = 'chase'; st_tics = 0; END
+      IF (st_tics <= 0) THEN BEGIN st = IIF(k = 'monster', 'chase', 'idle'); st_tics = 0; END
     END
     ELSE IF (st = 'idle') THEN
     BEGIN
       -- A_Look: sight, or gunfire within earshot (unless deaf/ambush)
-      IF (pdead = 0 AND dist < 2400
+      IF (k = 'monster' AND pdead = 0 AND dist < 2400
           AND ((BIN_AND(flags, 8) = 0 AND tic - noise_tic < 16 AND dist < 1200)
                OR check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1)) THEN
       BEGIN
@@ -1730,10 +1852,13 @@ BEGIN
       INTO tid, sid
   DO
     UPDATE things SET sector_id = :sid WHERE id = :tid;
-  UPDATE things t SET z = (SELECT floor_h FROM sectors s WHERE s.id = t.sector_id);
+  UPDATE things t
+     SET z = (SELECT IIF(tt.hang = 1, s.ceil_h - tt.height, s.floor_h)
+                FROM sectors s, thing_types tt
+               WHERE s.id = t.sector_id AND tt.thing_type = t.thing_type);
 
   UPDATE game g
-     SET total_kills = (SELECT COUNT(*) FROM things WHERE kind = 'monster'),
+     SET total_kills = (SELECT COUNT(*) FROM things WHERE kind IN ('monster', 'keen')),
          total_items = (SELECT COUNT(*) FROM things WHERE kind = 'item'),
          total_secrets = (SELECT COUNT(*) FROM sectors WHERE special = 9)
    WHERE id = 1;

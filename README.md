@@ -13,6 +13,7 @@ keyboard and paints the rows Firebird returns.
 | | |
 |---|---|
 | ![Two monsters, sprites picked and projected by FRAME_SPRITES](docs/screenshot-monster.png) | ![E1M2: pillars, steps and a lit doorway](docs/screenshot-e1m2.png) |
+| ![Phase 2 MAP11: Commander Keen hanging in his alcove](docs/screenshot-keen.png) | ![Phase 2 MAP30: the Icon of Sin's brain](docs/screenshot-icon.png) |
 
 <sub>These screenshots come from `npm run screenshots`, which runs the same SQL and
 rasteriser as the page, headless in Node.</sub>
@@ -42,6 +43,9 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_CheckSight` | `CHECK_SIGHT()` walks the blockmap cells along the sight line |
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `MONSTERS_THINK` |
+| `A_BossDeath`, `A_KeenDie` | `BOSS_DEATH`, `KEEN_DIE` |
+| `A_BrainSpit`, `A_SpawnFly`, `A_BrainScream` (the Icon of Sin) | the `shooter`, `cube` and `brain` kinds in `MONSTERS_THINK` |
+| `MF_SPAWNCEILING` (hanging bodies, Commander Keen) | `THING_TYPES.HANG`, placed in `INIT_MAP` |
 | `P_LineAttack` (pistol, shotgun, chaingun, fist) | `HITSCAN` |
 | `A_Saw`, `A_FireShotgun2` (chainsaw, super shotgun) | `HITSCAN` at melee range / 20 pellets; reload sounds timed in `PLAYER_THINK` |
 | `P_SpawnPlayerMissile`, `P_RadiusAttack`, `A_BFGSpray` (rocket launcher, plasma gun, BFG) | `FIRE_MISSILE`, `RADIUS_ATTACK`, `BFG_SPRAY`; projectiles fly in `MONSTERS_THINK` |
@@ -177,7 +181,10 @@ is uploaded anywhere.
 `npm run test:all-maps` loads, plays and renders every map in the WAD, and fires each map's first
 teleporter. `npm run test:weapons` fires the rocket launcher, plasma gun, BFG, chainsaw and, when the WAD
 has it (`WAD=public/wads/freedoom2.wad`), the super shotgun at a monster. It checks ammo,
-sounds, damage, splash and pickups. `npm run test:renderers` compares the BSP and brute-force renderers from several
+sounds, damage, splash and pickups. `npm run test:specials` checks that hanging decorations hang. It also checks that the boss-death
+specials fire (E1M8, E2M8, E3M8, MAP07), that the last Commander Keen opens the 666 door, and that
+the Icon of Sin spits cubes, spawns monsters and ends the game when its brain dies. Use
+`WAD=public/wads/freedoom2.wad` for the Phase 2 parts. `npm run test:renderers` compares the BSP and brute-force renderers from several
 spots and headings on every map, and reports the speed-up. `npm run screenshots` regenerates
 `docs/*.png`. `node scripts/bench.mjs queries.sql` times SQL statements against a loaded map, with
 statements separated by `-- @@` lines.
@@ -207,7 +214,7 @@ Monster movement, attack timing and accuracy follow DOOM's rules, not its exact 
 Projectiles fly flat, and there are no crushers. The DOOM II monsters (arch-vile, revenant,
 mancubus, arachnotron, pain elemental, SS) and the two bosses reuse the existing attack kinds:
 the arch-vile's fire is a hitscan, revenant missiles don't home, and the mancubus fires one
-volley. Commander Keen, the hanging bodies, and the Icon of Sin aren't implemented. Music is an approximation of OPL2
+volley. Music is an approximation of OPL2
 FM synthesis, not a cycle-exact emulator.
 Large maps with many monsters awake at once can still drop below 10 fps. The *Low* detail setting (160
 columns, like DOOM's own) halves the render cost.

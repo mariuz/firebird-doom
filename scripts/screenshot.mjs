@@ -48,6 +48,7 @@ async function mapState(name) {
 }
 
 async function shoot(map, file) {
+  await db.exec('UPDATE player SET health = 100, dead = 0');
   const hud = (await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)')).rows[0];
   const walls = (await db.query('SELECT * FROM frame_walls', [], arr)).rows;
   const sprites = (await db.query('SELECT * FROM frame_sprites', [], arr)).rows;
@@ -63,7 +64,7 @@ async function shoot(map, file) {
 }
 
 /** Place the player `dist` units from a thing, facing it, where it can stand and see it. */
-async function faceThing(kind, dist) {
+async function faceThing(kind, dist, aimZ = 40) {
   const cands = (await db.query(`SELECT t.id, t.x, t.y, t.z FROM things t WHERE t.kind = '${kind}' ORDER BY t.id`)).rows;
   for (const c of cands) {
     for (let k = 0; k < 16; k++) {
@@ -77,7 +78,7 @@ async function faceThing(kind, dist) {
            EXECUTE PROCEDURE check_position(-1, ${x}, ${y},
              (SELECT floor_h FROM sectors WHERE id = sector_at(${x}, ${y})), 16, 56, 0)
              RETURNING_VALUES ok, floor_z, cz, dz, sec;
-           seen = check_sight(${x}, ${y}, floor_z + 41, ${c.X}, ${c.Y}, ${c.Z} + 40);
+           seen = check_sight(${x}, ${y}, floor_z + 41, ${c.X}, ${c.Y}, ${c.Z} + ${aimZ});
            SUSPEND;
          END`)).rows[0];
       if (r.OK === 1 && r.SEEN === 1) {
@@ -146,5 +147,29 @@ await loadMap(db, wad, res, 'E1M2');
 map = await mapState('E1M2');
 await db.query('SELECT * FROM doom_tic(20, 1, 0, 0.6, 0, 0, 0, 0)');
 await shoot(map, 'screenshot-e1m2.png');
+
+// Phase 2 extras: Commander Keen and the Icon of Sin
+const wad2Path = path.join(root, 'public/wads/freedoom2.wad');
+if (!process.env.WAD && fs.existsSync(wad2Path)) {
+  const wad2 = new Wad(fs.readFileSync(wad2Path));
+  const res2 = await loadResources(db, wad2);
+  const r2 = new Renderer(canvas, wad2, res2);
+  Object.assign(renderer, { wad: wad2, res: res2, textures: r2.textures, flats: r2.flats, pictures: r2.pictures,
+    texAnim: r2.texAnim, flatAnim: r2.flatAnim, lut: r2.lut });
+  const mapState2 = async (name) => {
+    const m = await mapState(name);
+    m.skyTex = res2.texId.get(Number(name.slice(3)) < 12 ? 'SKY1' : Number(name.slice(3)) < 21 ? 'SKY2' : 'SKY3') ?? 0;
+    return m;
+  };
+  for (const [name, kind, file] of [['MAP11', 'keen', 'screenshot-keen.png'], ['MAP30', 'brain', 'screenshot-icon.png']]) {
+    await loadMap(db, wad2, res2, name);
+    const m = await mapState2(name);
+    let placed = false;
+    for (const d of [96, 128, 192, 256, 384, 512]) if ((placed = await faceThing(kind, d, kind === 'keen' ? 36 : 8))) break;
+    if (!placed) { console.log(`(${name}: no clear view of the ${kind})`); continue; }
+    await db.query('SELECT * FROM doom_tic(2, 0, 0, 0, 0, 0, 0, 0)');
+    await shoot(m, file);
+  }
+}
 
 process.exit(0);

@@ -90,7 +90,8 @@ CREATE TABLE thing_types (
   see_snd      VARCHAR(8),
   atk_snd      VARCHAR(8),
   pain_snd     VARCHAR(8),
-  death_snd    VARCHAR(8)
+  death_snd    VARCHAR(8),
+  hang         SMALLINT DEFAULT 0 NOT NULL   -- MF_SPAWNCEILING: hangs from the ceiling
 );
 
 -- ── the map ─────────────────────────────────────────────────────────────
