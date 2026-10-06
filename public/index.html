@@ -42,7 +42,7 @@
       <p class="keys">Click the view to capture the mouse ·
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows move ·
         <kbd>Ctrl</kbd> or click fire · <kbd>Space</kbd>/<kbd>E</kbd> use ·
-        <kbd>Shift</kbd> run · <kbd>1</kbd>–<kbd>4</kbd> weapons ·
+        <kbd>Shift</kbd> run · <kbd>1</kbd>–<kbd>7</kbd> weapons ·
         <kbd>Tab</kbd> map · <kbd>P</kbd> pause.
         On touch screens the left half moves, the right half turns, and a tap fires.</p>
     </section>
@@ -56,7 +56,7 @@
         <button data-sql="SELECT FIRST 40 * FROM frame_walls">frame_walls</button>
         <button data-sql="SELECT * FROM frame_sprites ORDER BY depth">frame_sprites</button>
         <button data-sql="SELECT * FROM frame_visplanes ORDER BY pixels DESC">frame_visplanes</button>
-        <button data-sql="UPDATE player SET health = 200, armor = 200, bullets = 200, shells = 50, has_shotgun = 1, has_chaingun = 1, keycards = 7">IDKFA</button>
+        <button data-sql="UPDATE player SET health = 200, armor = 200, bullets = 200, shells = 50, rockets = 50, cells = 300, has_shotgun = 1, has_chaingun = 1, has_launcher = 1, has_plasma = 1, has_bfg = 1, keycards = 7">IDKFA</button>
         <button data-sql="UPDATE things SET hp = 1 WHERE kind = 'monster'">one-hit monsters</button>
         <button data-sql="UPDATE sectors SET light = 255, base_light = 255">lights on</button>
       </div>
@@ -73,7 +73,8 @@
           are copied in as rows. Sprite frames and texture sizes become tables too.</li>
         <li><b>The game is PSQL.</b> <code>DOOM_TIC</code> runs at 35 Hz: player movement with wall sliding
           (<code>CHECK_POSITION</code>), doors and lifts (<code>MOVERS</code>), monster AI with line-of-sight
-          (<code>CHECK_SIGHT</code>), hitscan weapons, projectiles, pickups, secrets, and light effects.</li>
+          (<code>CHECK_SIGHT</code>), hitscan weapons, rockets, plasma and the BFG (with splash damage and the 40-ray BFG spray), pickups,
+          secrets, and light effects.</li>
         <li><b>The BSP is a recursive CTE.</b> <code>INIT_MAP</code> finds every thing's sector by walking
           <code>NODES</code> for all things at once with <code>WITH RECURSIVE</code>.</li>
         <li><b>The renderer is a query.</b> <code>FRAME_WALLS</code> walks the BSP front to back like DOOM's

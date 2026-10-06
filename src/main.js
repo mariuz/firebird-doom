@@ -63,7 +63,7 @@ let fireClick = false;
 let weaponSel = 0;
 const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
   'Space', 'KeyE', 'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'Tab', 'Digit1', 'Digit2',
-  'Digit3', 'Digit4', 'KeyF', 'Comma', 'Period']);
+  'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'KeyF', 'Comma', 'Period']);
 
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;

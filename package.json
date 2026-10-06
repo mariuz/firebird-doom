@@ -11,7 +11,8 @@
     "test": "node scripts/sql-smoke.mjs",
     "test:all-maps": "node scripts/all-maps.mjs",
     "test:renderers": "node scripts/compare-renderers.mjs",
-    "screenshots": "node scripts/screenshot.mjs"
+    "screenshots": "node scripts/screenshot.mjs",
+    "test:weapons": "node scripts/weapons-test.mjs"
   },
   "license": "MIT",
   "dependencies": {

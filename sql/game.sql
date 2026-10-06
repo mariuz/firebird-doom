@@ -719,6 +719,98 @@ BEGIN
   END
 END^
 
+-- P_SpawnPlayerMissile: a projectile leaving the shooter at gun height.
+CREATE OR ALTER PROCEDURE fire_missile (
+  mtype INTEGER, owner INTEGER, sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION, ang DOUBLE PRECISION)
+AS
+DECLARE mid INTEGER;
+DECLARE spd DOUBLE PRECISION;
+BEGIN
+  SELECT speed FROM thing_types WHERE thing_type = :mtype INTO spd;
+  EXECUTE PROCEDURE spawn_thing(mtype, sx, sy, sz + 32, ang) RETURNING_VALUES mid;
+  UPDATE things t SET momx = COS(:ang) * :spd, momy = SIN(:ang) * :spd, owner_id = :owner WHERE t.id = :mid;
+END^
+
+-- P_RadiusAttack: DMG at the centre, minus the distance (box distance less
+-- the victim's radius, as DOOM measures it), to everything that can see it,
+-- the shooter included.
+CREATE OR ALTER PROCEDURE radius_attack (
+  bx DOUBLE PRECISION, bdy DOUBLE PRECISION, bz DOUBLE PRECISION, dmg INTEGER, src INTEGER)
+AS
+DECLARE oid INTEGER;
+DECLARE ok VARCHAR(10);
+DECLARE od DOUBLE PRECISION;
+DECLARE ox DOUBLE PRECISION;
+DECLARE oy DOUBLE PRECISION;
+DECLARE oz DOUBLE PRECISION;
+BEGIN
+  FOR SELECT t.id, t.kind, MAXVALUE(ABS(t.x - :bx), ABS(t.y - :bdy)) - t.radius, t.x, t.y, t.z
+        FROM things t
+       WHERE t.x BETWEEN :bx - :dmg - 32 AND :bx + :dmg + 32
+         AND t.kind IN ('monster', 'barrel', 'player') AND t.st NOT IN ('dying', 'dead')
+        INTO oid, ok, od, ox, oy, oz
+  DO
+  BEGIN
+    od = MAXVALUE(0, od);
+    IF (od < dmg AND check_sight(bx, bdy, bz + 8, ox, oy, oz + 32) = 1) THEN
+      IF (ok = 'player') THEN EXECUTE PROCEDURE damage_player(CAST(dmg - od AS INTEGER));
+      ELSE EXECUTE PROCEDURE damage_thing(oid, CAST(dmg - od AS INTEGER));
+  END
+END^
+
+-- A_BFGSpray: 40 tracers fanned over 90° from the player who fired, along
+-- the ball's heading; each hits the first monster in 1024 units that the
+-- player can see, for 15 rolls of 1d8.
+CREATE OR ALTER PROCEDURE bfg_spray (ang DOUBLE PRECISION, src INTEGER)
+AS
+DECLARE sx DOUBLE PRECISION;
+DECLARE sy DOUBLE PRECISION;
+DECLARE sz DOUBLE PRECISION;
+DECLARE a DOUBLE PRECISION;
+DECLARE ddx DOUBLE PRECISION;
+DECLARE ddy DOUBLE PRECISION;
+DECLARE i INTEGER = 0;
+DECLARE j INTEGER;
+DECLARE dmg INTEGER;
+DECLARE tgt INTEGER;
+DECLARE tx DOUBLE PRECISION;
+DECLARE ty DOUBLE PRECISION;
+DECLARE tz DOUBLE PRECISION;
+DECLARE dummy INTEGER;
+BEGIN
+  SELECT x, y, z FROM things WHERE id = :src INTO sx, sy, sz;
+  IF (sx IS NULL) THEN EXIT;
+  WHILE (i < 40) DO
+  BEGIN
+    a = ang - PI() / 4 + (PI() / 2) / 40 * i;
+    ddx = COS(a) * 1024;
+    ddy = SIN(a) * 1024;
+    tgt = NULL;
+    SELECT FIRST 1 q.id, q.x, q.y, q.z
+      FROM (SELECT t.id, t.x, t.y, t.z, t.radius,
+                   ((t.x - :sx) * :ddx + (t.y - :sy) * :ddy) / (1024e0 * 1024) along,
+                   ABS((t.x - :sx) * :ddy - (t.y - :sy) * :ddx) / 1024 perp
+              FROM things t
+             WHERE t.kind IN ('monster', 'barrel') AND t.st NOT IN ('dying', 'dead')) q
+     WHERE q.along > 0 AND q.along < 1 AND q.perp < q.radius
+     ORDER BY q.along
+      INTO tgt, tx, ty, tz;
+    IF (tgt IS NOT NULL AND check_sight(sx, sy, sz + 32, tx, ty, tz + 32) = 1) THEN
+    BEGIN
+      dmg = 0;
+      j = 0;
+      WHILE (j < 15) DO
+      BEGIN
+        dmg = dmg + 1 + CAST(FLOOR(RAND() * 8) AS INTEGER);
+        j = j + 1;
+      END
+      EXECUTE PROCEDURE damage_thing(tgt, dmg);
+      EXECUTE PROCEDURE spawn_thing(9012, tx, ty, tz + 16, 0) RETURNING_VALUES dummy;
+    END
+    i = i + 1;
+  END
+END^
+
 -- ── the player ────────────────────────────────────────────────────────────
 CREATE OR ALTER PROCEDURE player_think (
   fwd DOUBLE PRECISION, side DOUBLE PRECISION, turn DOUBLE PRECISION,
@@ -770,13 +862,22 @@ DECLARE health INTEGER;
 DECLARE armor INTEGER;
 DECLARE maxb INTEGER;
 DECLARE maxs INTEGER;
+DECLARE rockets INTEGER;
+DECLARE cells INTEGER;
+DECLARE maxr INTEGER;
+DECLARE maxc INTEGER;
+DECLARE has_rl SMALLINT;
+DECLARE has_pl SMALLINT;
+DECLARE has_bfg SMALLINT;
 BEGIN
   SELECT p.thing_id, t.x, t.y, t.z, t.angle, t.momx, t.momy, t.momz, p.dead, p.weapon, p.attack_tics, p.attack_len,
-         p.bullets, p.shells, p.has_shotgun, p.has_chaingun, p.use_down, p.view_h
+         p.bullets, p.shells, p.has_shotgun, p.has_chaingun, p.use_down, p.view_h,
+         p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg
     FROM player p JOIN things t ON t.id = p.thing_id
    WHERE p.id = 1
     INTO tid, x, y, z, ang, momx, momy, momz, is_dead, weapon, attack_tics, attack_len,
-         bullets, shells, has_sg, has_cg, use_down, view_h;
+         bullets, shells, has_sg, has_cg, use_down, view_h,
+         rockets, cells, has_rl, has_pl, has_bfg;
 
   IF (is_dead = 1) THEN
   BEGIN
@@ -926,16 +1027,27 @@ BEGIN
   END
 
   -- weapon selection (only weapons we own)
-  IF (weapon_sel = 1 OR weapon_sel = 2 OR (weapon_sel = 3 AND has_sg = 1) OR (weapon_sel = 4 AND has_cg = 1)) THEN
+  IF (weapon_sel = 1 OR weapon_sel = 2 OR (weapon_sel = 3 AND has_sg = 1) OR (weapon_sel = 4 AND has_cg = 1)
+      OR (weapon_sel = 5 AND has_rl = 1) OR (weapon_sel = 6 AND has_pl = 1) OR (weapon_sel = 7 AND has_bfg = 1)) THEN
     weapon = weapon_sel;
 
   -- A_FirePistol / A_FireShotgun / A_FireCGun / A_Punch
   IF (attack_tics > 0) THEN attack_tics = attack_tics - 1;
+  -- A_FireBFG: the ball leaves 20 tics after the trigger, once the gun has charged
+  IF (weapon = 7 AND attack_len = 60 AND attack_tics = 40) THEN
+    EXECUTE PROCEDURE fire_missile(9005, tid, x, y, z, ang);
   IF (fire = 1 AND attack_tics = 0) THEN
   BEGIN
-    IF (weapon = 2 AND bullets = 0) THEN weapon = IIF(has_sg = 1 AND shells > 0, 3, 1);
-    IF (weapon = 4 AND bullets = 0) THEN weapon = IIF(has_sg = 1 AND shells > 0, 3, 1);
-    IF (weapon = 3 AND shells = 0) THEN weapon = IIF(bullets > 0, IIF(has_cg = 1, 4, 2), 1);
+    -- P_CheckAmmo: out of ammo, switch to the best weapon that has some
+    IF ((weapon IN (2, 4) AND bullets = 0) OR (weapon = 3 AND shells = 0) OR (weapon = 5 AND rockets = 0)
+        OR (weapon = 6 AND cells = 0) OR (weapon = 7 AND cells < 40)) THEN
+      weapon = CASE WHEN has_pl = 1 AND cells > 0 THEN 6
+                    WHEN has_cg = 1 AND bullets > 0 THEN 4
+                    WHEN has_sg = 1 AND shells > 0 THEN 3
+                    WHEN bullets > 0 THEN 2
+                    WHEN has_rl = 1 AND rockets > 0 THEN 5
+                    WHEN has_bfg = 1 AND cells >= 40 THEN 7
+                    ELSE 1 END;
     pellets = 0;
     IF (weapon = 1) THEN
     BEGIN
@@ -945,8 +1057,27 @@ BEGIN
     ELSE IF (weapon = 2) THEN BEGIN attack_len = 14; pellets = 1; spread = 0.04; bullets = bullets - 1; END
     ELSE IF (weapon = 3) THEN BEGIN attack_len = 37; pellets = 7; spread = 0.10; shells = shells - 1; END
     ELSE IF (weapon = 4) THEN BEGIN attack_len = 4;  pellets = 1; spread = 0.06; bullets = bullets - 1; END
+    ELSE IF (weapon = 5) THEN
+    BEGIN
+      attack_len = 20;
+      rockets = rockets - 1;
+      EXECUTE PROCEDURE fire_missile(9003, tid, x, y, z, ang);
+    END
+    ELSE IF (weapon = 6) THEN
+    BEGIN
+      attack_len = 3;
+      cells = cells - 1;
+      EXECUTE PROCEDURE fire_missile(9004, tid, x, y, z, ang);
+    END
+    ELSE IF (weapon = 7) THEN
+    BEGIN
+      attack_len = 60;
+      cells = cells - 40;
+    END
     attack_tics = attack_len;
-    EXECUTE PROCEDURE play_sound(CASE weapon WHEN 1 THEN 'DSPUNCH' WHEN 3 THEN 'DSSHOTGN' ELSE 'DSPISTOL' END, 0, NULL, NULL);
+    EXECUTE PROCEDURE play_sound(CASE weapon WHEN 1 THEN 'DSPUNCH' WHEN 3 THEN 'DSSHOTGN' WHEN 5 THEN 'DSRLAUNC'
+                                             WHEN 6 THEN 'DSPLASMA' WHEN 7 THEN 'DSBFG' ELSE 'DSPISTOL' END,
+                                 0, NULL, NULL);
     i = 0;
     WHILE (i < pellets) DO
     BEGIN
@@ -961,7 +1092,7 @@ BEGIN
                     sector_id = :sec
    WHERE id = :tid;
   UPDATE player SET weapon = :weapon, attack_tics = :attack_tics, attack_len = :attack_len,
-                    bullets = :bullets, shells = :shells, use_down = :use_key,
+                    bullets = :bullets, shells = :shells, rockets = :rockets, cells = :cells, use_down = :use_key,
                     view_h = :view_h, view_z = :view_z
    WHERE id = 1;
 
@@ -973,8 +1104,11 @@ BEGIN
         INTO iid, pk, amt, lbl
   DO
   BEGIN
-    SELECT p.health, p.armor, p.bullets, p.shells, p.max_bullets, p.max_shells, p.has_shotgun, p.has_chaingun
-      FROM player p WHERE p.id = 1 INTO health, armor, bullets, shells, maxb, maxs, has_sg, has_cg;
+    SELECT p.health, p.armor, p.bullets, p.shells, p.max_bullets, p.max_shells, p.has_shotgun, p.has_chaingun,
+           p.rockets, p.cells, p.max_rockets, p.max_cells, p.has_launcher, p.has_plasma, p.has_bfg
+      FROM player p WHERE p.id = 1
+      INTO health, armor, bullets, shells, maxb, maxs, has_sg, has_cg,
+           rockets, cells, maxr, maxc, has_rl, has_pl, has_bfg;
     took = 1;
     IF (pk = 'health') THEN
       IF (health >= 100) THEN took = 0; ELSE health = MINVALUE(100, health + amt);
@@ -998,12 +1132,38 @@ BEGIN
       has_cg = 1;
       bullets = MINVALUE(maxb, bullets + amt);
     END
+    ELSE IF (pk = 'rockets') THEN
+      IF (rockets >= maxr) THEN took = 0; ELSE rockets = MINVALUE(maxr, rockets + amt);
+    ELSE IF (pk = 'cells') THEN
+      IF (cells >= maxc) THEN took = 0; ELSE cells = MINVALUE(maxc, cells + amt);
+    ELSE IF (pk = 'launcher') THEN
+    BEGIN
+      IF (has_rl = 0) THEN weapon = 5;
+      has_rl = 1;
+      rockets = MINVALUE(maxr, rockets + amt);
+    END
+    ELSE IF (pk = 'plasma') THEN
+    BEGIN
+      IF (has_pl = 0) THEN weapon = 6;
+      has_pl = 1;
+      cells = MINVALUE(maxc, cells + amt);
+    END
+    ELSE IF (pk = 'bfg') THEN
+    BEGIN
+      IF (has_bfg = 0) THEN weapon = 7;
+      has_bfg = 1;
+      cells = MINVALUE(maxc, cells + amt);
+    END
     ELSE IF (pk = 'backpack') THEN
     BEGIN
       maxb = 400;
       maxs = 100;
+      maxr = 100;
+      maxc = 600;
       bullets = MINVALUE(maxb, bullets + amt);
       shells = MINVALUE(maxs, shells + 4);
+      rockets = MINVALUE(maxr, rockets + 1);
+      cells = MINVALUE(maxc, cells + 20);
     END
     IF (took = 1) THEN
     BEGIN
@@ -1011,11 +1171,13 @@ BEGIN
       UPDATE player
          SET health = :health, armor = :armor, bullets = :bullets, shells = :shells,
              max_bullets = :maxb, max_shells = :maxs, has_shotgun = :has_sg, has_chaingun = :has_cg,
+             rockets = :rockets, cells = :cells, max_rockets = :maxr, max_cells = :maxc,
+             has_launcher = :has_rl, has_plasma = :has_pl, has_bfg = :has_bfg,
              weapon = :weapon, items = items + 1, bonus_count = 6,
              keycards = IIF(:pk = 'key', BIN_OR(keycards, :amt), keycards),
              msg = 'Picked up ' || :lbl || '.', msg_tics = 70
        WHERE id = 1;
-      EXECUTE PROCEDURE play_sound(CASE WHEN pk IN ('shotgun', 'chaingun') THEN 'DSWPNUP'
+      EXECUTE PROCEDURE play_sound(CASE WHEN pk IN ('shotgun', 'chaingun', 'launcher', 'plasma', 'bfg') THEN 'DSWPNUP'
                                         WHEN pk = 'none' THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
     END
   END
@@ -1072,21 +1234,23 @@ DECLARE cz DOUBLE PRECISION;
 DECLARE dz DOUBLE PRECISION;
 DECLARE n INTEGER;
 DECLARE mid INTEGER;
-DECLARE oid INTEGER;
-DECLARE od DOUBLE PRECISION;
 DECLARE melee_range DOUBLE PRECISION;
 DECLARE see_snd VARCHAR(8);
 DECLARE atk_snd VARCHAR(8);
 DECLARE death_snd VARCHAR(8);
+DECLARE ptid INTEGER;
+DECLARE ttype INTEGER;
+DECLARE hit INTEGER;
+DECLARE mdmg INTEGER;
 BEGIN
-  SELECT t.x, t.y, t.z, p.dead FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
-    INTO px, py, pz, pdead;
+  SELECT t.x, t.y, t.z, p.dead, p.thing_id FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
+    INTO px, py, pz, pdead, ptid;
   SELECT g.noise_tic FROM game g WHERE g.id = 1 INTO noise_tic;
 
   FOR SELECT t.id, t.kind, t.x, t.y, t.z, t.angle, t.st, t.st_tics, t.st_len, t.step, t.reaction,
              t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame,
              tt.speed, tt.walk_fr, tt.atk_fr, tt.death_fr, tt.atk_kind, tt.missile_type,
-             tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id, tt.see_snd, tt.atk_snd, tt.death_snd
+             tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id, tt.see_snd, tt.atk_snd, tt.death_snd, t.thing_type
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        WHERE t.kind IN ('monster', 'barrel', 'missile', 'fx')
          AND t.st NOT IN ('dead')
@@ -1094,7 +1258,7 @@ BEGIN
          AND NOT (t.st = 'idle' AND MOD(:tic + t.id, 8) <> 0)
         INTO id, k, x, y, z, ang, st, st_tics, st_len, step, reaction, rad, hgt, momx, momy, owner_id, flags, frame,
              spd, walk_fr, atk_fr, death_fr, atk_kind, missile_type, dmg_lo, dmg_hi, shots, sec,
-             see_snd, atk_snd, death_snd
+             see_snd, atk_snd, death_snd, ttype
   DO
   BEGIN
     del = 0;
@@ -1119,9 +1283,25 @@ BEGIN
         nx = x + momx;
         ny = y + momy;
         frame = SUBSTRING(walk_fr FROM 1 + MOD(tic / 4, CHAR_LENGTH(walk_fr)) FOR 1);
-        IF (SQRT((px - nx) * (px - nx) + (py - ny) * (py - ny)) < 16 + rad AND z >= pz - 8 AND z <= pz + 64) THEN
+        -- P_CheckMissileSpawn / PIT_CheckThing: what does it hit this tic?
+        mdmg = dmg_lo * (1 + CAST(FLOOR(RAND() * 8) AS INTEGER));
+        hit = NULL;
+        IF (owner_id = ptid) THEN
+          SELECT FIRST 1 t.id FROM things t
+           WHERE t.x BETWEEN :nx - 64 AND :nx + 64
+             AND t.kind IN ('monster', 'barrel') AND t.st NOT IN ('dying', 'dead')
+             AND ABS(t.x - :nx) < t.radius + :rad AND ABS(t.y - :ny) < t.radius + :rad
+            INTO hit;
+        ELSE IF (SQRT((px - nx) * (px - nx) + (py - ny) * (py - ny)) < 16 + rad AND z >= pz - 8 AND z <= pz + 64) THEN
+          hit = ptid;
+        IF (hit = ptid) THEN
         BEGIN
-          EXECUTE PROCEDURE damage_player(dmg_lo + CAST(FLOOR(RAND() * (dmg_hi - dmg_lo + 1)) AS INTEGER));
+          EXECUTE PROCEDURE damage_player(mdmg);
+          st = 'dying';
+        END
+        ELSE IF (hit IS NOT NULL) THEN
+        BEGIN
+          EXECUTE PROCEDURE damage_thing(hit, mdmg);
           st = 'dying';
         END
         ELSE IF (check_sight(x, y, z, nx, ny, z) = 0) THEN
@@ -1138,6 +1318,11 @@ BEGIN
           st_len = CHAR_LENGTH(death_fr) * 4;
           st_tics = st_len;
           frame = SUBSTRING(death_fr FROM 1 FOR 1);
+          UPDATE things t
+             SET sprite = (SELECT tt.death_sprite FROM thing_types tt WHERE tt.thing_type = t.thing_type)
+           WHERE t.id = :id;
+          IF (ttype = 9003) THEN EXECUTE PROCEDURE radius_attack(x, y, z, 128, owner_id);   -- rocket
+          IF (ttype = 9005) THEN EXECUTE PROCEDURE bfg_spray(ang, owner_id);               -- BFG
         END
       END
     END
@@ -1150,15 +1335,7 @@ BEGIN
       IF (k = 'barrel' AND st_tics = st_len - 10) THEN
       BEGIN
         -- A_Explode: 128 damage, falling off with distance
-        FOR SELECT t.id, SQRT((t.x - :x) * (t.x - :x) + (t.y - :y) * (t.y - :y))
-              FROM things t
-             WHERE t.kind IN ('monster', 'barrel') AND t.st NOT IN ('dying', 'dead') AND t.id <> :id
-               AND ABS(t.x - :x) < 128 + t.radius AND ABS(t.y - :y) < 128 + t.radius
-              INTO oid, od
-        DO
-          IF (od < 128) THEN EXECUTE PROCEDURE damage_thing(oid, CAST(128 - od AS INTEGER));
-        IF (dist < 128 AND check_sight(x, y, z + 24, px, py, pz + 24) = 1) THEN
-          EXECUTE PROCEDURE damage_player(CAST(128 - dist AS INTEGER));
+        EXECUTE PROCEDURE radius_attack(x, y, z, 128, id);
       END
       IF (st_tics <= 0) THEN
       BEGIN
@@ -1318,6 +1495,8 @@ CREATE OR ALTER PROCEDURE doom_tic (
 RETURNS (
   tic INTEGER, health INTEGER, armor INTEGER, bullets INTEGER, shells INTEGER, weapon SMALLINT,
   has_shotgun SMALLINT, has_chaingun SMALLINT, keycards INTEGER,
+  rockets INTEGER, cells INTEGER, has_launcher SMALLINT, has_plasma SMALLINT, has_bfg SMALLINT,
+  max_bullets INTEGER, max_shells INTEGER, max_rockets INTEGER, max_cells INTEGER,
   attack_tics INTEGER, attack_len INTEGER, damage_count INTEGER, bonus_count INTEGER,
   msg VARCHAR(80), dead SMALLINT, exit_kind SMALLINT,
   kills INTEGER, total_kills INTEGER, items INTEGER, total_items INTEGER,
@@ -1345,12 +1524,16 @@ BEGIN
     i = i + 1;
   END
   SELECT g.tic, p.health, p.armor, p.bullets, p.shells, p.weapon, p.has_shotgun, p.has_chaingun, p.keycards,
+         p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg,
+         p.max_bullets, p.max_shells, p.max_rockets, p.max_cells,
          p.attack_tics, p.attack_len, p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
          p.dead, g.exit_kind, p.kills, g.total_kills, p.items, g.total_items, p.secrets, g.total_secrets,
          t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name
     FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g
    WHERE p.id = 1 AND g.id = 1
     INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards,
+         rockets, cells, has_launcher, has_plasma, has_bfg,
+         max_bullets, max_shells, max_rockets, max_cells,
          attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind,
          kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z,
          sides_rev, map_name;
@@ -1496,7 +1679,8 @@ BEGIN
   IF (new_game = 1) THEN
     UPDATE player
        SET health = 100, armor = 0, bullets = 50, shells = 0, max_bullets = 200, max_shells = 50,
-           weapon = 2, has_shotgun = 0, has_chaingun = 0
+           weapon = 2, has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0,
+           rockets = 0, cells = 0, max_rockets = 50, max_cells = 300
      WHERE id = 1;
   UPDATE player
      SET thing_id = (SELECT MAX(id) FROM things WHERE kind = 'player'),

@@ -246,9 +246,16 @@ CREATE TABLE player (
   shells       INTEGER DEFAULT 0 NOT NULL,
   max_bullets  INTEGER DEFAULT 200 NOT NULL,
   max_shells   INTEGER DEFAULT 50 NOT NULL,
-  weapon       SMALLINT DEFAULT 2 NOT NULL,      -- 1 fist 2 pistol 3 shotgun 4 chaingun
+  weapon       SMALLINT DEFAULT 2 NOT NULL,      -- 1 fist 2 pistol 3 shotgun 4 chaingun 5 rocket 6 plasma 7 BFG
   has_shotgun  SMALLINT DEFAULT 0 NOT NULL,
   has_chaingun SMALLINT DEFAULT 0 NOT NULL,
+  has_launcher SMALLINT DEFAULT 0 NOT NULL,
+  has_plasma   SMALLINT DEFAULT 0 NOT NULL,
+  has_bfg      SMALLINT DEFAULT 0 NOT NULL,
+  rockets      INTEGER DEFAULT 0 NOT NULL,
+  cells        INTEGER DEFAULT 0 NOT NULL,
+  max_rockets  INTEGER DEFAULT 50 NOT NULL,
+  max_cells    INTEGER DEFAULT 300 NOT NULL,
   keycards     INTEGER DEFAULT 0 NOT NULL,       -- 1 blue 2 yellow 4 red
   attack_tics  INTEGER DEFAULT 0 NOT NULL,
   attack_len   INTEGER DEFAULT 0 NOT NULL,

@@ -43,6 +43,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `MONSTERS_THINK` |
 | `P_LineAttack` (pistol, shotgun, chaingun, fist) | `HITSCAN` |
+| `P_SpawnPlayerMissile`, `P_RadiusAttack`, `A_BFGSpray` (rocket launcher, plasma gun, BFG) | `FIRE_MISSILE`, `RADIUS_ATTACK`, `BFG_SPRAY`; projectiles fly in `MONSTERS_THINK` |
 | `P_TouchSpecialThing` | pickups in `PLAYER_THINK` |
 | light flashes, strobes, glows | `LIGHTS_THINK` |
 | `R_RenderBSPNode`, `R_CheckBBox`, `R_ClipSolidWallSegment` (solidsegs) | `RENDER_SLICES_BSP` ([sql/render.sql](sql/render.sql)) |
@@ -171,7 +172,8 @@ You can also load your own `DOOM1.WAD` / `DOOM.WAD` / `DOOM2.WAD` with the file 
 is uploaded anywhere.
 
 `npm run test:all-maps` loads, plays and renders every map in the WAD, and fires each map's first
-teleporter. `npm run test:renderers` compares the BSP and brute-force renderers from several
+teleporter. `npm run test:weapons` fires the rocket launcher, plasma gun and BFG at a monster and checks
+ammo, sounds, damage, splash and pickups. `npm run test:renderers` compares the BSP and brute-force renderers from several
 spots and headings on every map, and reports the speed-up. `npm run screenshots` regenerates
 `docs/*.png`. `node scripts/bench.mjs queries.sql` times SQL statements against a loaded map, with
 statements separated by `-- @@` lines.
@@ -180,7 +182,8 @@ statements separated by `-- @@` lines.
 
 Click the view to capture the mouse. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the
 arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd> uses,
-<kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>4</kbd> pick weapons, <kbd>Tab</kbd> shows the
+<kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>7</kbd> pick weapons (fist, pistol, shotgun, chaingun, rocket
+launcher, plasma gun, BFG9000), <kbd>Tab</kbd> shows the
 automap, and <kbd>P</kbd> pauses. Under the view you can set **Detail** (320 or 160 columns) and
 **Renderer** (BSP + solidsegs, or brute force), plus **Sound** and **Music** volume. These settings
 are remembered in your browser. The SQL console under the game queries the live game
@@ -196,7 +199,7 @@ GitHub Pages. Pull requests run everything except the deploy.
 ## Simplifications
 
 Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
-Projectiles fly flat. There's no rocket launcher, plasma or BFG, and no crushers. Music is an approximation of OPL2
+Projectiles fly flat. There's no chainsaw or super shotgun, and no crushers. Music is an approximation of OPL2
 FM synthesis, not a cycle-exact emulator.
 Large maps with many monsters awake at once can still drop below 10 fps. The *Low* detail setting (160
 columns, like DOOM's own) halves the render cost.

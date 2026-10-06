@@ -17,6 +17,11 @@ export const THING_TYPES = [
   { type: 9001, sprite: 'BAL2', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, deathSnd: 'DSFIRXPL' },
   { type: 9002, sprite: 'BAL7', kind: 'missile', radius: 6, height: 16, speed: 15, walk: 'AB', death: 'CDE', bright: 1, deathSnd: 'DSFIRXPL' },
   { type: 14, sprite: 'TFOG', kind: 'marker', radius: 1, height: 1, walk: 'A' }, // teleport destination
+  // the player's projectiles: damage is dmgLo × (1..8), like DOOM's ((P_Random()%8)+1)*damage
+  { type: 9003, sprite: 'MISL', kind: 'missile', radius: 11, height: 8, speed: 20, walk: 'A', death: 'BCD', bright: 1, dmgLo: 20, dmgHi: 160, deathSnd: 'DSBAREXP' },
+  { type: 9004, sprite: 'PLSS', kind: 'missile', radius: 13, height: 8, speed: 25, walk: 'AB', death: 'ABCDE', deathSprite: 'PLSE', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL' },
+  { type: 9005, sprite: 'BFS1', kind: 'missile', radius: 13, height: 8, speed: 25, walk: 'AB', death: 'ABCDEF', deathSprite: 'BFE1', bright: 1, dmgLo: 100, dmgHi: 800, deathSnd: 'DSRXPLOD' },
+  { type: 9012, sprite: 'BFE2', kind: 'fx', radius: 1, height: 1, walk: 'ABCD', bright: 1 },
   { type: 9010, sprite: 'PUFF', kind: 'fx', radius: 1, height: 1, walk: 'ABCD', bright: 1 },
   { type: 9011, sprite: 'BLUD', kind: 'fx', radius: 1, height: 1, walk: 'CBA' },
 
@@ -48,8 +53,8 @@ export const THING_TYPES = [
   I(2023, 'PSTR', 'health', 100, { bright: 1 }), I(2026, 'PMAP', 'none', 0, { walk: 'ABCDCB', bright: 1 }),
   I(2022, 'PINV', 'none', 0, { walk: 'ABCD', bright: 1 }), I(2024, 'PINS', 'none', 0, { walk: 'ABCD', bright: 1 }),
   I(2025, 'SUIT', 'none', 0, { bright: 1 }), I(2045, 'PVIS', 'none', 0, { walk: 'AB', bright: 1 }),
-  I(2003, 'LAUN', 'none', 0), I(2004, 'PLAS', 'none', 0), I(2005, 'CSAW', 'none', 0), I(2006, 'BFUG', 'none', 0),
-  I(2010, 'ROCK', 'none', 0), I(2046, 'BROK', 'none', 0), I(17, 'CELP', 'none', 0), I(2047, 'CELL', 'none', 0),
+  I(2003, 'LAUN', 'launcher', 2), I(2004, 'PLAS', 'plasma', 40), I(2005, 'CSAW', 'none', 0), I(2006, 'BFUG', 'bfg', 40),
+  I(2010, 'ROCK', 'rockets', 1), I(2046, 'BROK', 'rockets', 5), I(17, 'CELP', 'cells', 100), I(2047, 'CELL', 'cells', 20),
 
   // solid decorations
   S(2028, 'COLU', { bright: 1 }), S(48, 'ELEC'), S(30, 'COL1'), S(31, 'COL2'), S(32, 'COL3'), S(33, 'COL4'),
