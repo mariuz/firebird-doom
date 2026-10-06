@@ -630,7 +630,17 @@ if (slimeMap) {
     [automapColor({ flags: 4, special: 0 }, room, room, false, true), AM_COLORS.unseen, '…openings too'],
     [automapColor({ flags: 129, special: 0 }, room, null, true, true), null, 'ML_DONTDRAW never shows'],
     [automapColor({ flags: 257, special: 0 }, room, null, false, false), AM_COLORS.wall, 'ML_MAPPED shows unseen'],
+    // IDDT
+    [automapColor({ flags: 1, special: 0 }, room, null, false, false, 1), AM_COLORS.wall, 'IDDT shows unseen walls in colour'],
+    [automapColor({ flags: 4, special: 0 }, room, step, false, false, 1), AM_COLORS.floor, '…and unseen steps'],
+    [automapColor({ flags: 4, special: 0 }, room, room, false, false, 1), AM_COLORS.twoSided, '…and flat openings, in grey'],
+    [automapColor({ flags: 129, special: 0 }, room, null, false, false, 2), AM_COLORS.wall, '…and even ML_DONTDRAW lines'],
   ];
+  const { makeCheatReader } = await import('../src/automap.js');
+  const reader = makeCheatReader('iddt');
+  const fired = [...'xidxiddtwidd', 'Shift', ...'T'].map((k) => reader(k));
+  cases.push([fired.indexOf(true), 7, 'the cheat reader fires on the t of "iddt"'],
+    [fired.filter(Boolean).length, 2, '…and again on "idd" + Shift + "T" (case-blind, modifiers ignored)']);
   const bad = cases.filter(([got, want]) => got !== want).map(([, , what]) => what);
   assert(bad.length === 0, `automap colours (${cases.length} cases${bad.length ? `; wrong: ${bad.join(', ')}` : ''})`);
 }

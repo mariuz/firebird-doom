@@ -13,7 +13,7 @@ import { Wad } from './wad.js';
 import { createSchema, loadResources, loadMap, setView, setRenderer } from './loader.js';
 import { Renderer } from './renderer.js';
 import { drawStatusBar, drawText, drawWeapon } from './hud.js';
-import { automapColor } from './automap.js';
+import { AM_COLORS, automapColor, makeCheatReader } from './automap.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -43,6 +43,8 @@ const saveSettings = () => {
 };
 const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
 let showMap = false;
+let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
+const iddt = makeCheatReader('iddt');
 const audio = new DoomAudio();
 audio.setVolumes(settings.sfx / 100, settings.music / 100);
 audio.setEnabled(settings.audio);
@@ -73,6 +75,8 @@ window.addEventListener('keydown', (e) => {
   if (GAME_KEYS.has(e.code)) e.preventDefault();
   keys.add(e.code);
   if (e.code === 'Tab') showMap = !showMap;
+  // AM_Responder: the automap listens for IDDT while it's open
+  if (showMap && iddt(e.key)) amCheating = (amCheating + 1) % 3;
   if (e.code.startsWith('Digit')) weaponSel = Number(e.code.slice(5));
   if (e.code === 'KeyP' || e.code === 'Pause') paused = !paused;
   if (e.code === 'KeyM') setAudio(!settings.audio);
@@ -267,6 +271,10 @@ async function frame() {
       audio.playEvents(sounds, { x: hud.PX, y: hud.PY, angle: hud.PANGLE });
     }
     for (const r of walls) map.seen.add(r[3]);
+    // AM_drawThings (IDDT twice): where everything is
+    map.amThings = showMap && amCheating === 2
+      ? (await db.query("SELECT x, y, angle FROM things WHERE kind NOT IN ('player', 'marker')", [], arr)).rows
+      : null;
     lastFrame.walls = wallMs;
     lastFrame.sprites = spriteMs;
     lastFrame.rows = walls.length;
@@ -339,13 +347,28 @@ function drawAutomap() {
     const [id, , bs, flags, , x1, y1, x2, y2, fsec, bsec, special] = r;
     const f = map.sectors.get(fsec);
     const b = bs == null || bsec == null ? null : map.sectors.get(bsec);
-    const color = automapColor({ flags, special }, f, b, map.seen.has(id), hud.ALLMAP === 1);
+    const color = automapColor({ flags, special }, f, b, map.seen.has(id), hud.ALLMAP === 1, amCheating);
     if (!color) continue;
     ctx.strokeStyle = color;
     ctx.beginPath();
     ctx.moveTo(tx(x1), ty(y1));
     ctx.lineTo(tx(x2), ty(y2));
     ctx.stroke();
+  }
+  if (map.amThings) {
+    // thintriangle_guy, pointing the way each thing faces
+    ctx.strokeStyle = AM_COLORS.thing;
+    for (const [x, y, ang] of map.amThings) {
+      const px = tx(x);
+      const py = ty(y);
+      if (px < -4 || px > 324 || py < -4 || py > 172) continue;
+      ctx.beginPath();
+      ctx.moveTo(px + Math.cos(ang) * 3, py - Math.sin(ang) * 3);
+      ctx.lineTo(px + Math.cos(ang + 2.5) * 2.5, py - Math.sin(ang + 2.5) * 2.5);
+      ctx.lineTo(px + Math.cos(ang - 2.5) * 2.5, py - Math.sin(ang - 2.5) * 2.5);
+      ctx.closePath();
+      ctx.stroke();
+    }
   }
   ctx.strokeStyle = '#fff';
   ctx.beginPath();

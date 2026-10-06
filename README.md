@@ -187,6 +187,12 @@ for the level, and every line you haven't seen yet then shows in grey. As with `
 you can only carry one, so a second one stays on the floor. The colour rules live in
 [src/automap.js](src/automap.js) and are tested headless.
 
+Typing **IDDT** with the automap open cycles DOOM's `am_cheating`, as `AM_Responder` does. Once
+shows every line, hidden (`ML_DONTDRAW`) and unseen ones included, with flat two-sided openings
+in grey (`TSWALLCOLORS`). Twice also draws every thing in the level as a green triangle facing
+its way (`AM_drawThings`), read live from `THINGS`. A third time turns it off. Like DOOM, the cheat
+prints no message and isn't stored in the database.
+
 ### Sound and music
 
 The simulation decides what you hear. `PLAY_SOUND` inserts a row into `SOUND_EVENTS` (sound
@@ -278,7 +284,7 @@ arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd>
 <kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>7</kbd> pick weapons (fist, pistol, shotgun, chaingun, rocket
 launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggles the chainsaw and
 <kbd>3</kbd> again the super shotgun. <kbd>Tab</kbd> shows the
-automap, and <kbd>P</kbd> pauses. Under the view you can set **Detail** (320 or 160 columns) and
+automap (type IDDT on it to reveal everything), and <kbd>P</kbd> pauses. Under the view you can set **Detail** (320 or 160 columns) and
 **Renderer** (BSP + solidsegs, or brute force), plus **Audio** on/off (<kbd>M</kbd>) and **Sound**
 and **Music** volume. These settings
 are remembered in your browser. The SQL console under the game queries the live game
