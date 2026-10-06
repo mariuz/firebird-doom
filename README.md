@@ -142,11 +142,11 @@ framebuffer holds RGBA, so a reverse palette lookup turns each pixel back into i
 before darkening. In a dim room a spectre is as hard to see as in DOOM.
 
 The partial invisibility sphere uses the same fuzz. Picking it up gives 60 seconds
-(, 2100 tics in , cleared at the end of a level). Your weapon is
+(`INVISTICS`, 2100 tics in `PLAYER.INVIS_TICS`, cleared at the end of a level). Your weapon is
 drawn as fuzz, and it flickers back in the last four seconds. Monsters aim the way they do at
-any  target, which includes a spectre they are fighting.  turns up to
+any `MF_SHADOW` target, which includes a spectre they are fighting. `A_FaceTarget` turns up to
 45° wide, so a zombie's volley lands only if that error still points at your body, and a lost
-soul's charge goes astray.  sends projectiles up to 22.5° off. Melee attacks
+soul's charge goes astray. `P_SpawnMissile` sends projectiles up to 22.5° off. Melee attacks
 still land. At 280 units a zombieman hits about 65% of the time when it can see you, and about
 15% when you're partially invisible.
 
