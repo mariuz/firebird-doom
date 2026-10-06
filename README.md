@@ -195,7 +195,7 @@ prints no message and isn't stored in the database.
 
 ### Cheats
 
-Type **IDDQD** or **IDKFA** any time during play (`ST_Responder`). The browser spots the letters
+Type **IDDQD**, **IDKFA**, **IDCLIP** or **IDCLEV**<i>xy</i> any time during play (`ST_Responder`). The browser spots the letters
 and calls `EXECUTE PROCEDURE cheat('iddqd')`. The SQL console has buttons for both.
 
 - **IDDQD** toggles god mode (`PLAYER.GOD`, `CF_GODMODE`). It heals you to 100, and
@@ -204,8 +204,17 @@ and calls `EXECUTE PROCEDURE cheat('iddqd')`. The SQL console has buttons for bo
   level to level.
 - **IDKFA** hands over every weapon, ammo up to your current maximums, 200 armour and all three
   keys. The super shotgun comes only on DOOM II maps.
+- **IDCLIP** (or DOOM I's **IDSPISPOPD**) toggles no clipping (`PLAYER.NOCLIP`, `CF_NOCLIP`).
+  `P_CheckPosition` says yes before looking at a single line or thing, so you walk through walls
+  and monsters. No lines are checked, so none trigger as you cross them. Your height still
+  follows the floor beneath you.
+- **IDCLEV**<i>xy</i> warps, as `G_DeferedInitNew` does: a new game on that map, inventory
+  reset. DOOM I reads the digits as episode and map (`idclev13` is E1M3), DOOM II as the map
+  number (`idclev07` is MAP07). Maps the WAD doesn't have are ignored. This cheat lives in the
+  browser, because loading a map is the loader's job. [src/cheats.js](src/cheats.js) holds the
+  cheat readers, tested headless.
 
-Both say what they did ("Degreelessness Mode On", "Very Happy Ammo Added"). A dead player can't
+The SQL cheats say what they did ("Degreelessness Mode On", "Very Happy Ammo Added", "No Clipping Mode ON"). A dead player can't
 cheat.
 
 ### Sound and music

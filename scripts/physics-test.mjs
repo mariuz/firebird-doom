@@ -636,13 +636,75 @@ if (slimeMap) {
     [automapColor({ flags: 4, special: 0 }, room, room, false, false, 1), AM_COLORS.twoSided, '…and flat openings, in grey'],
     [automapColor({ flags: 129, special: 0 }, room, null, false, false, 2), AM_COLORS.wall, '…and even ML_DONTDRAW lines'],
   ];
-  const { makeCheatReader } = await import('../src/automap.js');
+  const { makeCheatReader, makeParamCheatReader, clevMap } = await import('../src/cheats.js');
   const reader = makeCheatReader('iddt');
   const fired = [...'xidxiddtwidd', 'Shift', ...'T'].map((k) => reader(k));
   cases.push([fired.indexOf(true), 7, 'the cheat reader fires on the t of "iddt"'],
     [fired.filter(Boolean).length, 2, '…and again on "idd" + Shift + "T" (case-blind, modifiers ignored)']);
   const bad = cases.filter(([got, want]) => got !== want).map(([, , what]) => what);
   assert(bad.length === 0, `automap colours (${cases.length} cases${bad.length ? `; wrong: ${bad.join(', ')}` : ''})`);
+
+  // IDCLEV: the code, then two digits; DOOM I reads episode + map, DOOM II the map number
+  const clev = makeParamCheatReader('idclev', 2);
+  const clevGot = [...'xxidclev', 'Shift', ...'13'].map((k) => clev(k)).filter(Boolean);
+  const d1 = ['E1M1', 'E1M2', 'E1M3', 'E2M1'];
+  const d2 = ['MAP01', 'MAP07', 'MAP30'];
+  const clevCases = [
+    [clevGot.join(), '13', 'IDCLEV collects the two digits after the code'],
+    [clevMap('13', d1), 'E1M3', 'DOOM I: 13 is E1M3'],
+    [clevMap('07', d2), 'MAP07', 'DOOM II: 07 is MAP07'],
+    [clevMap('19', d1), null, 'a map the WAD lacks is ignored'],
+    [clevMap('4x', d1), null, 'so is anything but two digits'],
+  ];
+  const clevBad = clevCases.filter(([g, w]) => g !== w).map(([, , what]) => what);
+  assert(clevBad.length === 0, `IDCLEV parsing (${clevCases.length} cases${clevBad.length ? `; wrong: ${clevBad.join(', ')}` : ''})`);
+}
+
+// ── IDCLIP: through a wall and out the other side ───────────────────────
+{
+  await loadMap(db, wad, res, maps[0]);
+  await quiet();
+  // a long one-sided wall with room in front of it
+  const walls = (await db.query(`SELECT l.id, l.x1, l.y1, l.dx, l.dy, l.len FROM linedefs l
+                                  WHERE l.back_sector IS NULL AND l.len > 160 ORDER BY l.len DESC`)).rows;
+  let spot = null;
+  for (const l of walls.slice(0, 40)) {
+    const nx = l.DY / l.LEN;         // the front side is on the right of v1 → v2
+    const ny = -l.DX / l.LEN;
+    const x = l.X1 + l.DX / 2 + nx * 40;
+    const y = l.Y1 + l.DY / 2 + ny * 40;
+    const ok = (await db.query(`EXECUTE BLOCK RETURNS (ok SMALLINT) AS
+        DECLARE fz DOUBLE PRECISION; DECLARE cz DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION; DECLARE sec INTEGER;
+        BEGIN
+          EXECUTE PROCEDURE check_position(-1, ${x}, ${y}, (SELECT floor_h FROM sectors WHERE id = sector_at(${x}, ${y})), 16, 56, 0)
+            RETURNING_VALUES ok, fz, cz, dz, sec;
+          SUSPEND;
+        END`)).rows[0].OK;
+    if (ok === 1) { spot = { l, x, y, ang: Math.atan2(-ny, -nx) }; break; }
+  }
+  if (spot) {
+    const side = async () => {
+      const p = await one(`SELECT x, y FROM things WHERE kind = 'player'`);
+      return Math.sign(spot.l.DX * (p.Y - spot.l.Y1) - spot.l.DY * (p.X - spot.l.X1));
+    };
+    const walkAtWall = async () => {
+      await db.exec(`UPDATE things SET x = ${spot.x}, y = ${spot.y}, momx = 0, momy = 0, angle = ${spot.ang},
+                     z = (SELECT floor_h FROM sectors WHERE id = sector_at(${spot.x}, ${spot.y})),
+                     sector_id = sector_at(${spot.x}, ${spot.y}) WHERE kind = 'player'`);
+      const before = await side();
+      for (let i = 0; i < 25; i++) await db.query('SELECT * FROM doom_tic(1, 1, 0, 0, 0, 0, 0, 0)');
+      return before !== (await side());
+    };
+    const blocked = await walkAtWall();
+    await db.exec(`EXECUTE PROCEDURE cheat('idclip')`);
+    const on = (await tic()).rows[0];
+    const through = await walkAtWall();
+    await db.exec(`EXECUTE PROCEDURE cheat('idclip')`);
+    const off = (await tic()).rows[0];
+    const blockedAgain = await walkAtWall();
+    assert(!blocked && on.MSG === 'No Clipping Mode ON' && through && off.MSG === 'No Clipping Mode OFF' && !blockedAgain,
+      `IDCLIP: line ${spot.l.ID} stops you (${!blocked}), with no clipping you walk through it (${through}), and then it stops you again (${!blockedAgain})`);
+  } else console.log('(no wall to walk through)');
 }
 
 await db.close();

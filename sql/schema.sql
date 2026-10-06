@@ -292,7 +292,8 @@ CREATE TABLE player (
   infra_tics   INTEGER DEFAULT 0 NOT NULL,   -- pw_infrared: light amplification goggles
   strength_tics INTEGER DEFAULT 0 NOT NULL,  -- pw_strength: berserk, counting up from 1 (0 = none)
   allmap       SMALLINT DEFAULT 0 NOT NULL,  -- pw_allmap: the computer area map, for this level
-  god          SMALLINT DEFAULT 0 NOT NULL   -- CF_GODMODE (IDDQD)
+  god          SMALLINT DEFAULT 0 NOT NULL,  -- CF_GODMODE (IDDQD)
+  noclip       SMALLINT DEFAULT 0 NOT NULL   -- CF_NOCLIP (IDCLIP / IDSPISPOPD)
 );
 
 -- S_StartSound: every sound the simulation makes, for the browser to play.

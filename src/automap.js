@@ -45,14 +45,3 @@ export function automapColor(line, front, back, seen, allmap, cheating = 0) {
   return allmap ? AM_COLORS.unseen : null;
 }
 
-/** cht_CheckCheat for IDDT: feed it each key typed on the automap; true once "iddt" is spelt. */
-export function makeCheatReader(code = 'iddt') {
-  let typed = '';
-  return (key) => {
-    if (key.length !== 1) return false;
-    typed = (typed + key.toLowerCase()).slice(-code.length);
-    if (typed !== code) return false;
-    typed = '';
-    return true;
-  };
-}

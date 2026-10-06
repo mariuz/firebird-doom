@@ -1151,15 +1151,16 @@ DECLARE shot_hit SMALLINT;
 DECLARE old_weapon SMALLINT;
 DECLARE bslope DOUBLE PRECISION;
 DECLARE tries INTEGER;
+DECLARE noclip SMALLINT;
 BEGIN
   SELECT p.thing_id, t.x, t.y, t.z, t.angle, t.momx, t.momy, t.momz, p.dead, p.weapon, p.attack_tics, p.attack_len,
          p.bullets, p.shells, p.has_shotgun, p.has_chaingun, p.use_down, p.view_h,
-         p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg, p.has_chainsaw, p.has_ssg
+         p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg, p.has_chainsaw, p.has_ssg, p.noclip
     FROM player p JOIN things t ON t.id = p.thing_id
    WHERE p.id = 1
     INTO tid, x, y, z, ang, momx, momy, momz, is_dead, weapon, attack_tics, attack_len,
          bullets, shells, has_sg, has_cg, use_down, view_h,
-         rockets, cells, has_rl, has_pl, has_bfg, has_saw, has_ssg;
+         rockets, cells, has_rl, has_pl, has_bfg, has_saw, has_ssg, noclip;
 
   IF (is_dead = 1) THEN
   BEGIN
@@ -1186,7 +1187,9 @@ BEGIN
   BEGIN
     nx = x + momx;
     ny = y + momy;
-    EXECUTE PROCEDURE check_position(tid, nx, ny, z, 16, 56, 0) RETURNING_VALUES ok, fz, cz, dz, sec;
+    -- CF_NOCLIP: P_CheckPosition says yes before looking at a single line or thing
+    IF (noclip = 1) THEN ok = 1;
+    ELSE EXECUTE PROCEDURE check_position(tid, nx, ny, z, 16, 56, 0) RETURNING_VALUES ok, fz, cz, dz, sec;
     IF (ok = 1) THEN
     BEGIN
       x = nx;
@@ -1222,7 +1225,8 @@ BEGIN
   IF (ABS(momy) < 0.05) THEN momy = 0;
 
   -- P_CrossSpecialLine: walk-over triggers between the old and new position
-  IF (x <> ox OR y <> oy) THEN
+  -- (not without clipping: no lines were checked, so none are crossed)
+  IF ((x <> ox OR y <> oy) AND noclip = 0) THEN
   BEGIN
     UPDATE things SET x = :x, y = :y, angle = :ang, momx = :momx, momy = :momy WHERE id = :tid;
     FOR SELECT l.id
@@ -2449,7 +2453,8 @@ END^
 -- ST_Responder's cheats, typed during play (the browser spots the letters).
 -- IDDQD toggles god mode (and heals you to 100); IDKFA hands over every
 -- weapon (the super shotgun only in DOOM II), full ammo, 200 armour and every
--- key. A dead player can't cheat.
+-- key. IDCLIP (or DOOM I's IDSPISPOPD) toggles walking through walls. A dead
+-- player can't cheat. (IDCLEV is the browser's: it loads another map.)
 CREATE OR ALTER PROCEDURE cheat (code VARCHAR(16))
 AS
 BEGIN
@@ -2460,6 +2465,13 @@ BEGIN
     UPDATE player p
        SET health = IIF(p.god = 1, 100, p.health),
            msg = TRIM(IIF(p.god = 1, 'Degreelessness Mode On', 'Degreelessness Mode Off')), msg_tics = 70
+     WHERE p.id = 1 AND p.dead = 0;
+  END
+  ELSE IF (code IN ('idclip', 'idspispopd')) THEN
+  BEGIN
+    UPDATE player p SET noclip = 1 - p.noclip WHERE p.id = 1 AND p.dead = 0;
+    UPDATE player p
+       SET msg = TRIM(IIF(p.noclip = 1, 'No Clipping Mode ON', 'No Clipping Mode OFF')), msg_tics = 70
      WHERE p.id = 1 AND p.dead = 0;
   END
   ELSE IF (code = 'idkfa') THEN
@@ -2684,7 +2696,7 @@ BEGIN
        SET health = 100, armor = 0, bullets = 50, shells = 0, max_bullets = 200, max_shells = 50,
            weapon = 2, has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0,
            has_chainsaw = 0, has_ssg = 0,
-           rockets = 0, cells = 0, max_rockets = 50, max_cells = 300, god = 0
+           rockets = 0, cells = 0, max_rockets = 50, max_cells = 300, god = 0, noclip = 0
      WHERE id = 1;
   UPDATE player
      SET thing_id = (SELECT MAX(id) FROM things WHERE kind = 'player'),
