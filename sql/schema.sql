@@ -85,7 +85,12 @@ CREATE TABLE thing_types (
   drop_type    INTEGER,
   pickup       VARCHAR(10),
   amount       INTEGER,
-  label        VARCHAR(40)
+  label        VARCHAR(40),
+  -- sfx lump names (DS*) for A_Look / attack / A_Pain / A_Scream
+  see_snd      VARCHAR(8),
+  atk_snd      VARCHAR(8),
+  pain_snd     VARCHAR(8),
+  death_snd    VARCHAR(8)
 );
 
 -- ── the map ─────────────────────────────────────────────────────────────
@@ -258,6 +263,18 @@ CREATE TABLE player (
   view_z       DOUBLE PRECISION DEFAULT 41 NOT NULL,
   use_down     SMALLINT DEFAULT 0 NOT NULL,
   dead         SMALLINT DEFAULT 0 NOT NULL
+);
+
+-- S_StartSound: every sound the simulation makes, for the browser to play.
+-- x/y NULL means "at the player" (full volume, centred).
+CREATE SEQUENCE sound_seq;
+CREATE TABLE sound_events (
+  id     INTEGER NOT NULL PRIMARY KEY,
+  tic    INTEGER NOT NULL,
+  sound  VARCHAR(8) NOT NULL,
+  origin INTEGER,                 -- thing or sector making it; a new sound cuts the old one
+  x      DOUBLE PRECISION,
+  y      DOUBLE PRECISION
 );
 
 -- Moving floors and ceilings: doors, lifts, platforms.

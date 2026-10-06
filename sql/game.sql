@@ -205,6 +205,29 @@ BEGIN
   RETURN 1;
 END^
 
+-- ── sound ─────────────────────────────────────────────────────────────────
+-- S_StartSound: queue a sound for the browser. ORIGIN lets a new sound from
+-- the same source cut off its previous one, as DOOM's channels do.
+CREATE OR ALTER PROCEDURE play_sound (snd VARCHAR(8), origin INTEGER, px DOUBLE PRECISION, py DOUBLE PRECISION)
+AS
+BEGIN
+  IF (snd IS NULL) THEN EXIT;
+  INSERT INTO sound_events (id, tic, sound, origin, x, y)
+  SELECT NEXT VALUE FOR sound_seq, g.tic, :snd, :origin, :px, :py FROM game g WHERE g.id = 1;
+END^
+
+-- A sound from a sector (doors, lifts): played from the middle of its lines.
+CREATE OR ALTER PROCEDURE sector_sound (snd VARCHAR(8), sec INTEGER)
+AS
+DECLARE cx DOUBLE PRECISION;
+DECLARE cy DOUBLE PRECISION;
+BEGIN
+  SELECT AVG((l.x1 + l.x2) / 2), AVG((l.y1 + l.y2) / 2) FROM linedefs l
+   WHERE l.front_sector = :sec OR l.back_sector = :sec
+    INTO cx, cy;
+  EXECUTE PROCEDURE play_sound(snd, -sec - 1, cx, cy);
+END^
+
 -- ── spawning and damage ───────────────────────────────────────────────────
 CREATE OR ALTER PROCEDURE spawn_thing (
   ttype INTEGER, px DOUBLE PRECISION, py DOUBLE PRECISION, pz DOUBLE PRECISION, ang DOUBLE PRECISION)
@@ -242,6 +265,7 @@ BEGIN
    WHERE id = 1;
   UPDATE player SET dead = 1, health = 0, msg = 'You died. Press USE to restart.', msg_tics = 100000
    WHERE id = 1 AND health <= 0;
+  EXECUTE PROCEDURE play_sound(IIF(ROW_COUNT > 0, 'DSPLDETH', 'DSPLPAIN'), 0, NULL, NULL);
 END^
 
 CREATE OR ALTER PROCEDURE damage_thing (tid INTEGER, dmg INTEGER)
@@ -257,11 +281,14 @@ DECLARE drop_type INTEGER;
 DECLARE tx DOUBLE PRECISION;
 DECLARE ty DOUBLE PRECISION;
 DECLARE dummy INTEGER;
+DECLARE pain_snd VARCHAR(8);
+DECLARE death_snd VARCHAR(8);
 BEGIN
-  SELECT t.kind, t.hp, t.st, tt.pain_chance, tt.pain_fr, tt.death_fr, tt.death_sprite, tt.drop_type, t.x, t.y
+  SELECT t.kind, t.hp, t.st, tt.pain_chance, tt.pain_fr, tt.death_fr, tt.death_sprite, tt.drop_type, t.x, t.y,
+         tt.pain_snd, tt.death_snd
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
    WHERE t.id = :tid
-    INTO k, hp, st, pain_chance, pain_fr, death_fr, death_sprite, drop_type, tx, ty;
+    INTO k, hp, st, pain_chance, pain_fr, death_fr, death_sprite, drop_type, tx, ty, pain_snd, death_snd;
   IF (k IS NULL OR k NOT IN ('monster', 'barrel') OR st IN ('dying', 'dead')) THEN EXIT;
   hp = hp - dmg;
   IF (hp <= 0) THEN
@@ -272,6 +299,7 @@ BEGIN
            frame = SUBSTRING(:death_fr FROM 1 FOR 1), sprite = :death_sprite
      WHERE id = :tid;
     IF (k = 'monster') THEN UPDATE player SET kills = kills + 1 WHERE id = 1;
+    EXECUTE PROCEDURE play_sound(death_snd, tid, tx, ty);
     IF (drop_type IS NOT NULL) THEN
       EXECUTE PROCEDURE spawn_thing(drop_type, tx, ty, NULL, 0) RETURNING_VALUES dummy;
   END
@@ -279,8 +307,11 @@ BEGIN
   BEGIN
     UPDATE things t SET hp = :hp, reaction = 0, st = IIF(t.st = 'idle', 'chase', t.st) WHERE t.id = :tid;
     IF (pain_fr IS NOT NULL AND RAND() * 256 < pain_chance) THEN
+    BEGIN
       UPDATE things SET st = 'pain', st_tics = 6, st_len = 6, frame = SUBSTRING(:pain_fr FROM 1 FOR 1)
        WHERE id = :tid;
+      EXECUTE PROCEDURE play_sound(pain_snd, tid, tx, ty);
+    END
   END
 END^
 
@@ -293,11 +324,17 @@ BEGIN
   IF (EXISTS (SELECT 1 FROM movers WHERE sector_id = :sec)) THEN EXIT;
   SELECT floor_h, ceil_h FROM sectors WHERE id = :sec INTO fh, ch;
   IF (mode = 'close') THEN
+  BEGIN
     INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay)
     VALUES (:sec, 'door', -1, :spd, :ch, :fh, 0, 1);
+    EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDCLS', 'DSDORCLS'), sec);
+  END
   ELSE
+  BEGIN
     INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay)
     VALUES (:sec, 'door', 1, :spd, COALESCE(neighbor_h(:sec, 'min_ceil'), :ch + 64) - 4, :fh, 150, :stay);
+    EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDOPN', 'DSDOROPN'), sec);
+  END
 END^
 
 CREATE OR ALTER PROCEDURE floor_start (sec INTEGER, target DOUBLE PRECISION, spd DOUBLE PRECISION)
@@ -388,7 +425,11 @@ BEGIN
     IF (EXISTS (SELECT 1 FROM movers WHERE sector_id = :bsec)) THEN
     BEGIN
       IF (act = 'door_man') THEN
+      BEGIN
         UPDATE movers SET dir = IIF(dir = -1, 1, -1), wait_left = 0 WHERE sector_id = :bsec AND kind = 'door';
+        SELECT IIF(m.dir = 1, 'DSDOROPN', 'DSDORCLS') FROM movers m WHERE m.sector_id = :bsec INTO act;
+        EXECUTE PROCEDURE sector_sound(act, bsec);
+      END
       EXIT;
     END
     EXECUTE PROCEDURE door_start(bsec, spd, IIF(act = 'door_man1', 1, 0), 'open');
@@ -406,6 +447,7 @@ BEGIN
          SET x = :fh, y = :ch, angle = :h, momx = 0, momy = 0, sector_id = sector_at(:fh, :ch),
              z = (SELECT floor_h FROM sectors s WHERE s.id = sector_at(:fh, :ch))
        WHERE t.kind = 'player';
+      EXECUTE PROCEDURE play_sound('DSTELEPT', 0, fh, ch);
       did = 1;
     END
   END
@@ -425,9 +467,12 @@ BEGIN
         ELSE IF (act = 'door_o') THEN EXECUTE PROCEDURE door_start(sec, spd, 1, 'open');
         ELSE IF (act = 'door_c') THEN EXECUTE PROCEDURE door_start(sec, spd, 1, 'close');
         ELSE IF (act = 'lift') THEN
+        BEGIN
           INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay)
           VALUES (:sec, 'lift', -1, IIF(:spd > 2, 8, 4), :fh,
                   MINVALUE(:fh, COALESCE(neighbor_h(:sec, 'min_floor'), :fh)), 105, 0);
+          EXECUTE PROCEDURE sector_sound('DSPSTART', sec);
+        END
         ELSE IF (act = 'fl_low') THEN
           EXECUTE PROCEDURE floor_start(sec, MINVALUE(fh, COALESCE(neighbor_h(sec, 'min_floor'), fh)), 1);
         ELSE IF (act = 'fl_hi') THEN
@@ -490,6 +535,10 @@ BEGIN
      WHERE sd.id = :fside;
   IF (did = 1 AND how = 'use') THEN
     UPDATE game g SET sides_rev = g.sides_rev + 1 WHERE g.id = 1;
+  IF (did = 1 AND how = 'use' AND act NOT IN ('door_man', 'door_man1')) THEN
+    EXECUTE PROCEDURE play_sound(IIF(act IN ('exit', 'secret'), 'DSSWTCHX', 'DSSWTCHN'), -1000000 - line_id,
+      (SELECT (l.x1 + l.x2) / 2 FROM linedefs l WHERE l.id = :line_id),
+      (SELECT (l.y1 + l.y2) / 2 FROM linedefs l WHERE l.id = :line_id));
   IF (did = 1 AND repeatable = 0) THEN
     UPDATE linedefs SET special = 0 WHERE id = :line_id;
 END^
@@ -528,14 +577,21 @@ BEGIN
       ELSE IF (dir = 0) THEN
       BEGIN
         wait_left = wait_left - 1;
-        IF (wait_left <= 0) THEN dir = -1;
+        IF (wait_left <= 0) THEN
+        BEGIN
+          dir = -1;
+          EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDCLS', 'DSDORCLS'), sid);
+        END
       END
       ELSE
       BEGIN
         nh = MAXVALUE(ch - spd, fh);
         IF (EXISTS (SELECT 1 FROM things t WHERE t.sector_id = :sid AND t.solid = 1
                        AND t.z + t.height > :nh)) THEN
+        BEGIN
           dir = 1;                         -- something is in the way: reopen
+          EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDOPN', 'DSDOROPN'), sid);
+        END
         ELSE
         BEGIN
           ch = nh;
@@ -549,12 +605,21 @@ BEGIN
       IF (dir = -1) THEN
       BEGIN
         fh = MAXVALUE(fh - spd, bottom_h);
-        IF (fh <= bottom_h) THEN BEGIN dir = 0; wait_left = wait_tics; END
+        IF (fh <= bottom_h) THEN
+        BEGIN
+          dir = 0;
+          wait_left = wait_tics;
+          EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
+        END
       END
       ELSE IF (dir = 0) THEN
       BEGIN
         wait_left = wait_left - 1;
-        IF (wait_left <= 0) THEN dir = 1;
+        IF (wait_left <= 0) THEN
+        BEGIN
+          dir = 1;
+          EXECUTE PROCEDURE sector_sound('DSPSTART', sid);
+        END
       END
       ELSE
       BEGIN
@@ -565,7 +630,11 @@ BEGIN
         ELSE
         BEGIN
           fh = nh;
-          IF (fh >= top_h) THEN del = 1;
+          IF (fh >= top_h) THEN
+          BEGIN
+            del = 1;
+            EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
+          END
         END
       END
       UPDATE sectors SET floor_h = :fh WHERE id = :sid;
@@ -805,7 +874,11 @@ BEGIN
     z = MAXVALUE(fz, z + momz);
     IF (z = fz) THEN
     BEGIN
-      IF (momz < -8) THEN view_h = view_h + momz / 2;   -- landing squat
+      IF (momz < -8) THEN
+      BEGIN
+        view_h = view_h + momz / 2;   -- landing squat
+        EXECUTE PROCEDURE play_sound('DSOOF', 0, NULL, NULL);
+      END
       momz = 0;
     END
   END
@@ -849,6 +922,7 @@ BEGIN
      ORDER BY i.s
       INTO lid, lsp;
     IF (lid IS NOT NULL AND lsp > 0) THEN EXECUTE PROCEDURE activate_line(lid, 'use');
+    ELSE IF (lid IS NOT NULL) THEN EXECUTE PROCEDURE play_sound('DSNOWAY', 0, NULL, NULL);
   END
 
   -- weapon selection (only weapons we own)
@@ -872,6 +946,7 @@ BEGIN
     ELSE IF (weapon = 3) THEN BEGIN attack_len = 37; pellets = 7; spread = 0.10; shells = shells - 1; END
     ELSE IF (weapon = 4) THEN BEGIN attack_len = 4;  pellets = 1; spread = 0.06; bullets = bullets - 1; END
     attack_tics = attack_len;
+    EXECUTE PROCEDURE play_sound(CASE weapon WHEN 1 THEN 'DSPUNCH' WHEN 3 THEN 'DSSHOTGN' ELSE 'DSPISTOL' END, 0, NULL, NULL);
     i = 0;
     WHILE (i < pellets) DO
     BEGIN
@@ -940,6 +1015,8 @@ BEGIN
              keycards = IIF(:pk = 'key', BIN_OR(keycards, :amt), keycards),
              msg = 'Picked up ' || :lbl || '.', msg_tics = 70
        WHERE id = 1;
+      EXECUTE PROCEDURE play_sound(CASE WHEN pk IN ('shotgun', 'chaingun') THEN 'DSWPNUP'
+                                        WHEN pk = 'none' THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
     END
   END
 END^
@@ -998,6 +1075,9 @@ DECLARE mid INTEGER;
 DECLARE oid INTEGER;
 DECLARE od DOUBLE PRECISION;
 DECLARE melee_range DOUBLE PRECISION;
+DECLARE see_snd VARCHAR(8);
+DECLARE atk_snd VARCHAR(8);
+DECLARE death_snd VARCHAR(8);
 BEGIN
   SELECT t.x, t.y, t.z, p.dead FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
     INTO px, py, pz, pdead;
@@ -1006,14 +1086,15 @@ BEGIN
   FOR SELECT t.id, t.kind, t.x, t.y, t.z, t.angle, t.st, t.st_tics, t.st_len, t.step, t.reaction,
              t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame,
              tt.speed, tt.walk_fr, tt.atk_fr, tt.death_fr, tt.atk_kind, tt.missile_type,
-             tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id
+             tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id, tt.see_snd, tt.atk_snd, tt.death_snd
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        WHERE t.kind IN ('monster', 'barrel', 'missile', 'fx')
          AND t.st NOT IN ('dead')
          AND NOT (t.kind = 'barrel' AND t.st = 'idle')
          AND NOT (t.st = 'idle' AND MOD(:tic + t.id, 8) <> 0)
         INTO id, k, x, y, z, ang, st, st_tics, st_len, step, reaction, rad, hgt, momx, momy, owner_id, flags, frame,
-             spd, walk_fr, atk_fr, death_fr, atk_kind, missile_type, dmg_lo, dmg_hi, shots, sec
+             spd, walk_fr, atk_fr, death_fr, atk_kind, missile_type, dmg_lo, dmg_hi, shots, sec,
+             see_snd, atk_snd, death_snd
   DO
   BEGIN
     del = 0;
@@ -1053,6 +1134,7 @@ BEGIN
         END
         IF (st = 'dying') THEN
         BEGIN
+          EXECUTE PROCEDURE play_sound(death_snd, id, x, y);
           st_len = CHAR_LENGTH(death_fr) * 4;
           st_tics = st_len;
           frame = SUBSTRING(death_fr FROM 1 FOR 1);
@@ -1099,6 +1181,7 @@ BEGIN
         st = 'chase';
         st_tics = 0;
         reaction = 2;
+        EXECUTE PROCEDURE play_sound(see_snd, id, x, y);
       END
     END
     ELSE IF (st = 'attack') THEN
@@ -1110,6 +1193,7 @@ BEGIN
       IF (st_tics = 7 AND pdead = 0) THEN
       BEGIN
         melee_range = 60 + rad / 2;
+        EXECUTE PROCEDURE play_sound(IIF(atk_kind = 'missile' AND dist < melee_range, 'DSCLAW', atk_snd), id, x, y);
         IF (atk_kind = 'hitscan') THEN
         BEGIN
           IF (check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
@@ -1243,6 +1327,8 @@ RETURNS (
 AS
 DECLARE i INTEGER = 0;
 BEGIN
+  DELETE FROM sound_events e
+   WHERE e.tic < (SELECT g.tic FROM game g WHERE g.id = 1) - 70;
   WHILE (i < tics) DO
   BEGIN
     UPDATE game g SET tic = g.tic + 1 WHERE g.id = 1;

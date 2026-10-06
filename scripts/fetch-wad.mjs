@@ -1,5 +1,5 @@
 // fetch-wad.mjs – download Freedoom (BSD-licensed), extract freedoom1.wad,
-// and strip what this port never uses (sound, music, demos) so the page
+// and strip what this port never uses (PC-speaker sounds, demos) so the page
 // downloads less.
 //
 //   node scripts/fetch-wad.mjs [--from path/to/freedoom-x.zip|wad]
@@ -40,7 +40,7 @@ function unzipOne(zip, suffix) {
   throw new Error(`${suffix} not found in zip`);
 }
 
-/** Rewrite a WAD without sounds (DS*, DP*), music (D_*), demos and MIDI banks. */
+/** Rewrite a WAD without PC-speaker sounds (DP*), demos or the GUS patch maps. */
 function slim(wad) {
   const dv = new DataView(wad.buffer, wad.byteOffset, wad.byteLength);
   const n = dv.getInt32(4, true);
@@ -54,8 +54,8 @@ function slim(wad) {
     const name = new TextDecoder().decode(wad.subarray(o + 8, o + 16)).replace(/\0.*$/, '');
     if (/^(S|SS|P|PP|F|FF)_START$/.test(name)) inGraphics = true;
     if (/^(S|SS|P|PP|F|FF)_END$/.test(name)) inGraphics = false;
-    if (!inGraphics && /^(DS|DP|D_)/.test(name) && size > 0) continue;
-    if (/^(DEMO\d|GENMIDI|DMXGUS|DMXGUSC)$/.test(name)) continue;
+    if (!inGraphics && /^DP/.test(name) && size > 0) continue;
+    if (/^(DEMO\d|DMXGUS|DMXGUSC)$/.test(name)) continue;
     keep.push({ name, data: wad.subarray(pos, pos + size) });
   }
   const body = keep.reduce((s, l) => s + l.data.length, 0);

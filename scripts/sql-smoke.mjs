@@ -68,6 +68,8 @@ t0 = t();
 s = await tic([4, 0, 0, 0, 1, 1, 0, 0]);
 console.log(`fire+use       ${(t() - t0).toFixed(0)} ms; bullets ${s.BULLETS}`);
 assert(s.BULLETS < 50, 'pistol consumed a bullet');
+const fired = (await db.query("SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSPISTOL'")).rows[0].N;
+assert(fired > 0, 'firing queued a DSPISTOL sound event');
 
 for (let i = 0; i < 3; i++) {
   t0 = t();
@@ -119,6 +121,8 @@ if (door) {
   await tic([30, 0, 0, 0, 0, 0, 0, 0]);
   const c = (await db.query('SELECT ceil_h FROM sectors WHERE id = ?', [door.BACK_SECTOR])).rows[0].CEIL_H;
   assert(c > door.CEIL_H + 32, `USE opened a door (ceiling ${door.CEIL_H} → ${c})`);
+  const snd = (await db.query("SELECT COUNT(*) n FROM sound_events WHERE sound IN ('DSDOROPN', 'DSBDOPN') AND x IS NOT NULL")).rows[0].N;
+  assert(snd > 0, 'the door queued a positional opening sound');
 }
 
 await db.close();

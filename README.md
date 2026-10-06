@@ -49,6 +49,8 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `r_segs.c` clip arrays, `markceiling` / `markfloor` | `RENDER_WALLS` / `FRAME_WALLS` (or `FRAME_WALLS_WINDOWED`) |
 | `r_plane.c` visplanes: `R_FindPlane`, `R_CheckPlane`, `R_MakeSpans`, `R_MapPlane` | `c_top`/`c_bot`/`f_top`/`f_bot` per slice, `FRAME_VISPLANES`; spans in [src/renderer.js](src/renderer.js) |
 | `r_things.c` | `RENDER_SPRITES` / `FRAME_SPRITES` |
+| `S_StartSound` (+ `sfxinfo` sounds per monster) | `PLAY_SOUND` / `SECTOR_SOUND` → `SOUND_EVENTS`; played by [src/audio.js](src/audio.js) |
+| `I_PlaySong` with the OPL `GENMIDI` bank | [src/music.js](src/music.js): MUS + MIDI parser, FM synthesiser |
 
 ### The renderer
 
@@ -117,6 +119,30 @@ linearly. `SELECT * FROM frame_visplanes` shows the current frame's planes in th
 and the stats line under the view counts them. Across Freedoom's maps the busiest frame
 needs 42, comfortably under vanilla DOOM's `MAXVISPLANES` of 128.
 
+### Sound and music
+
+The simulation decides what you hear. `PLAY_SOUND` inserts a row into `SOUND_EVENTS` (sound
+lump, origin, map position) for:
+
+- the player: gunfire, pain and death, a hard landing, "oof" against a wall, pickups
+- monsters: sighting, attacks, pain and death (per type, from `THING_TYPES`)
+- the world: doors, lifts, switches, teleports, exploding fireballs and barrels
+
+Each frame the browser reads the rows it hasn't seen, in the same pipelined batch as the
+render queries. It plays the WAD's DMX sound lumps through Web Audio. Volume falls off between
+200 and 1200 units and sound is panned by the angle to the listener, like
+`S_AdjustSoundParams`. A new sound from the same origin cuts off the previous one, as DOOM's
+channels do.
+
+Music comes from the WAD's `D_*` lumps (MIDI in Freedoom, MUS in the original IWADs). It plays
+through a small FM synthesiser built from the WAD's own `GENMIDI` lump, the OPL2 instrument
+bank DOOM's Adlib/Sound Blaster driver used. Each voice is a modulator oscillator driving a
+carrier's frequency (or both summed, for additive patches), with OPL-style envelopes and the
+four OPL2 waveforms. Operator feedback is baked into the waveform. Percussion uses GENMIDI's
+47 drum patches. Volumes are under the view, and audio starts after your first click or key
+press (a browser rule). In the devtools console, `await doom.audio.renderLevel('D_E1M1')`
+renders a few seconds offline and reports the level.
+
 ## Running locally
 
 ```bash
@@ -135,8 +161,8 @@ npm test
 npm run serve
 ```
 
-`npm run fetch-wad` downloads Freedoom and writes `public/wads/freedoom1.wad`, minus sound and
-music. `npm test` runs the game SQL in the real WASM engine under Node. `npm run serve` builds
+`npm run fetch-wad` downloads Freedoom and writes `public/wads/freedoom1.wad`, minus PC-speaker
+sounds and demos. `npm test` runs the game SQL in the real WASM engine under Node. `npm run serve` builds
 `dist/` and serves it on http://localhost:8080 **without** COOP/COEP headers, just like
 GitHub Pages. That way the service worker is what makes the page cross-origin isolated
 (Firebird's pthreads need `SharedArrayBuffer`).
@@ -156,7 +182,8 @@ Click the view to capture the mouse. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D<
 arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd> uses,
 <kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>4</kbd> pick weapons, <kbd>Tab</kbd> shows the
 automap, and <kbd>P</kbd> pauses. Under the view you can set **Detail** (320 or 160 columns) and
-**Renderer** (BSP + solidsegs, or brute force). Both settings are remembered in your browser. The SQL console under the game queries the live game
+**Renderer** (BSP + solidsegs, or brute force), plus **Sound** and **Music** volume. These settings
+are remembered in your browser. The SQL console under the game queries the live game
 database. Try the `IDKFA` button.
 
 ## Deploying
@@ -169,7 +196,8 @@ GitHub Pages. Pull requests run everything except the deploy.
 ## Simplifications
 
 Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
-Projectiles fly flat. There's no sound, no rocket launcher, plasma or BFG, and no crushers.
+Projectiles fly flat. There's no rocket launcher, plasma or BFG, and no crushers. Music is an approximation of OPL2
+FM synthesis, not a cycle-exact emulator.
 Large maps with many monsters awake at once can still drop below 10 fps. The *Low* detail setting (160
 columns, like DOOM's own) halves the render cost.
 

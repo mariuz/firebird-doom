@@ -13,26 +13,26 @@ const I = (type, sprite, pickup, amount, o = {}) => ({ type, sprite, kind: 'item
 export const THING_TYPES = [
   // player start + projectiles + effects (spawned by SQL, never by maps)
   { type: 1, sprite: 'PLAY', kind: 'player', radius: 16, height: 56, solid: 1, hp: 100, walk: 'ABCD', pain: 'G', death: 'HIJKLMN' },
-  { type: 9000, sprite: 'BAL1', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1 },
-  { type: 9001, sprite: 'BAL2', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1 },
-  { type: 9002, sprite: 'BAL7', kind: 'missile', radius: 6, height: 16, speed: 15, walk: 'AB', death: 'CDE', bright: 1 },
+  { type: 9000, sprite: 'BAL1', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, deathSnd: 'DSFIRXPL' },
+  { type: 9001, sprite: 'BAL2', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, deathSnd: 'DSFIRXPL' },
+  { type: 9002, sprite: 'BAL7', kind: 'missile', radius: 6, height: 16, speed: 15, walk: 'AB', death: 'CDE', bright: 1, deathSnd: 'DSFIRXPL' },
   { type: 14, sprite: 'TFOG', kind: 'marker', radius: 1, height: 1, walk: 'A' }, // teleport destination
   { type: 9010, sprite: 'PUFF', kind: 'fx', radius: 1, height: 1, walk: 'ABCD', bright: 1 },
   { type: 9011, sprite: 'BLUD', kind: 'fx', radius: 1, height: 1, walk: 'CBA' },
 
   // monsters ─ attack: hitscan | missile | melee
-  M(3004, 'POSS', { hp: 20, speed: 8, painChance: 200, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKL', atk: 'hitscan', dmgLo: 3, dmgHi: 15, shots: 1, drop: 2007 }),
-  M(9, 'SPOS', { hp: 30, speed: 8, painChance: 170, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKL', atk: 'hitscan', dmgLo: 3, dmgHi: 15, shots: 3, drop: 2001 }),
-  M(65, 'CPOS', { hp: 70, speed: 8, painChance: 170, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKLMN', atk: 'hitscan', dmgLo: 3, dmgHi: 15, shots: 1, drop: 2002 }),
-  M(3001, 'TROO', { hp: 60, speed: 8, painChance: 200, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLM', atk: 'missile', missile: 9000, dmgLo: 3, dmgHi: 24 }),
-  M(3002, 'SARG', { hp: 150, speed: 10, radius: 30, painChance: 180, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMN', atk: 'melee', dmgLo: 4, dmgHi: 40 }),
-  M(58, 'SARG', { hp: 150, speed: 10, radius: 30, painChance: 180, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMN', atk: 'melee', dmgLo: 4, dmgHi: 40 }),
-  M(3006, 'SKUL', { hp: 100, speed: 8, radius: 16, painChance: 256, walk: 'AB', attack: 'CD', pain: 'E', death: 'FGHIJK', atk: 'melee', dmgLo: 3, dmgHi: 24, bright: 1 }),
-  M(3005, 'HEAD', { hp: 400, speed: 8, radius: 31, painChance: 128, walk: 'A', attack: 'BCD', pain: 'EF', death: 'GHIJKL', atk: 'missile', missile: 9001, dmgLo: 5, dmgHi: 40 }),
-  M(3003, 'BOSS', { hp: 1000, speed: 8, radius: 24, height: 64, painChance: 50, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMNO', atk: 'missile', missile: 9002, dmgLo: 8, dmgHi: 64 }),
-  M(69, 'BOS2', { hp: 500, speed: 8, radius: 24, height: 64, painChance: 50, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMNO', atk: 'missile', missile: 9002, dmgLo: 8, dmgHi: 64 }),
+  M(3004, 'POSS', { hp: 20, speed: 8, painChance: 200, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKL', atk: 'hitscan', dmgLo: 3, dmgHi: 15, shots: 1, drop: 2007, seeSnd: 'DSPOSIT1', atkSnd: 'DSPISTOL', painSnd: 'DSPOPAIN', deathSnd: 'DSPODTH1' }),
+  M(9, 'SPOS', { hp: 30, speed: 8, painChance: 170, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKL', atk: 'hitscan', dmgLo: 3, dmgHi: 15, shots: 3, drop: 2001, seeSnd: 'DSPOSIT2', atkSnd: 'DSSHOTGN', painSnd: 'DSPOPAIN', deathSnd: 'DSPODTH2' }),
+  M(65, 'CPOS', { hp: 70, speed: 8, painChance: 170, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKLMN', atk: 'hitscan', dmgLo: 3, dmgHi: 15, shots: 1, drop: 2002, seeSnd: 'DSPOSIT2', atkSnd: 'DSSHOTGN', painSnd: 'DSPOPAIN', deathSnd: 'DSPODTH2' }),
+  M(3001, 'TROO', { hp: 60, speed: 8, painChance: 200, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLM', atk: 'missile', missile: 9000, dmgLo: 3, dmgHi: 24, seeSnd: 'DSBGSIT1', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSBGDTH1' }),
+  M(3002, 'SARG', { hp: 150, speed: 10, radius: 30, painChance: 180, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMN', atk: 'melee', dmgLo: 4, dmgHi: 40, seeSnd: 'DSSGTSIT', atkSnd: 'DSSGTATK', painSnd: 'DSDMPAIN', deathSnd: 'DSSGTDTH' }),
+  M(58, 'SARG', { hp: 150, speed: 10, radius: 30, painChance: 180, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMN', atk: 'melee', dmgLo: 4, dmgHi: 40, seeSnd: 'DSSGTSIT', atkSnd: 'DSSGTATK', painSnd: 'DSDMPAIN', deathSnd: 'DSSGTDTH' }),
+  M(3006, 'SKUL', { hp: 100, speed: 8, radius: 16, painChance: 256, walk: 'AB', attack: 'CD', pain: 'E', death: 'FGHIJK', atk: 'melee', dmgLo: 3, dmgHi: 24, bright: 1, atkSnd: 'DSSKLATK', painSnd: 'DSDMPAIN', deathSnd: 'DSFIRXPL' }),
+  M(3005, 'HEAD', { hp: 400, speed: 8, radius: 31, painChance: 128, walk: 'A', attack: 'BCD', pain: 'EF', death: 'GHIJKL', atk: 'missile', missile: 9001, dmgLo: 5, dmgHi: 40, seeSnd: 'DSCACSIT', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSCACDTH' }),
+  M(3003, 'BOSS', { hp: 1000, speed: 8, radius: 24, height: 64, painChance: 50, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMNO', atk: 'missile', missile: 9002, dmgLo: 8, dmgHi: 64, seeSnd: 'DSBRSSIT', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSBRSDTH' }),
+  M(69, 'BOS2', { hp: 500, speed: 8, radius: 24, height: 64, painChance: 50, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMNO', atk: 'missile', missile: 9002, dmgLo: 8, dmgHi: 64, seeSnd: 'DSBRSSIT', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSBRSDTH' }),
   // shootable barrel – "dies" by exploding
-  { type: 2035, sprite: 'BAR1', kind: 'barrel', radius: 10, height: 42, solid: 1, hp: 20, walk: 'AB', death: 'ABCDE', deathSprite: 'BEXP', bright: 0 },
+  { type: 2035, sprite: 'BAR1', kind: 'barrel', radius: 10, height: 42, solid: 1, hp: 20, walk: 'AB', death: 'ABCDE', deathSprite: 'BEXP', bright: 0, deathSnd: 'DSBAREXP' },
 
   // items: pickup kind + amount
   I(2011, 'STIM', 'health', 10), I(2012, 'MEDI', 'health', 25),

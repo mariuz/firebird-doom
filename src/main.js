@@ -13,6 +13,7 @@ import { Wad } from './wad.js';
 import { createSchema, loadResources, loadMap, setView, setRenderer } from './loader.js';
 import { Renderer } from './renderer.js';
 import { drawStatusBar, drawText, drawWeapon } from './hud.js';
+import { DoomAudio, musicLumpFor } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -32,7 +33,7 @@ let running = false;
 let paused = false;
 let lastTic = 0;
 // settings, remembered per browser
-const settings = { detail: 'high', renderer: 'bsp' };
+const settings = { detail: 'high', renderer: 'bsp', sfx: 70, music: 50 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('firebird-doom:settings') || '{}'));
 } catch { /* storage unavailable: defaults */ }
@@ -41,6 +42,12 @@ const saveSettings = () => {
 };
 const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
 let showMap = false;
+const audio = new DoomAudio();
+audio.setVolumes(settings.sfx / 100, settings.music / 100);
+let lastSoundId = 0;
+// audio may only start after a user gesture
+for (const ev of ['keydown', 'pointerdown', 'touchstart']) window.addEventListener(ev, () => audio.unlock(), { capture: true });
+document.addEventListener('visibilitychange', () => audio.suspend(document.hidden));
 let lastFrame = { tic: 0, walls: 0, sprites: 0, draw: 0, rows: 0 };
 
 function setStatus(msg, isError = false) {
@@ -70,7 +77,8 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 window.addEventListener('blur', () => keys.clear());
 canvas.addEventListener('click', () => {
-  if (running && document.pointerLockElement !== canvas) canvas.requestPointerLock?.();
+  // (some embedded browsers refuse pointer lock; the keyboard still works)
+  if (running && document.pointerLockElement !== canvas) canvas.requestPointerLock?.()?.catch?.(() => {});
 });
 canvas.addEventListener('mousedown', (e) => {
   if (document.pointerLockElement === canvas && e.button === 0) fireClick = true;
@@ -167,6 +175,7 @@ async function startMap(name, newGame) {
   console.log(`[firebird-doom] ${name} loaded in ${(performance.now() - t0).toFixed(0)} ms`);
   setStatus('');
   $('mapname').textContent = name;
+  audio.playMusic(musicLumpFor(name));
   lastTic = performance.now();
   running = true;
 }
@@ -245,9 +254,14 @@ async function frame() {
       t = performance.now();
       return [r.rows, ms];
     });
-    const [[walls, wallMs], [sectors], [sprites, spriteMs]] = await Promise.all([
+    const [[walls, wallMs], [sectors], [sprites, spriteMs], [sounds]] = await Promise.all([
       q('SELECT * FROM frame_walls'), q('SELECT * FROM frame_sectors'), q('SELECT * FROM frame_sprites'),
+      q(`SELECT id, sound, origin, x, y FROM sound_events WHERE id > ${lastSoundId} ORDER BY id`),
     ]);
+    if (sounds.length) {
+      lastSoundId = sounds[sounds.length - 1][0];
+      audio.playEvents(sounds, { x: hud.PX, y: hud.PY, angle: hud.PANGLE });
+    }
     lastFrame.walls = wallMs;
     lastFrame.sprites = spriteMs;
     lastFrame.rows = walls.length;
@@ -401,6 +415,7 @@ async function useWad(buffer, label) {
   res = await loadResources(db, wad, { width: viewWidth(), height: 168 });
   await setRenderer(db, settings.renderer === 'bsp');
   renderer = new Renderer(canvas, wad, res);
+  audio.setWad(wad);
   renderer.setSize(viewWidth(), 168);
   const sel = $('map');
   sel.innerHTML = maps.map((m) => `<option>${m}</option>`).join('');
@@ -412,7 +427,7 @@ async function boot() {
   try {
     db = await openDatabase();
     // for the devtools console: await doom.sql('SELECT * FROM player')
-    window.doom = { db, sql: (q, p) => db.query(q, p).then((r) => r.rows) };
+    window.doom = { db, audio, sql: (q, p) => db.query(q, p).then((r) => r.rows) };
     setStatus('Downloading Freedoom…');
     const resp = await fetch(new URL('./wads/freedoom1.wad', location.href));
     if (!resp.ok) throw new Error(`could not fetch freedoom1.wad (${resp.status}); pick a WAD file instead`);
@@ -436,6 +451,17 @@ $('wadfile').addEventListener('change', async (e) => {
 $('map').addEventListener('change', (e) => startMap(e.target.value, true).catch((err) => setStatus(err.message, true)));
 $('detail').value = settings.detail;
 $('renderer').value = settings.renderer;
+$('sfxvol').value = settings.sfx;
+$('musicvol').value = settings.music;
+for (const id of ['sfxvol', 'musicvol']) {
+  $(id).addEventListener('input', () => {
+    settings.sfx = Number($('sfxvol').value);
+    settings.music = Number($('musicvol').value);
+    saveSettings();
+    audio.unlock();
+    audio.setVolumes(settings.sfx / 100, settings.music / 100);
+  });
+}
 $('renderer').addEventListener('change', async (e) => {
   settings.renderer = e.target.value;
   saveSettings();

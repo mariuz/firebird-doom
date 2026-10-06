@@ -34,6 +34,8 @@
           <option value="bsp">BSP front-to-back + solidsegs</option>
           <option value="brute">Brute force (every linedef)</option>
         </select></label>
+        <label title="Sound effects volume">Sound <input id="sfxvol" type="range" min="0" max="100" step="5"></label>
+        <label title="Music volume (GENMIDI OPL synthesis)">Music <input id="musicvol" type="range" min="0" max="100" step="5"></label>
         <span id="engine" class="pill">Firebird</span>
         <span id="mapname" class="pill"></span>
       </div>
@@ -83,6 +85,11 @@
           Each slice also reports the ceiling and floor rows it uncovers. The browser files those into visplanes and draws
           them as horizontal spans, like DOOM's <code>R_MakeSpans</code>; <code>FRAME_VISPLANES</code> lists them.
           <code>FRAME_SPRITES</code> picks the rotation frame for each monster.</li>
+        <li><b>Sound is a table too.</b> Procedures insert rows into <code>SOUND_EVENTS</code> for gunfire, doors, lifts,
+          switches, pickups, pain, deaths and monster sightings. The browser plays the WAD's DMX sound lumps,
+          attenuated and panned from where the sound happened. Music is the WAD's MIDI/MUS lumps played by a small
+          FM synthesiser that uses the WAD's own <code>GENMIDI</code> OPL2 instrument bank, as DOOM's Adlib driver did.
+          Audio starts after your first click or key press.</li>
         <li><b>JavaScript only paints.</b> It looks up texels and colormaps for the rows Firebird returns.</li>
       </ul>
       <p>Inspired by CedarDB's <a href="https://cedardb.com/blog/sqldoom/">SQL DOOM</a> and
