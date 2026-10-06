@@ -117,7 +117,7 @@ assert(spray > 0, 'BFG ball exploded');
   await db.exec(`UPDATE player SET has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0,
                  has_chainsaw = 0, has_ssg = 0, bullets = 1, shells = 0, rockets = 0, cells = 0, armor = 0, keycards = 0`);
   await db.exec(`EXECUTE PROCEDURE cheat('IDKFA')`);
-  const k = await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  const k = (await db.query('SELECT * FROM player')).rows[0];   // (before a tic: the monster nearby is awake)
   const phase2 = wad.mapNames()[0].startsWith('MAP');
   assert(k.HAS_SHOTGUN && k.HAS_CHAINGUN && k.HAS_LAUNCHER && k.HAS_PLASMA && k.HAS_BFG && k.HAS_CHAINSAW
     && k.HAS_SSG === (phase2 ? 1 : 0) && k.BULLETS === k.MAX_BULLETS && k.SHELLS === k.MAX_SHELLS
@@ -138,6 +138,30 @@ assert(spray > 0, 'BFG ball exploded');
   await db.exec('EXECUTE PROCEDURE damage_player(10)');
   const o2 = (await db.query('SELECT health FROM player')).rows[0];
   assert(o.GOD === 0 && o.MSG === 'Degreelessness Mode Off' && o2.HEALTH === 90, `IDDQD again: off, and damage hurts (health ${o2.HEALTH})`);
+
+  // IDCHOPPERS: the chainsaw, and vanilla's one tic of "invulnerability"
+  await db.exec('UPDATE player SET has_chainsaw = 0, invuln_tics = 500');
+  await db.exec(`EXECUTE PROCEDURE cheat('idchoppers')`);
+  const c = await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  assert(c.HAS_CHAINSAW === 1 && c.INVULN_TICS === 0 && c.MSG === "... doesn't suck - GM",
+    `IDCHOPPERS: the chainsaw (${c.HAS_CHAINSAW}), and a running invulnerability cut to one tic (${c.INVULN_TICS} left)`);
+
+  // IDBEHOLD: the list, then each letter toggles its power-up
+  await db.exec(`UPDATE player SET invuln_tics = 0, strength_tics = 0, invis_tics = 0, iron_tics = 0, allmap = 0,
+                 infra_tics = 0, health = 50`);
+  await db.exec(`EXECUTE PROCEDURE cheat('idbehold')`);
+  const list = (await db.query('SELECT msg FROM player')).rows[0].MSG;
+  for (const l of 'vsiral') await db.exec(`EXECUTE PROCEDURE cheat('idbehold${l}')`);
+  const on = await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  for (const l of 'vsiral') await db.exec(`EXECUTE PROCEDURE cheat('idbehold${l}')`);
+  const off = await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  assert(list === 'inVuln, Str, Inviso, Rad, Allmap, or Lite-amp'
+    && on.INVULN_TICS > 1040 && on.STRENGTH_TICS > 0 && on.HEALTH === 100 && on.INVIS_TICS > 2090
+    && on.IRON_TICS > 2090 && on.ALLMAP === 1 && on.INFRA_TICS > 4190 && on.MSG === 'Power-up Toggled'
+    && off.INVULN_TICS === 0 && off.STRENGTH_TICS === 0 && off.INVIS_TICS === 0 && off.IRON_TICS === 0
+    && off.ALLMAP === 1 && off.INFRA_TICS === 0,
+    `IDBEHOLD v/s/i/r/a/l: all on (${on.INVULN_TICS}/${on.STRENGTH_TICS}/${on.INVIS_TICS}/${on.IRON_TICS}/${on.ALLMAP}/${on.INFRA_TICS}), `
+    + `again all off but the map (${off.INVULN_TICS}/${off.STRENGTH_TICS}/${off.INVIS_TICS}/${off.IRON_TICS}/${off.ALLMAP}/${off.INFRA_TICS})`);
   await db.exec('UPDATE player SET health = 200');
 }
 

@@ -195,7 +195,8 @@ prints no message and isn't stored in the database.
 
 ### Cheats
 
-Type **IDDQD**, **IDKFA**, **IDCLIP** or **IDCLEV**<i>xy</i> any time during play (`ST_Responder`). The browser spots the letters
+Type **IDDQD**, **IDKFA**, **IDCLIP**, **IDCHOPPERS**, **IDBEHOLD**<i>x</i> or **IDCLEV**<i>xy</i> any time during
+play (`ST_Responder`). The browser spots the letters
 and calls `EXECUTE PROCEDURE cheat('iddqd')`. The SQL console has buttons for both.
 
 - **IDDQD** toggles god mode (`PLAYER.GOD`, `CF_GODMODE`). It heals you to 100, and
@@ -208,6 +209,13 @@ and calls `EXECUTE PROCEDURE cheat('iddqd')`. The SQL console has buttons for bo
   `P_CheckPosition` says yes before looking at a single line or thing, so you walk through walls
   and monsters. No lines are checked, so none trigger as you cross them. Your height still
   follows the floor beneath you.
+- **IDCHOPPERS** hands over the chainsaw ("... doesn't suck - GM"). Like vanilla, it also sets
+  invulnerability to `true`, which is one tic: it cancels a running invulnerability sphere.
+- **IDBEHOLD** on its own lists the choices: "inVuln, Str, Inviso, Rad, Allmap, or Lite-amp".
+  Followed by **v**, **s**, **i**, **r**, **a** or **l**, it toggles that power-up. Switching one
+  on gives the full time `P_GivePower` would, and berserk also heals you to 100. Switching one
+  off leaves it one tic to run, and berserk goes straight to 0. As in vanilla, the computer area
+  map can't be taken back.
 - **IDCLEV**<i>xy</i> warps, as `G_DeferedInitNew` does: a new game on that map, inventory
   reset. DOOM I reads the digits as episode and map (`idclev13` is E1M3), DOOM II as the map
   number (`idclev07` is MAP07). Maps the WAD doesn't have are ignored. This cheat lives in the

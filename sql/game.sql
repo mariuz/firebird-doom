@@ -2454,7 +2454,9 @@ END^
 -- IDDQD toggles god mode (and heals you to 100); IDKFA hands over every
 -- weapon (the super shotgun only in DOOM II), full ammo, 200 armour and every
 -- key. IDCLIP (or DOOM I's IDSPISPOPD) toggles walking through walls. A dead
--- player can't cheat. (IDCLEV is the browser's: it loads another map.)
+-- player can't cheat. IDBEHOLD alone lists the power-ups; with v/s/i/r/a/l
+-- after it, it toggles one. IDCHOPPERS hands over the chainsaw. (IDCLEV is
+-- the browser's: it loads another map.)
 CREATE OR ALTER PROCEDURE cheat (code VARCHAR(16))
 AS
 BEGIN
@@ -2474,6 +2476,26 @@ BEGIN
        SET msg = TRIM(IIF(p.noclip = 1, 'No Clipping Mode ON', 'No Clipping Mode OFF')), msg_tics = 70
      WHERE p.id = 1 AND p.dead = 0;
   END
+  ELSE IF (code = 'idchoppers') THEN
+    -- (vanilla also sets pw_invulnerability to "true": 1 tic, which cancels a sphere)
+    UPDATE player p SET has_chainsaw = 1, invuln_tics = 1, msg = '... doesn''t suck - GM', msg_tics = 70
+     WHERE p.id = 1 AND p.dead = 0;
+  ELSE IF (code = 'idbehold') THEN
+    UPDATE player p SET msg = 'inVuln, Str, Inviso, Rad, Allmap, or Lite-amp', msg_tics = 70
+     WHERE p.id = 1 AND p.dead = 0;
+  ELSE IF (code IN ('idbeholdv', 'idbeholds', 'idbeholdi', 'idbeholdr', 'idbeholda', 'idbeholdl')) THEN
+    -- off: P_GivePower's tics; on: 1 tic left (berserk straight to 0); the
+    -- computer map can't be taken back
+    UPDATE player p
+       SET invuln_tics = IIF(:code = 'idbeholdv', IIF(p.invuln_tics > 0, 1, 1050), p.invuln_tics),
+           strength_tics = IIF(:code = 'idbeholds', IIF(p.strength_tics > 0, 0, 1), p.strength_tics),
+           health = IIF(:code = 'idbeholds' AND p.strength_tics = 0, MAXVALUE(p.health, 100), p.health),
+           invis_tics = IIF(:code = 'idbeholdi', IIF(p.invis_tics > 0, 1, 2100), p.invis_tics),
+           iron_tics = IIF(:code = 'idbeholdr', IIF(p.iron_tics > 0, 1, 2100), p.iron_tics),
+           allmap = IIF(:code = 'idbeholda', 1, p.allmap),
+           infra_tics = IIF(:code = 'idbeholdl', IIF(p.infra_tics > 0, 1, 4200), p.infra_tics),
+           msg = 'Power-up Toggled', msg_tics = 70
+     WHERE p.id = 1 AND p.dead = 0;
   ELSE IF (code = 'idkfa') THEN
     UPDATE player p
        SET has_shotgun = 1, has_chaingun = 1, has_launcher = 1, has_plasma = 1, has_bfg = 1, has_chainsaw = 1,

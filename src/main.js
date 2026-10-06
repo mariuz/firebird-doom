@@ -47,7 +47,9 @@ let showMap = false;
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
 const iddt = makeCheatReader('iddt');
 // ST_Responder: IDDQD and IDKFA, typed any time during play
-const CHEATS = ['iddqd', 'idkfa', 'idclip', 'idspispopd'].map((code) => [code, makeCheatReader(code)]);
+const CHEATS = ['iddqd', 'idkfa', 'idclip', 'idspispopd', 'idchoppers', 'idbehold']
+  .map((code) => [code, makeCheatReader(code)]);
+const idbehold = makeParamCheatReader('idbehold', 1);   // …then v, s, i, r, a or l
 const idclev = makeParamCheatReader('idclev', 2);
 const audio = new DoomAudio();
 audio.setVolumes(settings.sfx / 100, settings.music / 100);
@@ -83,6 +85,10 @@ window.addEventListener('keydown', (e) => {
   if (showMap && iddt(e.key)) amCheating = (amCheating + 1) % 3;
   for (const [code, read] of CHEATS) {
     if (read(e.key)) db.query(`EXECUTE PROCEDURE cheat('${code}')`).catch((err) => console.error(err));
+  }
+  const power = idbehold(e.key)?.toLowerCase();
+  if (power && 'vsiral'.includes(power)) {
+    db.query(`EXECUTE PROCEDURE cheat('idbehold${power}')`).catch((err) => console.error(err));
   }
   // IDCLEV xy: G_DeferedInitNew – a new game on that map, if this WAD has it
   const digits = idclev(e.key);
