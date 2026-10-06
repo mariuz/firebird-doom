@@ -16,8 +16,14 @@ if (typeof window === 'undefined') {
   self.addEventListener('fetch', (event) => {
     const req = event.request;
     if (req.cache === 'only-if-cached' && req.mode !== 'same-origin') return;
+    // Revalidate our own files (cheap 304s) so a fresh deploy never mixes an
+    // old page with new scripts out of the 10-minute GitHub Pages cache.
+    const sameOrigin = new URL(req.url).origin === self.location.origin && req.method === 'GET';
+    const upstream = !sameOrigin ? req
+      : req.mode === 'navigate' ? fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' })
+        : new Request(req, { cache: 'no-cache' });
     event.respondWith(
-      fetch(req)
+      (upstream instanceof Promise ? upstream : fetch(upstream))
         .then((res) => {
           if (res.status === 0) return res;
           const headers = new Headers(res.headers);
