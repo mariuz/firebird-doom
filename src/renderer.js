@@ -173,6 +173,9 @@ export class Renderer {
    */
   drawView(view, walls, sprites, map) {
     const { w, h, fb, proj, projy } = this;
+    // R_SetupFrame: a fixed colormap (32, INVERSECOLORMAP, while invulnerable)
+    // replaces the light levels – except on the sky, as in vanilla
+    this.fixedCm = view.fixedColormap ?? null;
     const hh = h / 2;
     const hw = w / 2;
     const vz = view.z;
@@ -286,6 +289,8 @@ export class Renderer {
   }
 
   lightIndex(light, depth) {
+    // fixedcolormap (invulnerability) overrides all lighting
+    if (this.fixedCm != null) return this.fixedCm;
     // R_ScaleFromGlobalAngle → scalelight: startmap - scale/DISTMAP
     const start = (15 - Math.min(15, Math.max(0, light >> 4))) * 4;
     return Math.max(0, Math.min(31, start - Math.min(24, Math.floor(1280 / depth))));
@@ -354,7 +359,7 @@ export class Renderer {
     const sx = (dist * sa) / proj;
     const sy = (-dist * ca) / proj;
     const start = (15 - Math.min(15, Math.max(0, p.light >> 4))) * 4;
-    const cm = palBase + Math.max(0, Math.min(31, start - Math.floor(1280 / (dist + 16)))) * 256;
+    const cm = palBase + (this.fixedCm ?? Math.max(0, Math.min(31, start - Math.floor(1280 / (dist + 16))))) * 256;
     const lut = this.lut;
     let o = y * w + x1;
     for (let x = x1; x <= x2; x++) {
@@ -386,7 +391,7 @@ export class Renderer {
     const fuzz = s.fuzz === 1;
     const unlut = this.unlut[palBase / (34 * 256)];
     const dark = palBase + 6 * 256;
-    const cm = palBase + (s.light >= 255 ? 0 : this.lightIndex(s.light, s.depth)) * 256;
+    const cm = palBase + (s.light >= 255 ? (this.fixedCm ?? 0) : this.lightIndex(s.light, s.depth)) * 256;
     const xa = Math.max(0, Math.ceil(s.x1 - 0.5));
     const xb = Math.min(w - 1, Math.ceil(s.x2 - 0.5) - 1);
     const sx = pic.w / (s.x2 - s.x1);

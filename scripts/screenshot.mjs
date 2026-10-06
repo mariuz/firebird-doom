@@ -54,7 +54,8 @@ async function shoot(map, file) {
   const sprites = (await db.query('SELECT * FROM frame_sprites', [], arr)).rows;
   const sectors = (await db.query('SELECT * FROM frame_sectors', [], arr)).rows;
   map.sectors = new Map(sectors.map((r) => [r[0], { floor: r[1], ceil: r[2], floorFlat: r[3], ceilFlat: r[4], light: r[5], sky: r[6] === 1 }]));
-  renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette: 0 }, walls, sprites, map);
+  renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette: 0,
+    fixedColormap: hud.INVULN_TICS > 0 ? 32 : null }, walls, sprites, map);
   renderer.composeView();
   drawWeapon(renderer, hud, 0);
   drawStatusBar(renderer, hud, 0);
@@ -167,6 +168,10 @@ await shoot(map, 'screenshot-e1m2.png');
         UPDATE things SET st = 'pain', st_tics = 99, st_len = 99, frame = 'A' WHERE id = :id;   -- (hold still for the photo)
       END`);
     await shoot(map, 'screenshot-spectre.png');
+    // the same view, invulnerable: COLORMAP 32 on everything but the sky
+    await db.exec('UPDATE player SET invuln_tics = 1000');
+    await shoot(map, 'screenshot-invuln.png');
+    await db.exec('UPDATE player SET invuln_tics = 0');
     break;
   }
 }

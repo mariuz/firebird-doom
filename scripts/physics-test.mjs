@@ -547,6 +547,29 @@ if (sky) {
     assert(worn.INVIS_TICS === 0, `it wears off (${worn.INVIS_TICS} tics left)`);
     await db.exec(`DELETE FROM things WHERE id = ${shooter} OR thing_type IN (9010, 9011)`);
     await db.exec('UPDATE player SET health = 100');
+
+    // invulnerability: 1050 tics in which nothing but a telefrag hurts
+    await db.exec(`DELETE FROM sound_events`);
+    await spawn(2022, pl.X, pl.Y);
+    const inv = (await tic()).rows[0];
+    assert(inv.INVULN_TICS > 1040 && inv.INVULN_TICS <= 1050, `the invulnerability sphere: ${inv.INVULN_TICS} tics of it`);
+    await db.exec('UPDATE player SET health = 100, armor = 0, damage_count = 0');
+    await db.exec('EXECUTE PROCEDURE damage_player(80)');
+    const brute = await placeMon(3002, 40, `, angle = ${dir + Math.PI}`);
+    for (let i = 0; i < 40; i++) {
+      await db.exec(`UPDATE things SET st = 'attack', st_len = 24, st_tics = 8, hp = 1000 WHERE id = ${brute}`);
+      await tic();
+    }
+    const unhurt = await one('SELECT health, damage_count FROM player');
+    assert(unhurt.HEALTH === 100 && unhurt.DAMAGE_COUNT === 0, `…shrugs off a hit for 80 and a demon's bites (health ${unhurt.HEALTH})`);
+    await db.exec(`DELETE FROM things WHERE id = ${brute}`);
+    await db.exec('EXECUTE PROCEDURE damage_player(10000)');
+    assert((await one('SELECT dead FROM player')).DEAD === 1, '…but not a telefrag (10000)');
+    await db.exec('UPDATE player SET dead = 0, health = 100, msg_tics = 0, invuln_tics = 3');
+    const over = (await tic(5)).rows[0];
+    await db.exec('EXECUTE PROCEDURE damage_player(10)');
+    assert(over.INVULN_TICS === 0 && (await one('SELECT health FROM player')).HEALTH === 90, 'and once it wears off, damage hurts again');
+    await db.exec('UPDATE player SET health = 100, damage_count = 0');
   } else console.log('(no open run from the player start for the infighting tests)');
 }
 

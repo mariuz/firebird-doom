@@ -14,7 +14,7 @@ keyboard and paints the rows Firebird returns.
 |---|---|
 | ![Two monsters, sprites picked and projected by FRAME_SPRITES](docs/screenshot-monster.png) | ![E1M2: pillars, steps and a lit doorway](docs/screenshot-e1m2.png) |
 | ![Phase 2 MAP11: Commander Keen hanging in his alcove](docs/screenshot-keen.png) | ![Phase 2 MAP30: the Icon of Sin's brain](docs/screenshot-icon.png) |
-| ![A spectre in E1M2: a shimmer of fuzz, darker than what's behind it](docs/screenshot-spectre.png) | |
+| ![A spectre in E1M2: a shimmer of fuzz, darker than what's behind it](docs/screenshot-spectre.png) | ![The same view, invulnerable: COLORMAP 32, the inverse greys](docs/screenshot-invuln.png) |
 
 <sub>These screenshots come from `npm run screenshots`, which runs the same SQL and
 rasteriser as the page, headless in Node.</sub>
@@ -149,6 +149,14 @@ any `MF_SHADOW` target, which includes a spectre they are fighting. `A_FaceTarge
 soul's charge goes astray. `P_SpawnMissile` sends projectiles up to 22.5° off. Melee attacks
 still land. At 280 units a zombieman hits about 65% of the time when it can see you, and about
 15% when you're partially invisible.
+
+### Invulnerability
+
+The invulnerability sphere gives 30 seconds (`INVULNTICS`, 1050 tics in `PLAYER.INVULN_TICS`).
+`DAMAGE_PLAYER` ignores every hit below 10000, so a telefrag still kills. While it lasts, the
+view uses a fixed colormap, as DOOM's `R_SetupFrame` does. `COLORMAP` 32, the inverse greys,
+replaces every light level on walls, flats, sprites and your weapon, flickering off in the last
+four seconds. The sky stays in colour, as in vanilla, and the status bar shows the god face.
 
 ### Sound and music
 

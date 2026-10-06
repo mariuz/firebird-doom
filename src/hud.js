@@ -32,6 +32,7 @@ export function drawStatusBar(renderer, hud, palette) {
   const band = Math.min(4, Math.floor((100 - Math.min(100, hud.HEALTH)) / 20));
   let face = `STFST${band}${[0, 1, 2, 1][(hud.TIC >> 4) & 3]}`;
   if (hud.DEAD) face = 'STFDEAD0';
+  else if (hud.INVULN_TICS > 0) face = 'STFGOD0';                  // ST_GODFACE
   else if (hud.DAMAGE_COUNT > 10) face = `STFOUCH${band}`;
   else if (hud.ATTACK_TICS > 0 && hud.WEAPON > 1) face = `STFKILL${band}`;
   renderer.patch(renderer.pictureByName(face) ?? renderer.pictureByName(`STFST${band}0`), 143, 168, pb);
@@ -107,6 +108,8 @@ export function drawWeapon(renderer, hud, palette) {
   // last four seconds (pw_invisibility > 4*32 || & 8)
   const inv = hud.INVIS_TICS ?? 0;
   const draw = inv > 4 * 32 || (inv & 8) ? renderer.patchFuzz.bind(renderer) : renderer.patch.bind(renderer);
-  if (flash) draw(renderer.pictureByName(flash), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)), pb, 0);
-  draw(renderer.pictureByName(gun), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)), pb, 0);
+  // …and invulnerable, it takes the inverse colormap with the rest of the view
+  const cmap = renderer.fixedCm ?? 0;
+  if (flash) draw(renderer.pictureByName(flash), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)), pb, cmap);
+  draw(renderer.pictureByName(gun), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)), pb, cmap);
 }

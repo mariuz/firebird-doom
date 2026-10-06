@@ -275,12 +275,15 @@ END^
 
 CREATE OR ALTER PROCEDURE damage_player (dmg INTEGER)
 AS
+DECLARE invuln INTEGER;
 DECLARE arm INTEGER;
 DECLARE saved INTEGER;
 DECLARE is_dead SMALLINT;
 BEGIN
-  SELECT armor, dead FROM player WHERE id = 1 INTO arm, is_dead;
+  SELECT armor, dead, invuln_tics FROM player WHERE id = 1 INTO arm, is_dead, invuln;
   IF (is_dead = 1 OR COALESCE(dmg, 0) <= 0) THEN EXIT;
+  -- pw_invulnerability: nothing short of a telefrag (10000) gets through
+  IF (invuln > 0 AND dmg < 10000) THEN EXIT;
   saved = IIF(arm > 0, MINVALUE(arm, dmg / 3), 0);
   UPDATE player
      SET armor = armor - :saved,
@@ -1524,10 +1527,11 @@ BEGIN
              weapon = :weapon, items = items + 1, bonus_count = 6,
              keycards = IIF(:pk = 'key', BIN_OR(keycards, :amt), keycards),
              invis_tics = IIF(:pk = 'invis', :amt, invis_tics),
+             invuln_tics = IIF(:pk = 'invuln', :amt, invuln_tics),
              msg = 'Picked up ' || :lbl || '.', msg_tics = 70
        WHERE id = 1;
       EXECUTE PROCEDURE play_sound(CASE WHEN pk IN ('shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'chainsaw', 'ssg') THEN 'DSWPNUP'
-                                        WHEN pk IN ('none', 'mega', 'invis') THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
+                                        WHEN pk IN ('none', 'mega', 'invis', 'invuln') THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
     END
   END
 END^
@@ -2429,7 +2433,7 @@ RETURNS (
   kills INTEGER, total_kills INTEGER, items INTEGER, total_items INTEGER,
   secrets INTEGER, total_secrets INTEGER,
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
-  sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER)
+  sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER)
 AS
 DECLARE i INTEGER = 0;
 BEGIN
@@ -2447,7 +2451,8 @@ BEGIN
        SET damage_count = MAXVALUE(0, p.damage_count - 1),
            bonus_count = MAXVALUE(0, p.bonus_count - 1),
            msg_tics = MAXVALUE(0, p.msg_tics - 1),
-           invis_tics = MAXVALUE(0, p.invis_tics - 1)
+           invis_tics = MAXVALUE(0, p.invis_tics - 1),
+           invuln_tics = MAXVALUE(0, p.invuln_tics - 1)
      WHERE p.id = 1;
     i = i + 1;
   END
@@ -2456,7 +2461,7 @@ BEGIN
          p.max_bullets, p.max_shells, p.max_rockets, p.max_cells,
          p.attack_tics, p.attack_len, p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
          p.dead, g.exit_kind, p.kills, g.total_kills, p.items, g.total_items, p.secrets, g.total_secrets,
-         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics
+         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics
     FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g
    WHERE p.id = 1 AND g.id = 1
     INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards,
@@ -2464,7 +2469,7 @@ BEGIN
          max_bullets, max_shells, max_rockets, max_cells,
          attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind,
          kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z,
-         sides_rev, map_name, invis_tics;
+         sides_rev, map_name, invis_tics, invuln_tics;
   SUSPEND;
 END^
 
@@ -2628,7 +2633,7 @@ BEGIN
   UPDATE player
      SET thing_id = (SELECT MAX(id) FROM things WHERE kind = 'player'),
          keycards = 0, kills = 0, items = 0, secrets = 0, dead = 0, attack_tics = 0,
-         damage_count = 0, bonus_count = 0, view_h = 41, use_down = 0, invis_tics = 0,
+         damage_count = 0, bonus_count = 0, view_h = 41, use_down = 0, invis_tics = 0, invuln_tics = 0,
          msg = :map_name, msg_tics = 105
    WHERE id = 1;
   UPDATE player p SET view_z = (SELECT z FROM things t WHERE t.id = p.thing_id) + 41 WHERE id = 1;

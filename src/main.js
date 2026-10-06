@@ -272,7 +272,10 @@ async function frame() {
     map.sectors = new Map(sectors.map((r) => [r[0], { floor: r[1], ceil: r[2], floorFlat: r[3], ceilFlat: r[4], light: r[5], sky: r[6] === 1 }]));
     const palette = hud.DAMAGE_COUNT ? Math.min(8, (hud.DAMAGE_COUNT + 7) >> 3)
       : hud.BONUS_COUNT ? Math.min(12, 8 + ((hud.BONUS_COUNT + 7) >> 3)) : 0;
-    renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette }, walls, sprites, map);
+    // invulnerable: the inverse colormap, flickering off in the last four seconds
+    const fixedColormap = hud.INVULN_TICS > 4 * 32 || (hud.INVULN_TICS & 8) ? 32 : null;
+    renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette, fixedColormap },
+      walls, sprites, map);
     renderer.composeView();
     if (!hud.DEAD) drawWeapon(renderer, hud, palette);
     drawStatusBar(renderer, hud, palette);
