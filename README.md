@@ -43,6 +43,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_CheckSight` | `CHECK_SIGHT()` walks the blockmap cells along the sight line |
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `MONSTERS_THINK` |
+| `A_Tracer` (revenant), `A_FatAttack1/2/3` (mancubus) | homing and volleys in `MONSTERS_THINK`, `MONSTER_MISSILE` |
 | `A_BossDeath`, `A_KeenDie` | `BOSS_DEATH`, `KEEN_DIE` |
 | `A_BrainSpit`, `A_SpawnFly`, `A_BrainScream` (the Icon of Sin) | the `shooter`, `cube` and `brain` kinds in `MONSTERS_THINK` |
 | `MF_SPAWNCEILING` (hanging bodies, Commander Keen) | `THING_TYPES.HANG`, placed in `INIT_MAP` |
@@ -211,10 +212,11 @@ GitHub Pages. Pull requests run everything except the deploy.
 ## Simplifications
 
 Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
-Projectiles fly flat, and there are no crushers. The DOOM II monsters (arch-vile, revenant,
-mancubus, arachnotron, pain elemental, SS) and the two bosses reuse the existing attack kinds:
-the arch-vile's fire is a hitscan, revenant missiles don't home, and the mancubus fires one
-volley. Music is an approximation of OPL2
+Projectiles fly flat, and there are no crushers. Most DOOM II monsters reuse the existing
+attack kinds. Two are faithful: revenant missiles home like `A_Tracer` (turning up to 16.875° every
+4 tics and trailing smoke), and the mancubus fires DOOM's three volleys of two fireballs
+(`A_FatAttack1/2/3`). The arch-vile's fire is still an instant hit, and the revenant has no
+punch. Music is an approximation of OPL2
 FM synthesis, not a cycle-exact emulator.
 Large maps with many monsters awake at once can still drop below 10 fps. The *Low* detail setting (160
 columns, like DOOM's own) halves the render cost.

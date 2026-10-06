@@ -1246,6 +1246,21 @@ BEGIN
   END
 END^
 
+-- P_SpawnMissile: a monster's projectile, from just in front of it at
+-- chest height, flying along ANG.
+CREATE OR ALTER PROCEDURE monster_missile (
+  owner INTEGER, mtype INTEGER, sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION,
+  rad DOUBLE PRECISION, ang DOUBLE PRECISION)
+AS
+DECLARE mid INTEGER;
+DECLARE spd DOUBLE PRECISION;
+BEGIN
+  SELECT speed FROM thing_types WHERE thing_type = :mtype INTO spd;
+  EXECUTE PROCEDURE spawn_thing(mtype, sx + COS(ang) * (rad + 8), sy + SIN(ang) * (rad + 8), sz + 32, ang)
+    RETURNING_VALUES mid;
+  UPDATE things t SET momx = COS(:ang) * :spd, momy = SIN(:ang) * :spd, owner_id = :owner WHERE t.id = :mid;
+END^
+
 -- A_BossDeath: when the last of a boss type dies, some maps open up or end.
 CREATE OR ALTER PROCEDURE boss_death (ttype INTEGER)
 AS
@@ -1457,6 +1472,19 @@ BEGIN
       END
       ELSE
       BEGIN
+        -- A_Tracer: every 4 tics a revenant's missile turns towards the player
+        -- by at most TRACEANGLE (16.875°) and leaves a puff of smoke
+        IF (ttype = 9006 AND MOD(tic, 4) = 0 AND pdead = 0) THEN
+        BEGIN
+          a0 = ATAN2(py - y, px - x) - ang;
+          a0 = a0 - 2 * PI() * FLOOR((a0 + PI()) / (2 * PI()));     -- into [-π, π)
+          IF (ABS(a0) <= 0.29452e0) THEN ang = ang + a0;
+          ELSE ang = ang + SIGN(a0) * 0.29452e0;
+          momx = COS(ang) * spd;
+          momy = SIN(ang) * spd;
+          UPDATE things t SET momx = :momx, momy = :momy WHERE t.id = :id;
+          EXECUTE PROCEDURE spawn_thing(9010, x - momx, y - momy, z, 0) RETURNING_VALUES mid;
+        END
         nx = x + momx;
         ny = y + momy;
         frame = SUBSTRING(walk_fr FROM 1 + MOD(tic / 4, CHAR_LENGTH(walk_fr)) FOR 1);
@@ -1549,7 +1577,19 @@ BEGIN
       ang = ATAN2(py - y, px - x);
       idx = MINVALUE(CHAR_LENGTH(atk_fr) - 1, (st_len - st_tics) / 8);
       frame = SUBSTRING(atk_fr FROM 1 + idx FOR 1);
-      IF (st_tics = 7 AND pdead = 0) THEN
+      -- A_FatAttack1/2/3: the mancubus fires three volleys of two fireballs,
+      -- as each "H" frame of its GHI GHI GHI G attack begins. FATSPREAD is
+      -- 11.25°: aimed + 1 spread, aimed − 2 spreads, then ± half a spread.
+      IF (ttype = 67 AND pdead = 0 AND st_len - st_tics IN (8, 32, 56)) THEN
+      BEGIN
+        n = (st_len - st_tics - 8) / 24;                        -- volley 0, 1, 2
+        EXECUTE PROCEDURE play_sound('DSFIRSHT', id, x, y);
+        EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad,
+          ang + CASE n WHEN 2 THEN -0.09817e0 ELSE 0 END);
+        EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad,
+          ang + CASE n WHEN 0 THEN 0.19635e0 WHEN 1 THEN -0.39270e0 ELSE 0.09817e0 END);
+      END
+      IF (st_tics = 7 AND pdead = 0 AND ttype <> 67) THEN
       BEGIN
         melee_range = 60 + rad / 2;
         EXECUTE PROCEDURE play_sound(IIF(atk_kind = 'missile' AND dist < melee_range, 'DSCLAW', atk_snd), id, x, y);
@@ -1574,13 +1614,7 @@ BEGIN
         ELSE IF (atk_kind = 'missile' AND NOT (missile_type = 3006 AND
                  (SELECT COUNT(*) FROM things s WHERE s.thing_type = 3006 AND s.st NOT IN ('dying', 'dead')) >= 20)) THEN
         BEGIN
-          EXECUTE PROCEDURE spawn_thing(missile_type, x + COS(ang) * (rad + 8), y + SIN(ang) * (rad + 8), z + 32, ang)
-            RETURNING_VALUES mid;
-          UPDATE things t
-             SET momx = COS(:ang) * (SELECT speed FROM thing_types WHERE thing_type = t.thing_type),
-                 momy = SIN(:ang) * (SELECT speed FROM thing_types WHERE thing_type = t.thing_type),
-                 owner_id = :id
-           WHERE t.id = :mid;
+          EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad, ang);
         END
       END
       IF (st_tics <= 0) THEN
@@ -1611,6 +1645,7 @@ BEGIN
           st_tics = st_len;
           frame = SUBSTRING(atk_fr FROM 1 FOR 1);
           ang = ATAN2(py - y, px - x);
+          IF (ttype = 67) THEN EXECUTE PROCEDURE play_sound('DSMANATK', id, x, y);
         END
         ELSE IF (dist > melee_range - 8) THEN
         BEGIN

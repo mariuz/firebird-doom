@@ -100,6 +100,90 @@ if (iconMap && wad.lump('BBRNA0')) {
   assert((await one('SELECT exit_kind FROM game')).EXIT_KIND === 1, `${iconMap}: killing the brain ends the game`);
 } else console.log('(no Icon of Sin in this WAD)');
 
+// ── revenant tracers and the mancubus's three volleys ──────────────────
+if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) => f.sprite === 'FATT')) {
+  let p;
+  /** An open spot at distance d from the player that can see it. */
+  async function openSpot(d) {
+    for (let k = 0; k < 32; k++) {
+      const a = (k * Math.PI) / 16;
+      const x = p.X + Math.cos(a) * d;
+      const y = p.Y + Math.sin(a) * d;
+      const r = (await db.query(`EXECUTE BLOCK RETURNS (ok SMALLINT, fz DOUBLE PRECISION, seen SMALLINT) AS
+          DECLARE cz DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION; DECLARE sec INTEGER;
+          BEGIN
+            EXECUTE PROCEDURE check_position(-1, ${x}, ${y}, (SELECT floor_h FROM sectors WHERE id = sector_at(${x}, ${y})), 48, 64, 1)
+              RETURNING_VALUES ok, fz, cz, dz, sec;
+            seen = check_sight(${x}, ${y}, fz + 40, ${p.X}, ${p.Y}, ${p.Z} + 40);
+            SUSPEND;
+          END`)).rows[0];
+      if (r.OK === 1 && r.SEEN === 1 && Math.abs(r.FZ - p.Z) < 24) return { x, y, z: r.FZ, a };
+    }
+    return null;
+  }
+  // find a map whose start has room: a spot 400 units out for a mancubus
+  let s2 = null;
+  for (const name of maps.slice(0, 12)) {
+    await loadMap(db, wad, res, name);
+    await godMode();
+    await db.exec(`UPDATE things SET hp = 1000000, st = 'dead' WHERE kind = 'monster'`); // keep the room quiet
+    p = await one(`SELECT t.x, t.y, t.z FROM things t WHERE t.kind = 'player'`);
+    if ((s2 = await openSpot(400))) { console.log(`(volley and tracer tests on ${name})`); break; }
+  }
+  const norm = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+  // a revenant missile launched 60° off target turns 16.875° per update, then hits
+  if (s2) {
+    const fire = async (off) => {
+      const bearing = Math.atan2(p.Y - s2.y, p.X - s2.x);
+      const heading = bearing + off;
+      await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
+          EXECUTE PROCEDURE spawn_thing(9006, ${s2.x}, ${s2.y}, ${s2.z + 32}, ${heading}) RETURNING_VALUES id;
+          UPDATE things SET momx = ${Math.cos(heading) * 10}, momy = ${Math.sin(heading) * 10} WHERE id = :id;
+        END`);
+    };
+    const err = (m) => Math.abs(norm(Math.atan2(p.Y - m.Y, p.X - m.X) - m.ANGLE));
+    await fire(Math.PI / 3);
+    const turns = [];
+    let last = null;
+    for (let i = 0; i < 9; i++) {
+      await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
+      const m = await one(`SELECT x, y, angle FROM things WHERE thing_type = 9006 AND st = 'fly'`);
+      if (!m) break;
+      if (last !== null && Math.abs(m.ANGLE - last) > 1e-6) turns.push(Math.abs(norm(m.ANGLE - last)) * 180 / Math.PI);
+      last = m.ANGLE;
+    }
+    assert(turns.length >= 1 && turns.every((d) => Math.abs(d - 16.875) < 0.01),
+      `revenant missile turns TRACEANGLE per update (${turns.map((d) => d.toFixed(3)).join('°, ')}°)`);
+    await db.exec("DELETE FROM things WHERE thing_type IN (9006, 9010)");
+    const hp0 = (await one('SELECT health FROM player')).HEALTH;
+    await fire(Math.PI / 6);
+    for (let i = 0; i < 60; i++) await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
+    const hp1 = (await one('SELECT health FROM player')).HEALTH;
+    assert(hp1 < hp0, `a revenant missile 30° off still finds the player (${hp0 - hp1} damage)`);
+  } else console.log('(no open spot for the revenant test)');
+
+  // a mancubus attack: three volleys, six fireballs, DOOM's spread
+  if (s2) {
+    await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
+        EXECUTE PROCEDURE spawn_thing(67, ${s2.x}, ${s2.y}, ${s2.z}, 0) RETURNING_VALUES id;
+        UPDATE things SET st = 'attack', st_len = 80, st_tics = 80, reaction = 0 WHERE id = :id;
+      END`);
+    const aim = Math.atan2(p.Y - s2.y, p.X - s2.x);
+    const seen = new Map();
+    for (let i = 0; i < 82; i++) {
+      await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
+      for (const m of (await db.query(`SELECT id, angle FROM things WHERE thing_type = 9007`)).rows) {
+        if (!seen.has(m.ID)) seen.set(m.ID, Math.round((norm(m.ANGLE - aim) * 180) / Math.PI * 10) / 10);
+      }
+    }
+    const offsets = [...seen.values()].sort((a, b) => a - b);
+    const want = [-22.5, -5.6, 0, 0, 5.6, 11.3];
+    assert(offsets.length === 6 && offsets.every((o, i) => Math.abs(o - want[i]) < 0.3),
+      `mancubus fires 3 volleys of 2 (offsets ${offsets.join(', ')}°; DOOM: ${want.join(', ')}°)`);
+  } else console.log('(no open spot for the mancubus test)');
+}
+
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'specials ok');
 process.exit(failures ? 1 : 0);
