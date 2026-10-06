@@ -81,7 +81,7 @@ export const THING_TYPES = [
   I(40, 'BSKU', 'key', 1, { walk: 'AB' }), I(39, 'YSKU', 'key', 2, { walk: 'AB' }), I(38, 'RSKU', 'key', 4, { walk: 'AB' }),
   I(2023, 'PSTR', 'health', 100, { bright: 1 }), I(2026, 'PMAP', 'none', 0, { walk: 'ABCDCB', bright: 1 }),
   I(2022, 'PINV', 'invuln', 1050, { walk: 'ABCD', bright: 1 }), I(2024, 'PINS', 'invis', 2100, { walk: 'ABCD', bright: 1 }),
-  I(2025, 'SUIT', 'none', 0, { bright: 1 }), I(2045, 'PVIS', 'none', 0, { walk: 'AB', bright: 1 }),
+  I(2025, 'SUIT', 'suit', 2100, { bright: 1 }), I(2045, 'PVIS', 'goggles', 4200, { walk: 'AB', bright: 1 }),
   I(2003, 'LAUN', 'launcher', 2), I(2004, 'PLAS', 'plasma', 40), I(2005, 'CSAW', 'chainsaw', 0), I(2006, 'BFUG', 'bfg', 40),
   I(2010, 'ROCK', 'rockets', 1), I(2046, 'BROK', 'rockets', 5), I(17, 'CELP', 'cells', 100), I(2047, 'CELL', 'cells', 20),
 

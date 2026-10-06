@@ -158,6 +158,16 @@ view uses a fixed colormap, as DOOM's `R_SetupFrame` does. `COLORMAP` 32, the in
 replaces every light level on walls, flats, sprites and your weapon, flickering off in the last
 four seconds. The sky stays in colour, as in vanilla, and the status bar shows the god face.
 
+### Radiation suit and light amplification goggles
+
+The radiation suit (`pw_ironfeet`, 2100 tics in `PLAYER.IRON_TICS`) keeps out nukage and slime
+(sector specials 7 and 5). The worst floors (4 and 16) still get through 5 times in 256, and
+E1M8's exit floor (11) hurts regardless, as in `P_PlayerInSpecialSector`. While you wear it, the
+screen takes palette 13 (`RADIATIONPAL`), the green tint, unless a pain or pickup flash is
+showing (`ST_doPaletteStuff`). The light amplification goggles (`pw_infrared`, 4200 tics in
+`PLAYER.INFRA_TICS`) set fixed colormap 1, nearly full bright everywhere. Invulnerability's
+inverse greys win when both are on. Both effects flicker off in their last four seconds.
+
 ### Sound and music
 
 The simulation decides what you hear. `PLAY_SOUND` inserts a row into `SOUND_EVENTS` (sound

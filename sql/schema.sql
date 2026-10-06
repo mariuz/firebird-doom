@@ -287,7 +287,9 @@ CREATE TABLE player (
   use_down     SMALLINT DEFAULT 0 NOT NULL,
   dead         SMALLINT DEFAULT 0 NOT NULL,
   invis_tics   INTEGER DEFAULT 0 NOT NULL,   -- pw_invisibility: tics of partial invisibility left
-  invuln_tics  INTEGER DEFAULT 0 NOT NULL    -- pw_invulnerability: tics of invulnerability left
+  invuln_tics  INTEGER DEFAULT 0 NOT NULL,   -- pw_invulnerability: tics of invulnerability left
+  iron_tics    INTEGER DEFAULT 0 NOT NULL,   -- pw_ironfeet: the radiation suit
+  infra_tics   INTEGER DEFAULT 0 NOT NULL    -- pw_infrared: light amplification goggles
 );
 
 -- S_StartSound: every sound the simulation makes, for the browser to play.

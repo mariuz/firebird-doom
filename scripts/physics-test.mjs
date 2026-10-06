@@ -573,6 +573,34 @@ if (sky) {
   } else console.log('(no open run from the player start for the infighting tests)');
 }
 
+// ── the radiation suit and the light amplification goggles ─────────────
+const slimeMap = maps.find((m) => wad.map(m).sectors.some((s) => s.special === 5 || s.special === 7));
+if (slimeMap) {
+  await loadMap(db, wad, res, slimeMap);
+  await quiet();
+  const sp = await one(`SELECT t.x, t.y FROM things t WHERE t.kind = 'player'`);
+  await spawn(2025, sp.X, sp.Y);
+  await spawn(2045, sp.X, sp.Y);
+  const got = (await tic()).rows[0];
+  assert(got.IRON_TICS > 2090 && got.IRON_TICS <= 2100 && got.INFRA_TICS > 4190 && got.INFRA_TICS <= 4200,
+    `the radiation suit (${got.IRON_TICS} tics) and the goggles (${got.INFRA_TICS} tics)`);
+  // stand in the slime: hurt every 32 tics without the suit, never with it
+  const sec = await one(`SELECT FIRST 1 s.id, s.floor_h, s.special FROM sectors s WHERE s.special IN (5, 7)
+                          ORDER BY (SELECT COUNT(*) FROM segs g WHERE g.front_sector = s.id) DESC`);
+  const at = await inside(sec.ID);
+  const soak = async (iron) => {
+    await db.exec(`UPDATE player SET health = 100, armor = 0, iron_tics = ${iron}, damage_count = 0`);
+    await db.exec(`UPDATE things SET x = ${at.X}, y = ${at.Y}, z = ${sec.FLOOR_H}, momx = 0, momy = 0,
+                   sector_id = sector_at(${at.X}, ${at.Y}) WHERE kind = 'player'`);
+    await tic(70);
+    return 100 - (await one('SELECT health FROM player')).HEALTH;
+  };
+  const bare = await soak(0);
+  const suited = await soak(2000);
+  assert(bare > 0 && suited === 0, `sector ${sec.ID} (special ${sec.SPECIAL}): ${bare} damage in 70 tics bare, ${suited} in the suit`);
+  await db.exec('UPDATE player SET health = 100, iron_tics = 0, infra_tics = 0');
+} else console.log('(no nukage or slime in this WAD)');
+
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'physics ok');
 process.exit(failures ? 1 : 0);

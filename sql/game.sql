@@ -1089,6 +1089,7 @@ CREATE OR ALTER PROCEDURE player_think (
   fwd DOUBLE PRECISION, side DOUBLE PRECISION, turn DOUBLE PRECISION,
   fire SMALLINT, use_key SMALLINT, weapon_sel SMALLINT, run SMALLINT, tic INTEGER)
 AS
+DECLARE iron INTEGER;
 DECLARE tid INTEGER;
 DECLARE x DOUBLE PRECISION;
 DECLARE y DOUBLE PRECISION;
@@ -1279,7 +1280,13 @@ BEGIN
     UPDATE player SET secrets = secrets + 1, msg = 'A secret is revealed!', msg_tics = 70 WHERE id = 1;
   END
   ELSE IF (sspec IN (4, 5, 7, 11, 16) AND z <= fz AND MOD(tic, 32) = 0) THEN
-    EXECUTE PROCEDURE damage_player(CASE sspec WHEN 7 THEN 5 WHEN 5 THEN 10 ELSE 20 END);
+  BEGIN
+    -- pw_ironfeet: the radiation suit keeps out nukage and slime; the worst
+    -- floors (4, 16) still get through 5 times in 256, and E1M8's (11) always
+    SELECT p.iron_tics FROM player p WHERE p.id = 1 INTO iron;
+    IF (iron = 0 OR sspec = 11 OR (sspec IN (4, 16) AND RAND() * 256 < 5)) THEN
+      EXECUTE PROCEDURE damage_player(CASE sspec WHEN 7 THEN 5 WHEN 5 THEN 10 ELSE 20 END);
+  END
 
   -- P_UseLines: the nearest line within 64 units straight ahead
   IF (use_key = 1 AND use_down = 0) THEN
@@ -1528,10 +1535,12 @@ BEGIN
              keycards = IIF(:pk = 'key', BIN_OR(keycards, :amt), keycards),
              invis_tics = IIF(:pk = 'invis', :amt, invis_tics),
              invuln_tics = IIF(:pk = 'invuln', :amt, invuln_tics),
+             iron_tics = IIF(:pk = 'suit', :amt, iron_tics),
+             infra_tics = IIF(:pk = 'goggles', :amt, infra_tics),
              msg = 'Picked up ' || :lbl || '.', msg_tics = 70
        WHERE id = 1;
       EXECUTE PROCEDURE play_sound(CASE WHEN pk IN ('shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'chainsaw', 'ssg') THEN 'DSWPNUP'
-                                        WHEN pk IN ('none', 'mega', 'invis', 'invuln') THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
+                                        WHEN pk IN ('none', 'mega', 'invis', 'invuln', 'suit', 'goggles') THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
     END
   END
 END^
@@ -2433,7 +2442,8 @@ RETURNS (
   kills INTEGER, total_kills INTEGER, items INTEGER, total_items INTEGER,
   secrets INTEGER, total_secrets INTEGER,
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
-  sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER)
+  sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER,
+  iron_tics INTEGER, infra_tics INTEGER)
 AS
 DECLARE i INTEGER = 0;
 BEGIN
@@ -2452,7 +2462,9 @@ BEGIN
            bonus_count = MAXVALUE(0, p.bonus_count - 1),
            msg_tics = MAXVALUE(0, p.msg_tics - 1),
            invis_tics = MAXVALUE(0, p.invis_tics - 1),
-           invuln_tics = MAXVALUE(0, p.invuln_tics - 1)
+           invuln_tics = MAXVALUE(0, p.invuln_tics - 1),
+           iron_tics = MAXVALUE(0, p.iron_tics - 1),
+           infra_tics = MAXVALUE(0, p.infra_tics - 1)
      WHERE p.id = 1;
     i = i + 1;
   END
@@ -2461,7 +2473,7 @@ BEGIN
          p.max_bullets, p.max_shells, p.max_rockets, p.max_cells,
          p.attack_tics, p.attack_len, p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
          p.dead, g.exit_kind, p.kills, g.total_kills, p.items, g.total_items, p.secrets, g.total_secrets,
-         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics
+         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics, p.iron_tics, p.infra_tics
     FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g
    WHERE p.id = 1 AND g.id = 1
     INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards,
@@ -2469,7 +2481,7 @@ BEGIN
          max_bullets, max_shells, max_rockets, max_cells,
          attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind,
          kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z,
-         sides_rev, map_name, invis_tics, invuln_tics;
+         sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics;
   SUSPEND;
 END^
 
@@ -2633,7 +2645,7 @@ BEGIN
   UPDATE player
      SET thing_id = (SELECT MAX(id) FROM things WHERE kind = 'player'),
          keycards = 0, kills = 0, items = 0, secrets = 0, dead = 0, attack_tics = 0,
-         damage_count = 0, bonus_count = 0, view_h = 41, use_down = 0, invis_tics = 0, invuln_tics = 0,
+         damage_count = 0, bonus_count = 0, view_h = 41, use_down = 0, invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0,
          msg = :map_name, msg_tics = 105
    WHERE id = 1;
   UPDATE player p SET view_z = (SELECT z FROM things t WHERE t.id = p.thing_id) + 41 WHERE id = 1;

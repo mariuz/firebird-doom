@@ -270,10 +270,14 @@ async function frame() {
 
     t = performance.now();
     map.sectors = new Map(sectors.map((r) => [r[0], { floor: r[1], ceil: r[2], floorFlat: r[3], ceilFlat: r[4], light: r[5], sky: r[6] === 1 }]));
+    // P_PlayerThink's fixedcolormap: invulnerable, the inverse greys (32);
+    // with the goggles, nearly full bright (1) – both flicker off in the last four seconds
+    const blink = (n) => n > 4 * 32 || (n & 8);
+    const fixedColormap = blink(hud.INVULN_TICS) ? 32 : blink(hud.INFRA_TICS) ? 1 : null;
+    // ST_doPaletteStuff: pain red, else pickup gold, else the radiation suit's green (13)
     const palette = hud.DAMAGE_COUNT ? Math.min(8, (hud.DAMAGE_COUNT + 7) >> 3)
-      : hud.BONUS_COUNT ? Math.min(12, 8 + ((hud.BONUS_COUNT + 7) >> 3)) : 0;
-    // invulnerable: the inverse colormap, flickering off in the last four seconds
-    const fixedColormap = hud.INVULN_TICS > 4 * 32 || (hud.INVULN_TICS & 8) ? 32 : null;
+      : hud.BONUS_COUNT ? Math.min(12, 8 + ((hud.BONUS_COUNT + 7) >> 3))
+        : blink(hud.IRON_TICS) ? 13 : 0;
     renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette, fixedColormap },
       walls, sprites, map);
     renderer.composeView();
