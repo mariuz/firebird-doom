@@ -14,7 +14,8 @@
     "screenshots": "node scripts/screenshot.mjs",
     "test:weapons": "node scripts/weapons-test.mjs",
     "test:specials": "node scripts/specials-test.mjs",
-    "test:physics": "node scripts/physics-test.mjs"
+    "test:physics": "node scripts/physics-test.mjs",
+    "test:finale": "node scripts/finale-test.mjs"
   },
   "license": "MIT",
   "dependencies": {

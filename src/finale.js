@@ -1,0 +1,258 @@
+// finale.js – DOOM II's ending after MAP30 (f_finale.c).
+//
+// First the story text types itself out over a tiled flat (F_TextWrite) to
+// D_READ_M; once 50 tics have passed, fire or use moves on (F_Ticker). Then
+// the cast call (F_StartCast) to D_EVIL: each monster in turn walks on the
+// BOSSBACK backdrop under its name, attacks every twelve frames, and dies
+// when you press a key (F_CastResponder); after its last death frame the next
+// one comes on (F_CastTicker). The cast ends with the player and starts over,
+// as in DOOM. The words come from the WAD's DEHACKED lump (Freedoom ships its
+// own); the state machine is kept apart from the drawing so it can be tested.
+
+const TEXTSPEED = 3;     // tics per character
+const SKIP_AFTER = 50;   // F_Ticker: no skipping before this
+const WALK_TICS = 4;     // a cast member's see-state frames
+const ATTACK_TICS = 8;   // …its attack frames
+const DEATH_TICS = 5;    // …its death frames
+const LAST_TICS = 15;    // F_CastTicker: a state lasting forever holds 15 tics
+
+// castorder[], by thing type; the player is "type" 0
+const CAST = [
+  [3004, 'CC_ZOMBIE', 'Zombieman'], [9, 'CC_SHOTGUN', 'Shotgun guy'], [65, 'CC_HEAVY', 'Heavy weapon dude'],
+  [3001, 'CC_IMP', 'Imp'], [3002, 'CC_DEMON', 'Demon'], [3006, 'CC_LOST', 'Lost soul'],
+  [3005, 'CC_CACO', 'Cacodemon'], [69, 'CC_HELL', 'Hell knight'], [3003, 'CC_BARON', 'Baron of hell'],
+  [68, 'CC_ARACH', 'Arachnotron'], [71, 'CC_PAIN', 'Pain elemental'], [66, 'CC_REVEN', 'Revenant'],
+  [67, 'CC_MANCU', 'Mancubus'], [64, 'CC_ARCH', 'Arch-vile'], [7, 'CC_SPIDER', 'Spider mastermind'],
+  [16, 'CC_CYBER', 'Cyberdemon'], [0, 'CC_HERO', 'Our hero'],
+];
+const PLAYER = { sprite: 'PLAY', walk: 'ABCD', attack: 'EF', death: 'HIJKLMN', seeSnd: null, atkSnd: 'DSDSHTGN', deathSnd: 'DSPLDETH' };
+
+/**
+ * The front view (rotation 0 or 1) of a sprite frame among the WAD's lump
+ * names: in the first half of a name (SKELA1) or, mirrored, in the second
+ * (SKELA1D1 also holds frame D, flipped). → { name, flip } or null
+ */
+export function frontLump(names, sprite, frame) {
+  let flipped = null;
+  for (const n of names) {
+    if (!n.startsWith(sprite)) continue;
+    if (n[4] === frame && (n[5] === '0' || n[5] === '1')) return { name: n, flip: false };
+    if (n.length === 8 && n[6] === frame && (n[7] === '0' || n[7] === '1')) flipped ??= { name: n, flip: true };
+  }
+  return flipped;
+}
+
+/** A BEX [STRINGS] section → Map of KEY → text (\n escapes, \-continued lines). */
+export function parseDehStrings(text) {
+  const out = new Map();
+  const at = text.search(/^\[STRINGS\]/m);
+  if (at < 0) return out;
+  const lines = text.slice(at).split(/\r?\n/).slice(1);
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\[/.test(lines[i])) break;
+    const m = /^\s*([A-Za-z0-9_]+)\s*=\s?(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    let value = m[2];
+    while (value.endsWith('\\') && i + 1 < lines.length) value = value.slice(0, -1) + lines[++i].replace(/^\s+/, '');
+    out.set(m[1].toUpperCase(), value.replace(/\\n/g, '\n'));
+  }
+  return out;
+}
+
+/** The finale's clock and choices, with nothing drawn. */
+export class FinaleState {
+  /**
+   * @param text   the story text (C4TEXT)
+   * @param cast   [{ name, sprite, walk, attack, melee, death, seeSnd, atkSnd, deathSnd }]
+   * @param sound  called with a sound lump name to play
+   */
+  constructor(text, cast, sound = () => {}) {
+    this.text = text;
+    this.cast = cast;
+    this.sound = sound;
+    this.stage = 'text';
+    this.count = 0;
+  }
+
+  /** How much of the text is showing. */
+  get shown() { return Math.max(0, Math.floor((this.count - 10) / TEXTSPEED)); }
+
+  /** One tic. buttons: fire or use is held (F_Ticker skips the text on those). */
+  tick(buttons = false) {
+    this.count++;
+    if (this.stage === 'text') {
+      if (buttons && this.count > SKIP_AFTER) this.startCast();
+      return;
+    }
+    if (--this.tics > 0) return;
+    if (this.mode === 'death') {
+      if (this.frame < this.member.death.length - 1) { this.frame++; this.tics = this.frame === this.member.death.length - 1 ? LAST_TICS : DEATH_TICS; return; }
+      this.next();
+      return;
+    }
+    this.frame++;
+    this.frames++;
+    const seq = this.sequence();
+    if (this.mode !== 'see' && (this.frame >= seq.length || this.frames >= 24)) this.see();
+    else if (this.mode === 'see' && this.frames >= 12) this.attack();
+    else this.frame %= seq.length;
+    this.tics = this.mode === 'see' ? WALK_TICS : ATTACK_TICS;
+  }
+
+  /** F_CastResponder: any key kills the one on stage (once). */
+  press() {
+    if (this.stage !== 'cast' || this.mode === 'death') return;
+    this.mode = 'death';
+    this.frame = 0;
+    this.tics = this.member.death.length === 1 ? LAST_TICS : DEATH_TICS;
+    if (this.member.deathSnd) this.sound(this.member.deathSnd);
+  }
+
+  startCast() {
+    this.stage = 'cast';
+    this.castnum = -1;
+    this.melee = false;
+    this.next();
+  }
+
+  get member() { return this.cast[this.castnum]; }
+
+  /** the sprite lump frame showing now: { sprite, frame } */
+  get pose() {
+    const seq = this.mode === 'death' ? this.member.death : this.sequence();
+    return { sprite: this.member.sprite, frame: seq[Math.min(this.frame, seq.length - 1)] };
+  }
+
+  sequence() {
+    if (this.mode === 'see') return this.member.walk;
+    return this.mode === 'melee' ? this.member.melee : this.member.attack;
+  }
+
+  next() {
+    this.castnum = (this.castnum + 1) % this.cast.length;
+    if (this.member.seeSnd) this.sound(this.member.seeSnd);
+    this.see();
+    this.frame = 0;
+    this.tics = WALK_TICS;
+  }
+
+  see() {
+    this.mode = 'see';
+    this.frame = 0;
+    this.frames = 0;
+  }
+
+  attack() {
+    // castonmelee: those with both alternate; those with one use it
+    const m = this.member;
+    this.mode = (this.melee && m.melee) || !m.attack ? 'melee' : 'attack';
+    this.melee = !this.melee;
+    this.frame = 0;
+    this.frames = 0;
+    if (m.atkSnd) this.sound(m.atkSnd);
+  }
+}
+
+/** Build the cast from THING_TYPES and the WAD's strings. */
+export function buildCast(thingTypes, strings) {
+  const byType = new Map(thingTypes.map((t) => [t.type, t]));
+  return CAST.map(([type, key, fallback]) => {
+    const name = strings.get(key) ?? fallback;
+    if (type === 0) return { name, ...PLAYER, melee: null };
+    const t = byType.get(type);
+    return {
+      name, sprite: t.sprite, walk: t.walk, attack: t.attack ?? null, melee: t.meleeFr ?? null,
+      death: t.death, seeSnd: t.seeSnd ?? null, atkSnd: t.atkSnd ?? null, deathSnd: t.deathSnd ?? null,
+    };
+  });
+}
+
+/** The finale on screen: FinaleState plus F_TextWrite and F_CastDrawer. */
+export class Finale {
+  constructor(renderer, audio, wad, thingTypes) {
+    this.renderer = renderer;
+    this.audio = audio;
+    this.wad = wad;
+    const deh = wad.lump('DEHACKED');
+    const strings = deh ? parseDehStrings(new TextDecoder('latin1').decode(wad.data(deh))) : new Map();
+    this.state = new FinaleState(strings.get('C4TEXT') ?? '', buildCast(thingTypes, strings),
+      (snd) => audio.playEvents([[0, snd, 0, null, null]], { x: 0, y: 0, angle: 0 }));
+    this.flat = wad.lump('RROCK17') ? wad.data(wad.lump('RROCK17')) : null;
+    this.names = wad.lumps.map((l) => l.name);
+    this.fronts = new Map();
+    audio.playMusic('D_READ_M');
+  }
+
+  /** DOOM II only, and only with the backdrop and the words to draw it with. */
+  static available(wad, mapName) {
+    return mapName === 'MAP30' && !!wad.lump('BOSSBACK') && !!wad.lump('RROCK17');
+  }
+
+  tick(buttons) {
+    const was = this.state.stage;
+    this.state.tick(buttons);
+    if (was === 'text' && this.state.stage === 'cast') this.audio.playMusic('D_EVIL');
+  }
+
+  press() { this.state.press(); }
+
+  draw() {
+    const r = this.renderer;
+    if (this.state.stage === 'text') {
+      // F_TextWrite: the flat tiled over the whole screen, the text typed onto it
+      for (let y = 0; y < 200; y++) {
+        for (let x = 0; x < 320; x++) r.sfb[y * 320 + x] = r.lut[this.flat[((y & 63) << 6) | (x & 63)]];
+      }
+      this.write(this.state.text.slice(0, this.state.shown), 10, 10);
+    } else {
+      // F_CastDrawer: the backdrop, the name, the monster at (160, 170)
+      r.patch(r.pictureByName('BOSSBACK'), 0, 0);
+      const name = this.state.member.name.toUpperCase();
+      this.write(name, 160 - this.width(name) / 2, 180);
+      const { sprite, frame } = this.state.pose;
+      const key = sprite + frame;
+      if (!this.fronts.has(key)) this.fronts.set(key, frontLump(this.names, sprite, frame));
+      const front = this.fronts.get(key);
+      if (front) this.sprite(r.pictureByName(front.name), 160, 170, front.flip);
+    }
+    r.present();
+  }
+
+  /** V_DrawPatch / V_DrawPatchFlipped: same origin, the columns mirrored when flipped. */
+  sprite(pic, x, y, flip) {
+    if (!pic) return;
+    const r = this.renderer;
+    const x0 = x - pic.left;
+    const y0 = y - pic.top;
+    for (let px = 0; px < pic.w; px++) {
+      const sx = x0 + px;
+      if (sx < 0 || sx >= 320) continue;
+      const off = (flip ? pic.w - 1 - px : px) * pic.h;
+      for (let py = 0; py < pic.h; py++) {
+        const sy = y0 + py;
+        if (sy < 0 || sy >= 200 || !pic.alpha[off + py]) continue;
+        r.sfb[sy * 320 + sx] = r.lut[pic.pix[off + py]];
+      }
+    }
+  }
+
+  glyph(ch) {
+    const c = ch.toUpperCase().charCodeAt(0);
+    return c >= 33 && c <= 95 ? this.renderer.pictureByName(`STCFN${String(c).padStart(3, '0')}`) : null;
+  }
+
+  width(s) { return [...s].reduce((w, ch) => w + (this.glyph(ch)?.w ?? 4), 0); }
+
+  write(s, x, y) {
+    let cx = x;
+    let cy = y;
+    for (const ch of s) {
+      if (ch === '\n') { cx = 10; cy += 11; continue; }
+      const pic = this.glyph(ch);
+      if (!pic) { cx += 4; continue; }
+      if (cx + pic.w > 320) break;
+      this.renderer.patch(pic, cx, cy);
+      cx += pic.w;
+    }
+  }
+}

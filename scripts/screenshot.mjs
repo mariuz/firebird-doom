@@ -16,6 +16,8 @@ import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
 import { Renderer } from '../src/renderer.js';
 import { drawStatusBar, drawWeapon } from '../src/hud.js';
+import { Finale } from '../src/finale.js';
+import { THING_TYPES } from '../src/thinginfo.js';
 
 // the two browser APIs the renderer touches
 globalThis.ImageData ??= class {
@@ -198,6 +200,20 @@ if (!process.env.WAD && fs.existsSync(wad2Path)) {
     await db.query('SELECT * FROM doom_tic(2, 0, 0, 0, 0, 0, 0, 0)');
     await shoot(m, file);
   }
+
+  // the finale after MAP30: the story text, then the cast call
+  const fin = new Finale(renderer, { playMusic() {}, playEvents() {} }, wad2, THING_TYPES);
+  const save = (file) => {
+    fin.draw();
+    fs.writeFileSync(path.join(outDir, file), png(renderer.sfb, 320, 200, 640, 480));
+    console.log(`docs/${file}`);
+  };
+  for (let i = 0; i < 10 + fin.state.text.length * 3; i++) fin.tick(false);
+  save('screenshot-finale-text.png');
+  fin.tick(true);
+  while (fin.state.castnum < 11) { fin.press(); for (let i = 0; i < 200 && fin.state.mode === 'death'; i++) fin.tick(false); }
+  for (let i = 0; i < 6; i++) fin.tick(false);
+  save('screenshot-finale-cast.png');
 }
 
 process.exit(0);

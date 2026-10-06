@@ -14,6 +14,7 @@ keyboard and paints the rows Firebird returns.
 |---|---|
 | ![Two monsters, sprites picked and projected by FRAME_SPRITES](docs/screenshot-monster.png) | ![E1M2: pillars, steps and a lit doorway](docs/screenshot-e1m2.png) |
 | ![Phase 2 MAP11: Commander Keen hanging in his alcove](docs/screenshot-keen.png) | ![Phase 2 MAP30: the Icon of Sin's brain](docs/screenshot-icon.png) |
+| ![After MAP30: Freedoom's story text typed over the RROCK17 flat](docs/screenshot-finale-text.png) | ![The cast call: each monster on BOSSBACK under its name](docs/screenshot-finale-cast.png) |
 | ![A spectre in E1M2: a shimmer of fuzz, darker than what's behind it](docs/screenshot-spectre.png) | ![The same view, invulnerable: COLORMAP 32, the inverse greys](docs/screenshot-invuln.png) |
 
 <sub>These screenshots come from `npm run screenshots`, which runs the same SQL and
@@ -201,7 +202,21 @@ does. On DOOM I, a secret exit leads to E?M9, and E?M9 returns to the map after 
 secret exit. E?M8 carries on into the next episode, since there's no finale screen. On DOOM II,
 MAP15's secret exit leads to MAP31 and MAP31's to MAP32, and the normal exits of both secret
 levels return to MAP16. A secret exit on any other map counts as a normal one. MAP30 ends the
-game, so it's back to MAP01.
+game with the finale below. Only a WAD without the finale's pictures goes back to MAP01.
+
+### The DOOM II finale
+
+Finishing MAP30 starts DOOM II's ending ([src/finale.js](src/finale.js), after `f_finale.c`). First
+the story text types itself out a character every three tics over the tiled `RROCK17` flat, to
+`D_READ_M` (`F_TextWrite`). After 50 tics, fire or use moves on. Then the cast call (`F_StartCast`)
+plays to `D_EVIL`. Each monster in turn walks on the `BOSSBACK` backdrop under its name. It
+attacks every twelve frames, and the revenant alternates punch and missile. Press a key and it
+dies, playing its death sound and frames, then the next one comes on (`F_CastResponder`,
+`F_CastTicker`). The cast ends with the player and starts over, as in DOOM. Choosing a map
+starts a new game. The words come from the WAD's `DEHACKED` lump: Freedoom ships its own story
+text (`C4TEXT`) and cast names (`CC_*`), so none of id's text is reproduced. Sprites whose
+front view hides in the mirrored half of a lump name (`SKELA1D1` holds frame D flipped) are
+found and drawn flipped. `npm run test:finale` checks all of this without a screen.
 
 ### Cheats
 

@@ -4,8 +4,9 @@
 // exit leads to E?M9, and E?M9 returns to the map after the one with the
 // secret exit. DOOM II: MAP15's secret exit leads to MAP31 and MAP31's to
 // MAP32; the normal exits of MAP31 and MAP32 return to MAP16; a secret exit
-// anywhere else is a plain one. MAP30 ends the game (DOOM shows the finale),
-// so it's back to MAP01. A map the WAD lacks falls back to its first map.
+// anywhere else is a plain one. MAP30 ends the game: the finale (finale.js)
+// takes over, and only a WAD without one goes back to MAP01. A map the WAD
+// lacks falls back to its first map.
 
 // the map whose secret exit leads to E?M9, per episode
 const SECRET_FROM = { 1: 3, 2: 5, 3: 6, 4: 2 };

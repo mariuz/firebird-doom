@@ -71,6 +71,9 @@ jobs:
         env:
           WAD: public/wads/freedoom2.wad
 
+      - name: DOOM II finale (story text, cast call)
+        run: npm run test:finale
+
       # BSP + solidsegs must find exactly the walls brute force finds
       - name: Renderer equivalence (BSP vs brute force)
         run: npm run test:renderers -- E1M1 E1M2 E1M3

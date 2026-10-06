@@ -16,6 +16,8 @@ import { drawStatusBar, drawText, drawWeapon } from './hud.js';
 import { AM_COLORS, automapColor } from './automap.js';
 import { clevMap, idmusMap, makeCheatReader, makeParamCheatReader } from './cheats.js';
 import { nextMap } from './progress.js';
+import { Finale } from './finale.js';
+import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -45,6 +47,8 @@ const saveSettings = () => {
 };
 const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
 let showMap = false;
+let finale = null;                  // DOOM II's ending, once MAP30 is done
+let finaleKey = false;              // a key went down: F_CastResponder
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
 const iddt = makeCheatReader('iddt');
 // ST_Responder: IDDQD and IDKFA, typed any time during play
@@ -82,6 +86,7 @@ window.addEventListener('keydown', (e) => {
   if (!running) return;
   if (GAME_KEYS.has(e.code)) e.preventDefault();
   keys.add(e.code);
+  if (finale) finaleKey = true;
   if (e.code === 'Tab') showMap = !showMap;
   // AM_Responder: the automap listens for IDDT while it's open
   if (showMap && iddt(e.key)) amCheating = (amCheating + 1) % 3;
@@ -200,6 +205,7 @@ async function loadSides() {
 
 async function startMap(name, newGame) {
   running = false;
+  finale = null;
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
   await loadMap(db, wad, res, name, { skill: 3, newGame });
@@ -247,6 +253,18 @@ async function frame() {
     lastTic += tics * TIC_MS;
     if (now - lastTic > 200) lastTic = now;
 
+    if (finale) {
+      // the ending runs on its own clock: a key kills the one on stage (the
+      // key that skips the text is spent before the cast starts), fire or
+      // use held skips the text
+      const input = readInput(tics);
+      if (finaleKey) { finale.press(); finaleKey = false; }
+      for (let i = 0; i < tics; i++) finale.tick(input[4] === 1 || input[5] === 1);
+      finale.draw();
+      nextFrame();
+      return;
+    }
+
     let t = performance.now();
     hud = (await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', readInput(tics), { rowMode: 'object' })).rows[0];
     lastFrame.tic = performance.now() - t;
@@ -255,7 +273,12 @@ async function frame() {
       const kind = hud.EXIT_KIND;
       const stats = `Kills ${pct(hud.KILLS, hud.TOTAL_KILLS)}  Items ${pct(hud.ITEMS, hud.TOTAL_ITEMS)}  Secrets ${pct(hud.SECRETS, hud.TOTAL_SECRETS)}`;
       if (kind === 3) await startMap(map.name, true);
-      else {
+      else if (Finale.available(wad, map.name)) {
+        // F_StartFinale: MAP30 is the end of DOOM II
+        await db.exec('UPDATE game SET exit_kind = 0 WHERE id = 1');
+        finale = new Finale(renderer, audio, wad, THING_TYPES);
+        finaleKey = false;
+      } else {
         setStatus(`${map.name} finished — ${stats}`);
         await new Promise((r) => setTimeout(r, 1500));
         await startMap(nextMap(map.name, kind === 2, wad.mapNames()), false);
