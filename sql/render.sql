@@ -10,6 +10,10 @@
 --     4. for each column intersects the column's ray with the line, giving
 --        an exact depth and the screen y of every floor/ceiling edge.
 --
+--   RENDER_SLICES_BSP (PSQL generator, the default)
+--     the same per-column math, but driven by a front-to-back BSP walk with
+--     DOOM's solidsegs occlusion, so hidden walls are never projected.
+--
 --   RENDER_WALLS / FRAME_WALLS
 --     5. sorts each column front to back and carries the clip window down
 --        it: a slice is visible only while the opening left by everything
@@ -174,6 +178,256 @@ BEGIN
   END
 END^
 
+-- R_RenderBSPNode + R_AddLine + R_ClipSolidWallSegment.
+--
+-- Walks the BSP from the root, nearer child first, so segs come out front to
+-- back. DOOM's solidsegs list becomes COV, a string with one character per
+-- screen column: '1' once a solid wall covers that column. A seg whose
+-- columns are all covered is skipped, a child whose bounding box projects
+-- onto covered columns only is never descended into (R_CheckBBox), and the
+-- walk stops as soon as the screen is full. PSQL has no arrays, so the
+-- traversal stack is a string too: entries of 7 characters, 'N' + node to
+-- visit, or 'C' + node + side for "check that child's bounding box first".
+CREATE OR ALTER PROCEDURE render_slices_bsp
+RETURNS (
+  col INTEGER, depth DOUBLE PRECISION, u DOUBLE PRECISION, line_id INTEGER, back_view SMALLINT,
+  open_top DOUBLE PRECISION, open_bot DOUBLE PRECISION)
+AS
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE ca DOUBLE PRECISION;
+DECLARE sa DOUBLE PRECISION;
+DECLARE w DOUBLE PRECISION;
+DECLARE h DOUBLE PRECISION;
+DECLARE hw DOUBLE PRECISION;
+DECLARE hh DOUBLE PRECISION;
+DECLARE proj DOUBLE PRECISION;
+DECLARE projy DOUBLE PRECISION;
+DECLARE nz DOUBLE PRECISION;
+DECLARE fov DOUBLE PRECISION;
+DECLARE cov VARCHAR(1280);
+DECLARE stk VARCHAR(8000);
+DECLARE entry VARCHAR(7);
+DECLARE n INTEGER;
+DECLARE side_ SMALLINT;
+DECLARE nx DOUBLE PRECISION;
+DECLARE ny DOUBLE PRECISION;
+DECLARE ndx DOUBLE PRECISION;
+DECLARE ndy DOUBLE PRECISION;
+DECLARE rc INTEGER;
+DECLARE lc INTEGER;
+DECLARE bt DOUBLE PRECISION;
+DECLARE bb DOUBLE PRECISION;
+DECLARE bl DOUBLE PRECISION;
+DECLARE br DOUBLE PRECISION;
+DECLARE fcen DOUBLE PRECISION;
+DECLARE rcen DOUBLE PRECISION;
+DECLARE ac DOUBLE PRECISION;
+DECLARE ai DOUBLE PRECISION;
+DECLARE amin DOUBLE PRECISION;
+DECLARE amax DOUBLE PRECISION;
+DECLARE corner INTEGER;
+DECLARE cxp DOUBLE PRECISION;
+DECLARE cyp DOUBLE PRECISION;
+DECLARE visible SMALLINT;
+DECLARE first_seg INTEGER;
+DECLARE seg_count INTEGER;
+DECLARE sx1 DOUBLE PRECISION;
+DECLARE sy1 DOUBLE PRECISION;
+DECLARE sx2 DOUBLE PRECISION;
+DECLARE sy2 DOUBLE PRECISION;
+DECLARE slen DOUBLE PRECISION;
+DECLARE sxoff DOUBLE PRECISION;
+DECLARE fsec INTEGER;
+DECLARE bsec INTEGER;
+DECLARE f1 DOUBLE PRECISION;
+DECLARE r1 DOUBLE PRECISION;
+DECLARE f2 DOUBLE PRECISION;
+DECLARE r2 DOUBLE PRECISION;
+DECLARE dfr DOUBLE PRECISION;
+DECLARE drr DOUBLE PRECISION;
+DECLARE ta DOUBLE PRECISION;
+DECLARE tb DOUBLE PRECISION;
+DECLARE sxa DOUBLE PRECISION;
+DECLARE sxb DOUBLE PRECISION;
+DECLARE xl INTEGER;
+DECLARE xr INTEGER;
+DECLARE ff DOUBLE PRECISION;
+DECLARE fc DOUBLE PRECISION;
+DECLARE bf DOUBLE PRECISION;
+DECLARE bc DOUBLE PRECISION;
+DECLARE fsky SMALLINT;
+DECLARE bsky SMALLINT;
+DECLARE closed SMALLINT;
+DECLARE k DOUBLE PRECISION;
+DECLARE den DOUBLE PRECISION;
+DECLARE t DOUBLE PRECISION;
+DECLARE s DOUBLE PRECISION;
+BEGIN
+  SELECT th.x, th.y, p.view_z, COS(th.angle), SIN(th.angle), c.w, c.h, c.proj, c.projy, c.near_z
+    FROM player p
+    JOIN things th ON th.id = p.thing_id
+   CROSS JOIN viewcfg c
+   WHERE p.id = 1 AND c.id = 1
+    INTO px, py, pz, ca, sa, w, h, proj, projy, nz;
+  hw = w / 2;
+  hh = h / 2;
+  fov = ATAN(hw / proj) + 0.02e0;
+  cov = RPAD('', CAST(w AS INTEGER), '0');
+  SELECT g.root_node FROM game g WHERE g.id = 1 INTO n;
+  IF (n IS NULL) THEN n = 32768;
+  stk = 'N' || LPAD(n, 5, '0') || '0';
+
+  WHILE (CHAR_LENGTH(stk) > 0 AND POSITION('0' IN cov) > 0) DO
+  BEGIN
+    -- pop
+    entry = SUBSTRING(stk FROM CHAR_LENGTH(stk) - 6 FOR 7);
+    stk = SUBSTRING(stk FROM 1 FOR CHAR_LENGTH(stk) - 7);
+    n = CAST(SUBSTRING(entry FROM 2 FOR 5) AS INTEGER);
+
+    IF (entry STARTING WITH 'C') THEN
+    BEGIN
+      -- R_CheckBBox: can the far child's box still reach an uncovered column?
+      side_ = CAST(SUBSTRING(entry FROM 7 FOR 1) AS SMALLINT);
+      SELECT IIF(:side_ = 0, nd.r_top, nd.l_top), IIF(:side_ = 0, nd.r_bot, nd.l_bot),
+             IIF(:side_ = 0, nd.r_left, nd.l_left), IIF(:side_ = 0, nd.r_right, nd.l_right),
+             IIF(:side_ = 0, nd.right_child, nd.left_child)
+        FROM nodes nd WHERE nd.id = :n
+        INTO bt, bb, bl, br, n;
+      IF (px >= bl AND px <= br AND py >= bb AND py <= bt) THEN
+        visible = 1;                                   -- we are inside the box
+      ELSE
+      BEGIN
+        -- angular extent of the four corners, measured around the box centre
+        -- (the box does not contain us, so the extent is under 180°)
+        fcen = ((bl + br) / 2 - px) * ca + ((bb + bt) / 2 - py) * sa;
+        rcen = ((bl + br) / 2 - px) * sa - ((bb + bt) / 2 - py) * ca;
+        ac = ATAN2(rcen, fcen);
+        amin = 1e9;
+        amax = -1e9;
+        corner = 0;
+        WHILE (corner < 4) DO
+        BEGIN
+          cxp = IIF(BIN_AND(corner, 1) = 0, bl, br) - px;
+          cyp = IIF(corner < 2, bt, bb) - py;
+          ai = ATAN2(cxp * sa - cyp * ca, cxp * ca + cyp * sa) - ac;
+          IF (ai > PI()) THEN ai = ai - 2 * PI();
+          IF (ai < -PI()) THEN ai = ai + 2 * PI();
+          amin = MINVALUE(amin, ai);
+          amax = MAXVALUE(amax, ai);
+          corner = corner + 1;
+        END
+        amin = ac + amin;
+        amax = ac + amax;
+        -- the span is under 180° but may sit a full turn away: bring it round
+        IF (amax < -fov) THEN
+        BEGIN
+          amin = amin + 2 * PI();
+          amax = amax + 2 * PI();
+        END
+        ELSE IF (amin > fov) THEN
+        BEGIN
+          amin = amin - 2 * PI();
+          amax = amax - 2 * PI();
+        END
+        visible = 0;
+        IF (amax >= -fov AND amin <= fov) THEN
+        BEGIN
+          xl = MAXVALUE(0, FLOOR(hw + TAN(MAXVALUE(amin, -fov + 0.02e0)) * proj) - 1);
+          xr = MINVALUE(w - 1, CEILING(hw + TAN(MINVALUE(amax, fov - 0.02e0)) * proj) + 1);
+          IF (xl <= xr AND POSITION('0' IN SUBSTRING(cov FROM xl + 1 FOR xr - xl + 1)) > 0) THEN
+            visible = 1;
+        END
+      END
+      IF (visible = 0) THEN CONTINUE;
+    END
+
+    IF (n < 32768) THEN
+    BEGIN
+      -- a node: push "check the far side" first, so the near side pops first
+      SELECT nd.x, nd.y, nd.dx, nd.dy, nd.right_child, nd.left_child FROM nodes nd WHERE nd.id = :n
+        INTO nx, ny, ndx, ndy, rc, lc;
+      side_ = IIF((py - ny) * ndx < ndy * (px - nx), 0, 1);
+      stk = stk || 'C' || LPAD(n, 5, '0') || (1 - side_)
+                || 'N' || LPAD(IIF(side_ = 0, rc, lc), 5, '0') || '0';
+      CONTINUE;
+    END
+
+    -- a subsector: R_AddLine for each of its segs
+    SELECT ss.first_seg, ss.seg_count FROM ssectors ss WHERE ss.id = :n - 32768 INTO first_seg, seg_count;
+    FOR SELECT sg.linedef, sg.side_, sg.x1, sg.y1, sg.x2, sg.y2, sg.len, sg.xoff, sg.front_sector, sg.back_sector
+          FROM segs sg
+         WHERE sg.id BETWEEN :first_seg AND :first_seg + :seg_count - 1
+          INTO line_id, back_view, sx1, sy1, sx2, sy2, slen, sxoff, fsec, bsec
+    DO
+    BEGIN
+      -- back faces: a seg is only seen from its right-hand side
+      IF ((sx2 - sx1) * (py - sy1) - (sy2 - sy1) * (px - sx1) >= 0) THEN CONTINUE;
+      f1 = (sx1 - px) * ca + (sy1 - py) * sa;
+      f2 = (sx2 - px) * ca + (sy2 - py) * sa;
+      IF (f1 < nz AND f2 < nz) THEN CONTINUE;
+      r1 = (sx1 - px) * sa - (sy1 - py) * ca;
+      r2 = (sx2 - px) * sa - (sy2 - py) * ca;
+      dfr = f2 - f1;
+      drr = r2 - r1;
+      ta = 0;
+      tb = 1;
+      IF (f1 < nz) THEN ta = (nz - f1) / dfr;
+      IF (f2 < nz) THEN tb = (nz - f1) / dfr;
+      sxa = hw + (r1 + ta * drr) * proj / (f1 + ta * dfr);
+      sxb = hw + (r1 + tb * drr) * proj / (f1 + tb * dfr);
+      xl = MAXVALUE(0, CEILING(MINVALUE(sxa, sxb) - 0.5e0));
+      xr = MINVALUE(w - 1, FLOOR(MAXVALUE(sxa, sxb) - 0.5e0));
+      IF (xl > xr) THEN CONTINUE;
+      -- entirely behind solid walls already drawn?
+      IF (POSITION('0' IN SUBSTRING(cov FROM xl + 1 FOR xr - xl + 1)) = 0) THEN CONTINUE;
+
+      SELECT se.floor_h, se.ceil_h, se.sky FROM sectors se WHERE se.id = :fsec INTO ff, fc, fsky;
+      closed = 1;
+      IF (bsec IS NOT NULL) THEN
+      BEGIN
+        SELECT se.floor_h, se.ceil_h, se.sky FROM sectors se WHERE se.id = :bsec INTO bf, bc, bsky;
+        IF (fsky = 1 AND bsky = 1) THEN bc = fc;
+        closed = IIF(bc <= bf OR bc <= ff OR bf >= fc, 1, 0);
+      END
+
+      col = xl;
+      WHILE (col <= xr) DO
+      BEGIN
+        IF (SUBSTRING(cov FROM col + 1 FOR 1) = '0') THEN
+        BEGIN
+          k = (col + 0.5e0 - hw) / proj;
+          den = drr - k * dfr;
+          IF (den <> 0) THEN
+          BEGIN
+            t = MINVALUE(1e0, MAXVALUE(0e0, (k * f1 - r1) / den));
+            depth = MAXVALUE(nz, f1 + t * dfr);
+            u = sxoff + t * slen;
+            IF (closed = 1) THEN
+            BEGIN
+              open_top = h;
+              open_bot = 0;
+            END
+            ELSE
+            BEGIN
+              s = projy / depth;
+              open_top = hh - (MINVALUE(fc, bc) - pz) * s;
+              open_bot = hh - (MAXVALUE(ff, bf) - pz) * s;
+            END
+            SUSPEND;
+          END
+        END
+        col = col + 1;
+      END
+
+      -- R_ClipSolidWallSegment: these columns are hidden for good now
+      IF (closed = 1) THEN
+        cov = SUBSTRING(cov FROM 1 FOR xl) || RPAD('', xr - xl + 1, '1') || SUBSTRING(cov FROM xr + 2);
+    END
+  END
+END^
+
 CREATE OR ALTER PROCEDURE render_sprites
 RETURNS (id INTEGER, depth DOUBLE PRECISION, lump INTEGER, flip SMALLINT,
          x1 DOUBLE PRECISION, x2 DOUBLE PRECISION, y1 DOUBLE PRECISION, y2 DOUBLE PRECISION,
@@ -272,13 +526,22 @@ RETURNS (
   clip_top DOUBLE PRECISION, clip_bot DOUBLE PRECISION)
 AS
 DECLARE last_col INTEGER = -1;
+DECLARE use_bsp SMALLINT;
+DECLARE bsp CURSOR FOR (SELECT col, depth, u, line_id, back_view, open_top, open_bot
+                          FROM render_slices_bsp ORDER BY col, depth);
+DECLARE brute CURSOR FOR (SELECT col, depth, u, line_id, back_view, open_top, open_bot
+                            FROM render_slices ORDER BY col, depth);
 BEGIN
-  FOR SELECT col, depth, u, line_id, back_view, open_top, open_bot
-        FROM render_slices
-       ORDER BY col, depth
-        INTO col, depth, u, line_id, back_view, open_top, open_bot
-  DO
+  -- viewcfg.use_bsp picks the slice generator; the clipping is the same
+  SELECT vc.use_bsp FROM viewcfg vc WHERE vc.id = 1 INTO use_bsp;
+  IF (use_bsp = 1) THEN OPEN bsp; ELSE OPEN brute;
+  WHILE (1 = 1) DO
   BEGIN
+    IF (use_bsp = 1) THEN
+      FETCH bsp INTO col, depth, u, line_id, back_view, open_top, open_bot;
+    ELSE
+      FETCH brute INTO col, depth, u, line_id, back_view, open_top, open_bot;
+    IF (ROW_COUNT = 0) THEN LEAVE;
     IF (col <> last_col) THEN
     BEGIN
       last_col = col;
@@ -292,6 +555,7 @@ BEGIN
       clip_bot = MINVALUE(clip_bot, open_bot);
     END
   END
+  IF (use_bsp = 1) THEN CLOSE bsp; ELSE CLOSE brute;
 END^
 
 SET TERM ; ^

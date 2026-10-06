@@ -1333,6 +1333,20 @@ BEGIN
     END
   END
 
+  MERGE INTO segs sg
+  USING (SELECT s.id, a.x ax, a.y ay, b.x bx, b.y bby, sd.sector_id fsec, od.sector_id bsec
+           FROM segs s
+           JOIN vertexes a ON a.id = s.v1
+           JOIN vertexes b ON b.id = s.v2
+           JOIN linedefs l ON l.id = s.linedef
+           LEFT JOIN sidedefs sd ON sd.id = IIF(s.side_ = 0, l.front_side, l.back_side)
+           LEFT JOIN sidedefs od ON od.id = IIF(s.side_ = 0, l.back_side, l.front_side)) q
+     ON sg.id = q.id
+   WHEN MATCHED THEN UPDATE SET
+        x1 = q.ax, y1 = q.ay, x2 = q.bx, y2 = q.bby,
+        len = SQRT((q.bx - q.ax) * (q.bx - q.ax) + (q.bby - q.ay) * (q.bby - q.ay)),
+        front_sector = q.fsec, back_sector = q.bsec;
+
   MERGE INTO ssectors ss
   USING (SELECT ss2.id, sd.sector_id
            FROM ssectors ss2

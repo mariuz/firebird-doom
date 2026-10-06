@@ -30,6 +30,10 @@
           <option value="high">High (320 columns)</option>
           <option value="low">Low (160 columns)</option>
         </select></label>
+        <label title="How FRAME_WALLS finds visible walls">Renderer <select id="renderer">
+          <option value="bsp">BSP front-to-back + solidsegs</option>
+          <option value="brute">Brute force (every linedef)</option>
+        </select></label>
         <span id="engine" class="pill">Firebird</span>
         <span id="mapname" class="pill"></span>
       </div>
@@ -69,11 +73,13 @@
           (<code>CHECK_SIGHT</code>), hitscan weapons, projectiles, pickups, secrets, and light effects.</li>
         <li><b>The BSP is a recursive CTE.</b> <code>INIT_MAP</code> finds every thing's sector by walking
           <code>NODES</code> for all things at once with <code>WITH RECURSIVE</code>.</li>
-        <li><b>The renderer is a query.</b> <code>FRAME_WALLS</code> projects every linedef to screen columns,
-          intersects each column's ray with it, sorts each column front to back, and carries DOOM's
-          <code>ceilingclip</code>/<code>floorclip</code> window down the column. <code>FRAME_WALLS_WINDOWED</code> does the same
-          with <code>MAX() OVER (PARTITION BY col ORDER BY depth)</code>. <code>FRAME_SPRITES</code> picks the rotation
-          frame for each monster.</li>
+        <li><b>The renderer is a query.</b> <code>FRAME_WALLS</code> walks the BSP front to back like DOOM's
+          <code>R_RenderBSPNode</code>. It skips subtrees whose bounding boxes are already hidden, and tracks
+          <code>solidsegs</code> as one character per screen column. For each visible seg it intersects every column's
+          ray, then carries DOOM's <code>ceilingclip</code>/<code>floorclip</code> window down each column. Switch
+          <b>Renderer</b> to brute force to project every linedef instead (about 3× slower, same picture).
+          <code>FRAME_WALLS_WINDOWED</code> states the clipping with <code>MAX() OVER (PARTITION BY col ORDER BY depth)</code>.
+          <code>FRAME_SPRITES</code> picks the rotation frame for each monster.</li>
         <li><b>JavaScript only paints.</b> It looks up texels and colormaps for the rows Firebird returns.</li>
       </ul>
       <p>Inspired by CedarDB's <a href="https://cedardb.com/blog/sqldoom/">SQL DOOM</a> and

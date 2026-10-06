@@ -86,7 +86,7 @@ for (let i = 0; i < 3; i++) {
 const a = await db.query('SELECT COUNT(*) n, SUM(col * 1000 + line_id) h FROM frame_walls');
 const b = await db.query('SELECT COUNT(*) n, SUM(col * 1000 + line_id) h FROM frame_walls_windowed');
 assert(a.rows[0].N === b.rows[0].N && a.rows[0].H === b.rows[0].H,
-  `procedural and window-function clipping agree (${a.rows[0].N} slices)`);
+  `BSP+solidsegs (procedural clip) and brute force (window-function clip) agree (${a.rows[0].N} slices)`);
 
 // turn around a full circle: every view must close every column
 for (let a = 0; a < 8; a++) {

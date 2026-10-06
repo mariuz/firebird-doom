@@ -25,7 +25,8 @@ CREATE TABLE viewcfg (
   h      INTEGER NOT NULL,
   proj   DOUBLE PRECISION NOT NULL,   -- horizontal projection distance in pixels
   projy  DOUBLE PRECISION NOT NULL,   -- vertical (differs in low detail mode)
-  near_z DOUBLE PRECISION NOT NULL    -- near clip plane in map units
+  near_z DOUBLE PRECISION NOT NULL,   -- near clip plane in map units
+  use_bsp SMALLINT DEFAULT 1 NOT NULL -- 1 = BSP front-to-back with solidsegs, 0 = every linedef
 );
 
 -- One row per screen column: the renderer's generate_series().
@@ -158,7 +159,13 @@ CREATE TABLE segs (
   v2      INTEGER NOT NULL,
   linedef INTEGER NOT NULL,
   side_   SMALLINT NOT NULL,
-  xoff    INTEGER NOT NULL
+  xoff    INTEGER NOT NULL,              -- distance along the linedef side
+  -- denormalised by INIT_MAP for the BSP renderer
+  x1 DOUBLE PRECISION, y1 DOUBLE PRECISION,
+  x2 DOUBLE PRECISION, y2 DOUBLE PRECISION,
+  len DOUBLE PRECISION,
+  front_sector INTEGER,
+  back_sector  INTEGER
 );
 
 CREATE TABLE ssectors (
@@ -176,7 +183,10 @@ CREATE TABLE nodes (
   dx          DOUBLE PRECISION NOT NULL,
   dy          DOUBLE PRECISION NOT NULL,
   right_child INTEGER NOT NULL,
-  left_child  INTEGER NOT NULL
+  left_child  INTEGER NOT NULL,
+  -- bounding boxes of each child, for R_CheckBBox
+  r_top DOUBLE PRECISION, r_bot DOUBLE PRECISION, r_left DOUBLE PRECISION, r_right DOUBLE PRECISION,
+  l_top DOUBLE PRECISION, l_bot DOUBLE PRECISION, l_left DOUBLE PRECISION, l_right DOUBLE PRECISION
 );
 
 -- THINGS lump as authored; INIT_MAP spawns from it per skill level.

@@ -8,6 +8,15 @@ browser on [Firebird 6 compiled to WebAssembly](https://github.com/mariuz/electr
 Every game tic is a PSQL procedure call. Every frame is a `SELECT`. JavaScript only reads the
 keyboard and paints the rows Firebird returns.
 
+![E1M1 rendered by Firebird: the opening room, a dead zombieman and the status bar](docs/screenshot-e1m1.png)
+
+| | |
+|---|---|
+| ![Two monsters, sprites picked and projected by FRAME_SPRITES](docs/screenshot-monster.png) | ![E1M2: pillars, steps and a lit doorway](docs/screenshot-e1m2.png) |
+
+<sub>These screenshots come from `npm run screenshots`, which runs the same SQL and
+rasteriser as the page, headless in Node.</sub>
+
 This project follows CedarDB's [SQL DOOM](https://cedardb.com/blog/sqldoom/) (the original WAD,
 rendered by a database) and [DOOMQL](https://cedardb.com/blog/doomql/) (a DOOM-like game in pure
 SQL), and [DuckDB-DOOM](https://www.hey.earth/posts/duckdb-doom) (a SQL raycaster in the browser
@@ -36,19 +45,34 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_LineAttack` (pistol, shotgun, chaingun, fist) | `HITSCAN` |
 | `P_TouchSpecialThing` | pickups in `PLAYER_THINK` |
 | light flashes, strobes, glows | `LIGHTS_THINK` |
-| `r_bsp.c` / `r_segs.c` / `r_plane.c` | `RENDER_SLICES` → `RENDER_WALLS` / `FRAME_WALLS` ([sql/render.sql](sql/render.sql)) |
+| `R_RenderBSPNode`, `R_CheckBBox`, `R_ClipSolidWallSegment` (solidsegs) | `RENDER_SLICES_BSP` ([sql/render.sql](sql/render.sql)) |
+| `r_segs.c` / `r_plane.c` clip arrays | `RENDER_WALLS` / `FRAME_WALLS` (or `FRAME_WALLS_WINDOWED`) |
 | `r_things.c` | `RENDER_SPRITES` / `FRAME_SPRITES` |
 
 ### The renderer
 
-`RENDER_SLICES` transforms every linedef into view space, culls back faces, clips to the
-near plane, projects the line onto a range of screen columns, and intersects each column's ray
-with it. That gives an exact depth, a texture column, and the vertical opening the line
-leaves (`open_top`/`open_bot`) for whatever is behind it.
+There are two wall renderers. You can switch between them under **Renderer** in the page's
+settings; the choice is stored in `VIEWCFG.USE_BSP`.
 
-DOOM keeps `ceilingclip[]`/`floorclip[]` arrays and walks the BSP front to back. Here an
-`ORDER BY col, depth` does the ordering, and the clip window is carried down each column
-(`RENDER_WALLS`). The same idea, stated declaratively, is the `FRAME_WALLS_WINDOWED` view:
+**BSP front to back with solidsegs (the default).** `RENDER_SLICES_BSP` walks `NODES` from the
+root like `R_RenderBSPNode`, nearer child first. Before entering the farther child it projects
+that child's bounding box onto the screen (`R_CheckBBox`) and skips the whole subtree if
+every column it covers is already hidden. In each subsector it projects the segs that face the
+viewer (`R_AddLine`). When a seg is solid (one-sided, or a closed door) its columns are marked
+as covered (`R_ClipSolidWallSegment`). PSQL has no arrays, so DOOM's `solidsegs` list is a
+`VARCHAR` with one character per screen column, and the traversal stack is a string too. The walk
+stops when no `'0'` is left in the coverage string. On Freedoom's 36 maps this is **about 3×
+faster** than brute force, and it finds exactly the same visible walls. CI checks that.
+
+**Brute force.** `RENDER_SLICES` projects every linedef in front of the camera, whether or not
+anything hides it.
+
+Both generators transform into view space, clip to the near plane, and intersect each screen
+column's ray with the seg. That gives an exact depth, a texture column, and the vertical
+opening the seg leaves (`open_top`/`open_bot`) for whatever is behind it. `RENDER_WALLS` then
+plays the part of DOOM's `ceilingclip[]`/`floorclip[]` arrays: `ORDER BY col, depth` sorts each
+column front to back, and the clip window is carried down the column. The same idea, stated
+declaratively, is the `FRAME_WALLS_WINDOWED` view:
 
 ```sql
 SELECT *
@@ -61,8 +85,8 @@ SELECT *
  WHERE clip_top < clip_bot
 ```
 
-The smoke test checks that both produce identical slices. The game uses the procedural one
-because Firebird's window sort costs about twice as much.
+The smoke test checks that it matches `FRAME_WALLS` slice for slice. The game uses the
+procedural clip because Firebird's window sort costs about twice as much.
 
 Two Firebird-specific performance lessons:
 
@@ -102,7 +126,9 @@ You can also load your own `DOOM1.WAD` / `DOOM.WAD` / `DOOM2.WAD` with the file 
 is uploaded anywhere.
 
 `npm run test:all-maps` loads, plays and renders every map in the WAD, and fires each map's first
-teleporter. `node scripts/bench.mjs queries.sql` times SQL statements against a loaded map, with
+teleporter. `npm run test:renderers` compares the BSP and brute-force renderers from several
+spots and headings on every map, and reports the speed-up. `npm run screenshots` regenerates
+`docs/*.png`. `node scripts/bench.mjs queries.sql` times SQL statements against a loaded map, with
 statements separated by `-- @@` lines.
 
 ## Controls
@@ -110,23 +136,24 @@ statements separated by `-- @@` lines.
 Click the view to capture the mouse. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the
 arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd> uses,
 <kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>4</kbd> pick weapons, <kbd>Tab</kbd> shows the
-automap, and <kbd>P</kbd> pauses. The SQL console under the game queries the live game
+automap, and <kbd>P</kbd> pauses. Under the view you can set **Detail** (320 or 160 columns) and
+**Renderer** (BSP + solidsegs, or brute force). Both settings are remembered in your browser. The SQL console under the game queries the live game
 database. Try the `IDKFA` button.
 
 ## Deploying
 
 [.github/workflows/pages.yml](.github/workflows/pages.yml) runs on every push to `main`. It
-installs, fetches and caches Freedoom, runs the SQL smoke test, builds, and publishes `dist/` to
+installs, fetches and caches Freedoom, runs the SQL smoke test and the BSP-vs-brute-force
+renderer check, builds, and publishes `dist/` to
 GitHub Pages. Pull requests run everything except the deploy.
 
 ## Simplifications
 
 Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
 Projectiles fly flat. There's no sound, no rocket launcher, plasma or BFG, and no crushers.
-Rendering doesn't use the BSP for occlusion, so every linedef in the view frustum is
-projected. Adding BSP front-to-back traversal with DOOM's `solidsegs` is the obvious next
-speed-up. Large maps with many monsters awake at once can drop below 10 fps. The *Low* detail
-setting (160 columns, like DOOM's own) halves the render cost.
+Floors and ceilings are drawn per wall slice rather than as DOOM's visplanes. Large maps with
+many monsters awake at once can still drop below 10 fps. The *Low* detail setting (160
+columns, like DOOM's own) halves the render cost.
 
 ## Credits
 

@@ -1,0 +1,150 @@
+// screenshot.mjs – render frames with the real SQL renderer + the page's
+// rasteriser, headless, and save them as PNGs for the README.
+//
+//   node scripts/screenshot.mjs            → docs/screenshot-*.png
+//
+// Same code path as the browser: DOOM_TIC, FRAME_WALLS, FRAME_SPRITES,
+// FRAME_SECTORS, then src/renderer.js and src/hud.js into a 320×200 buffer,
+// scaled to 640×480 (DOOM's 4:3 aspect).
+
+import fs from 'node:fs';
+import path from 'node:path';
+import zlib from 'node:zlib';
+import { fileURLToPath } from 'node:url';
+import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
+import { Wad } from '../src/wad.js';
+import { createSchema, loadResources, loadMap } from '../src/loader.js';
+import { Renderer } from '../src/renderer.js';
+import { drawStatusBar, drawWeapon } from '../src/hud.js';
+
+// the two browser APIs the renderer touches
+globalThis.ImageData ??= class {
+  constructor(w, h) {
+    this.width = w;
+    this.height = h;
+    this.data = new Uint8ClampedArray(w * h * 4);
+  }
+};
+const canvas = { width: 320, height: 200, getContext: () => ({ putImageData() {} }) };
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const outDir = path.join(root, 'docs');
+const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
+const db = new FirebirdBrowser('memory://shot', { transport: new DirectTransport() });
+await createSchema(db, sql);
+const wad = new Wad(fs.readFileSync(process.env.WAD ?? path.join(root, 'public/wads/freedoom1.wad')));
+const res = await loadResources(db, wad);
+const renderer = new Renderer(canvas, wad, res);
+const arr = { rowMode: 'array' };
+
+async function mapState(name) {
+  const m = /^E(\d)M/.exec(name);
+  const map = { skyTex: res.texId.get(`SKY${m ? Math.min(4, Number(m[1])) : 1}`) ?? 0 };
+  const lines = (await db.query('SELECT id, front_side, back_side, flags, light_delta FROM linedefs', [], arr)).rows;
+  map.lines = new Map(lines.map((r) => [r[0], { fs: r[1], bs: r[2], flags: r[3], lightDelta: r[4] }]));
+  const sides = (await db.query('SELECT id, xoff, yoff, upper_tex, lower_tex, mid_tex, sector_id FROM sidedefs', [], arr)).rows;
+  map.sides = new Map(sides.map((r) => [r[0], { xoff: r[1], yoff: r[2], upper: r[3], lower: r[4], mid: r[5], sector: r[6] }]));
+  return map;
+}
+
+async function shoot(map, file) {
+  const hud = (await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)')).rows[0];
+  const walls = (await db.query('SELECT * FROM frame_walls', [], arr)).rows;
+  const sprites = (await db.query('SELECT * FROM frame_sprites', [], arr)).rows;
+  const sectors = (await db.query('SELECT * FROM frame_sectors', [], arr)).rows;
+  map.sectors = new Map(sectors.map((r) => [r[0], { floor: r[1], ceil: r[2], floorFlat: r[3], ceilFlat: r[4], light: r[5], sky: r[6] === 1 }]));
+  renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette: 0 }, walls, sprites, map);
+  renderer.composeView();
+  drawWeapon(renderer, hud, 0);
+  drawStatusBar(renderer, hud, 0);
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, file), png(renderer.sfb, 320, 200, 640, 480));
+  console.log(`docs/${file}  (${walls.length} wall slices, ${sprites.length} sprites)`);
+}
+
+/** Place the player `dist` units from a thing, facing it, where it can stand and see it. */
+async function faceThing(kind, dist) {
+  const cands = (await db.query(`SELECT t.id, t.x, t.y, t.z FROM things t WHERE t.kind = '${kind}' ORDER BY t.id`)).rows;
+  for (const c of cands) {
+    for (let k = 0; k < 16; k++) {
+      const a = (k * Math.PI) / 8;
+      const x = c.X + Math.cos(a) * dist;
+      const y = c.Y + Math.sin(a) * dist;
+      const r = (await db.query(
+        `EXECUTE BLOCK RETURNS (ok SMALLINT, floor_z DOUBLE PRECISION, seen SMALLINT) AS
+         DECLARE cz DOUBLE PRECISION; DECLARE dz DOUBLE PRECISION; DECLARE sec INTEGER;
+         BEGIN
+           EXECUTE PROCEDURE check_position(-1, ${x}, ${y},
+             (SELECT floor_h FROM sectors WHERE id = sector_at(${x}, ${y})), 16, 56, 0)
+             RETURNING_VALUES ok, floor_z, cz, dz, sec;
+           seen = check_sight(${x}, ${y}, floor_z + 41, ${c.X}, ${c.Y}, ${c.Z} + 40);
+           SUSPEND;
+         END`)).rows[0];
+      if (r.OK === 1 && r.SEEN === 1) {
+        await db.exec(`UPDATE things t SET x = ${x}, y = ${y}, z = ${r.FLOOR_Z}, angle = ${a + Math.PI},
+                       sector_id = sector_at(${x}, ${y}) WHERE t.kind = 'player'`);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ── tiny PNG encoder (RGBA, nearest-neighbour upscale) ─────────────────
+const CRC = new Int32Array(256).map((_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c;
+});
+function crc32(buf) {
+  let c = -1;
+  for (const b of buf) c = CRC[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
+}
+function chunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const td = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(td));
+  return Buffer.concat([len, td, crc]);
+}
+function png(src, sw, sh, w, h) {
+  const px = new Uint8Array(src.buffer);
+  const raw = Buffer.alloc(h * (w * 4 + 1));
+  for (let y = 0; y < h; y++) {
+    const sy = Math.floor((y * sh) / h);
+    const o = y * (w * 4 + 1);
+    raw[o] = 0;
+    for (let x = 0; x < w; x++) {
+      const s = (sy * sw + Math.floor((x * sw) / w)) * 4;
+      raw.set(px.subarray(s, s + 4), o + 1 + x * 4);
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8;  // bit depth
+  ihdr[9] = 6;  // RGBA
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+// ── the shots ──────────────────────────────────────────────────────────
+await loadMap(db, wad, res, 'E1M1');
+let map = await mapState('E1M1');
+await db.query('SELECT * FROM doom_tic(12, 1, 0, 0, 0, 0, 0, 0)');
+await shoot(map, 'screenshot-e1m1.png');
+
+if (await faceThing('monster', 180)) await shoot(map, 'screenshot-monster.png');
+
+await loadMap(db, wad, res, 'E1M2');
+map = await mapState('E1M2');
+await db.query('SELECT * FROM doom_tic(20, 1, 0, 0.6, 0, 0, 0, 0)');
+await shoot(map, 'screenshot-e1m2.png');
+
+process.exit(0);

@@ -237,6 +237,9 @@ export class Wad {
       ssectors: rec('SSECTORS', 4, (dv, o, i) => ({ id: i, count: u16(dv, o), first: u16(dv, o + 2) })),
       nodes: rec('NODES', 28, (dv, o, i) => ({
         id: i, x: s16(dv, o), y: s16(dv, o + 2), dx: s16(dv, o + 4), dy: s16(dv, o + 6),
+        // child bounding boxes: top, bottom, left, right (BOXTOP..BOXRIGHT)
+        rbox: [s16(dv, o + 8), s16(dv, o + 10), s16(dv, o + 12), s16(dv, o + 14)],
+        lbox: [s16(dv, o + 16), s16(dv, o + 18), s16(dv, o + 20), s16(dv, o + 22)],
         right: u16(dv, o + 24), left: u16(dv, o + 26),
       })),
       things: rec('THINGS', 10, (dv, o, i) => ({

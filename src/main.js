@@ -10,8 +10,9 @@ import schemaSql from '../sql/schema.sql';
 import gameSql from '../sql/game.sql';
 import renderSql from '../sql/render.sql';
 import { Wad } from './wad.js';
-import { createSchema, loadResources, loadMap, setView } from './loader.js';
+import { createSchema, loadResources, loadMap, setView, setRenderer } from './loader.js';
 import { Renderer } from './renderer.js';
+import { drawStatusBar, drawText, drawWeapon } from './hud.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -30,7 +31,15 @@ let sidesRev = -1;
 let running = false;
 let paused = false;
 let lastTic = 0;
-let detail = 'high';
+// settings, remembered per browser
+const settings = { detail: 'high', renderer: 'bsp' };
+try {
+  Object.assign(settings, JSON.parse(localStorage.getItem('firebird-doom:settings') || '{}'));
+} catch { /* storage unavailable: defaults */ }
+const saveSettings = () => {
+  try { localStorage.setItem('firebird-doom:settings', JSON.stringify(settings)); } catch { /* ignore */ }
+};
+const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
 let showMap = false;
 let lastFrame = { tic: 0, walls: 0, sprites: 0, draw: 0, rows: 0 };
 
@@ -249,10 +258,10 @@ async function frame() {
       : hud.BONUS_COUNT ? Math.min(12, 8 + ((hud.BONUS_COUNT + 7) >> 3)) : 0;
     renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette }, walls, sprites, map);
     renderer.composeView();
-    if (!hud.DEAD) drawWeapon(palette);
-    drawStatusBar(palette);
-    if (hud.MSG) drawText(hud.MSG, 2, 2, palette);
-    if (paused) drawText('PAUSED', 136, 80, palette);
+    if (!hud.DEAD) drawWeapon(renderer, hud, palette);
+    drawStatusBar(renderer, hud, palette);
+    if (hud.MSG) drawText(renderer, hud.MSG, 2, 2, palette);
+    if (paused) drawText(renderer, 'PAUSED', 136, 80, palette);
     renderer.present();
     if (showMap) drawAutomap();
     lastFrame.draw = performance.now() - t;
@@ -280,94 +289,8 @@ function updateStats() {
     fpsN = 0;
   }
   statsEl.textContent =
-    `${fps.toFixed(1)} fps · doom_tic ${lastFrame.tic.toFixed(0)} ms · frame_walls ${lastFrame.walls.toFixed(0)} ms ` +
+    `${fps.toFixed(1)} fps · ${settings.renderer === 'bsp' ? 'BSP' : 'brute'} · doom_tic ${lastFrame.tic.toFixed(0)} ms · frame_walls ${lastFrame.walls.toFixed(0)} ms ` +
     `(${lastFrame.rows} slices) · frame_sprites ${lastFrame.sprites.toFixed(0)} ms · raster ${lastFrame.draw.toFixed(0)} ms`;
-}
-
-// ── HUD from the WAD's own graphics ─────────────────────────────────────
-const P = (name) => renderer.pictureByName(name);
-
-function drawNum(n, x, y, font, palBase, width = 3) {
-  // right-aligned at x, like st_lib.c STlib_drawNum
-  const s = String(Math.max(0, n)).slice(-width);
-  const digit = P(`${font}0`);
-  if (!digit) return;
-  for (let i = s.length - 1, cx = x; i >= 0; i--) {
-    cx -= digit.w;
-    renderer.patch(P(`${font}${s[i]}`), cx, y, palBase);
-  }
-}
-
-function drawStatusBar(palette) {
-  const pb = palette * 34 * 256;
-  const bar = P('STBAR');
-  if (!bar) return;
-  renderer.patch(bar, 0, 168, pb);
-  const ammo = hud.WEAPON === 3 ? hud.SHELLS : hud.WEAPON === 1 ? null : hud.BULLETS;
-  if (ammo !== null) drawNum(ammo, 44, 171, 'STTNUM', pb);
-  drawNum(hud.HEALTH, 90, 171, 'STTNUM', pb);
-  renderer.patch(P('STTPRCNT'), 90, 171, pb);
-  drawNum(hud.ARMOR, 221, 171, 'STTNUM', pb);
-  renderer.patch(P('STTPRCNT'), 221, 171, pb);
-  renderer.patch(P('STARMS'), 104, 168, pb);
-  const owned = [true, true, hud.HAS_SHOTGUN === 1, hud.HAS_CHAINGUN === 1, false, false];
-  for (let i = 0; i < 6; i++) {
-    renderer.patch(P(`${owned[i] ? 'STYSNUM' : 'STGNUM'}${i + 2}`), 111 + (i % 3) * 12, 172 + Math.floor(i / 3) * 10, pb);
-  }
-  // face: health band, glancing left/right with the tic, ouch when hurt
-  const band = Math.min(4, Math.floor((100 - Math.min(100, hud.HEALTH)) / 20));
-  let face = `STFST${band}${[0, 1, 2, 1][(hud.TIC >> 4) & 3]}`;
-  if (hud.DEAD) face = 'STFDEAD0';
-  else if (hud.DAMAGE_COUNT > 10) face = `STFOUCH${band}`;
-  else if (hud.ATTACK_TICS > 0 && hud.WEAPON > 1) face = `STFKILL${band}`;
-  renderer.patch(P(face) ?? P(`STFST${band}0`), 143, 168, pb);
-  const kc = hud.KEYCARDS;
-  if (kc & 1) renderer.patch(P('STKEYS0'), 239, 171, pb);
-  if (kc & 2) renderer.patch(P('STKEYS1'), 239, 181, pb);
-  if (kc & 4) renderer.patch(P('STKEYS2'), 239, 191, pb);
-  drawNum(hud.BULLETS, 288, 173, 'STYSNUM', pb);
-  drawNum(hud.SHELLS, 288, 179, 'STYSNUM', pb);
-  drawNum(200, 314, 173, 'STYSNUM', pb);
-  drawNum(50, 314, 179, 'STYSNUM', pb);
-}
-
-function drawText(text, x, y, palette) {
-  const pb = palette * 34 * 256;
-  let cx = x;
-  for (const ch of text.toUpperCase()) {
-    const c = ch.charCodeAt(0);
-    if (ch === ' ' || c < 33 || c > 95) { cx += 4; continue; }
-    const pic = P(`STCFN${String(c).padStart(3, '0')}`);
-    if (!pic) { cx += 4; continue; }
-    renderer.patch(pic, cx, y, pb);
-    cx += pic.w;
-  }
-}
-
-function drawWeapon(palette) {
-  const pb = palette * 34 * 256;
-  const w = hud.WEAPON;
-  const len = Math.max(1, hud.ATTACK_LEN);
-  const p = hud.ATTACK_TICS > 0 ? 1 - hud.ATTACK_TICS / len : -1;
-  const bob = Math.sin(hud.TIC * 0.2) * 2;
-  let gun;
-  let flash = null;
-  if (w === 1) {
-    gun = p < 0 ? 'PUNGA0' : `PUNG${'BCDCB'[Math.min(4, Math.floor(p * 5))]}0`;
-  } else if (w === 2) {
-    gun = p < 0 ? 'PISGA0' : `PISG${'ABCB'[Math.min(3, Math.floor(p * 4))]}0`;
-    if (p >= 0 && p < 0.25) flash = 'PISFA0';
-  } else if (w === 3) {
-    gun = p < 0 ? 'SHTGA0' : `SHTG${'AABCDCBA'[Math.min(7, Math.floor(p * 8))]}0`;
-    if (p >= 0 && p < 0.08) flash = 'SHTFA0';
-    else if (p >= 0.08 && p < 0.16) flash = 'SHTFB0';
-  } else {
-    gun = p < 0 ? 'CHGGA0' : `CHGG${(hud.TIC >> 1) & 1 ? 'B' : 'A'}0`;
-    if (p >= 0) flash = `CHGF${(hud.TIC >> 1) & 1 ? 'B' : 'A'}0`;
-  }
-  // R_DrawPSprite: sx = 1, sy = WEAPONTOP (32), against a 320×200 screen
-  if (flash) renderer.patch(P(flash), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)), pb, 0);
-  renderer.patch(P(gun), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)), pb, 0);
 }
 
 function drawAutomap() {
@@ -475,9 +398,10 @@ async function useWad(buffer, label) {
   const maps = wad.mapNames();
   if (!maps.length) throw new Error(`${label} has no maps`);
   setStatus(`Copying ${label} resources into Firebird…`);
-  res = await loadResources(db, wad, { width: detail === 'high' ? 320 : 160, height: 168 });
+  res = await loadResources(db, wad, { width: viewWidth(), height: 168 });
+  await setRenderer(db, settings.renderer === 'bsp');
   renderer = new Renderer(canvas, wad, res);
-  renderer.setSize(detail === 'high' ? 320 : 160, 168);
+  renderer.setSize(viewWidth(), 168);
   const sel = $('map');
   sel.innerHTML = maps.map((m) => `<option>${m}</option>`).join('');
   $('wadname').textContent = label;
@@ -510,11 +434,18 @@ $('wadfile').addEventListener('change', async (e) => {
   }
 });
 $('map').addEventListener('change', (e) => startMap(e.target.value, true).catch((err) => setStatus(err.message, true)));
+$('detail').value = settings.detail;
+$('renderer').value = settings.renderer;
+$('renderer').addEventListener('change', async (e) => {
+  settings.renderer = e.target.value;
+  saveSettings();
+  if (db) await setRenderer(db, settings.renderer === 'bsp');
+});
 $('detail').addEventListener('change', async (e) => {
-  detail = e.target.value;
-  const w = detail === 'high' ? 320 : 160;
-  await setView(db, w, 168);
-  renderer.setSize(w, 168);
+  settings.detail = e.target.value;
+  saveSettings();
+  await setView(db, viewWidth(), 168);
+  renderer.setSize(viewWidth(), 168);
 });
 
 boot();

@@ -47,6 +47,10 @@ jobs:
       - name: SQL smoke test
         run: npm test
 
+      # BSP + solidsegs must find exactly the walls brute force finds
+      - name: Renderer equivalence (BSP vs brute force)
+        run: npm run test:renderers -- E1M1 E1M2 E1M3
+
       - name: Build site
         run: npm run build
 

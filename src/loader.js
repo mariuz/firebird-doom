@@ -96,8 +96,14 @@ SET TERM ; ^`);
  * screen, so "low detail" (160 columns) just makes each column twice as wide.
  */
 export async function setView(db, width, height) {
-  await db.exec('DELETE FROM viewcfg');
-  await db.exec(`INSERT INTO viewcfg (id, w, h, proj, projy, near_z) VALUES (1, ${width}, ${height}, ${width / 2}, 160, 4)`);
+  await db.exec(
+    `UPDATE OR INSERT INTO viewcfg (id, w, h, proj, projy, near_z) VALUES (1, ${width}, ${height}, ${width / 2}, 160, 4) MATCHING (id)`,
+  );
+}
+
+/** true: BSP front-to-back with solidsegs (RENDER_SLICES_BSP); false: project every linedef. */
+export async function setRenderer(db, useBsp) {
+  await db.exec(`UPDATE viewcfg SET use_bsp = ${useBsp ? 1 : 0} WHERE id = 1`);
 }
 
 /** P_SetupLevel: replace the current map with `name` from the WAD. */
@@ -126,8 +132,12 @@ export async function loadMap(db, wad, res, name, { skill = 3, newGame = true } 
   await insertRows(db, 'segs', ['id', 'v1', 'v2', 'linedef', 'side_', 'xoff'],
     m.segs.map((s) => [s.id, s.v1, s.v2, s.linedef, s.side, s.offset]));
   await insertRows(db, 'ssectors', ['id', 'seg_count', 'first_seg'], m.ssectors.map((s) => [s.id, s.count, s.first]));
-  await insertRows(db, 'nodes', ['id', 'x', 'y', 'dx', 'dy', 'right_child', 'left_child'],
-    m.nodes.map((n) => [n.id, n.x, n.y, n.dx, n.dy, n.right, n.left]));
+  await insertRows(
+    db, 'nodes',
+    ['id', 'x', 'y', 'dx', 'dy', 'right_child', 'left_child',
+      'r_top', 'r_bot', 'r_left', 'r_right', 'l_top', 'l_bot', 'l_left', 'l_right'],
+    m.nodes.map((n) => [n.id, n.x, n.y, n.dx, n.dy, n.right, n.left, ...n.rbox, ...n.lbox]),
+  );
   await insertRows(db, 'map_things', ['id', 'x', 'y', 'angle', 'ttype', 'flags'],
     m.things.map((t) => [t.id, t.x, t.y, t.angle, t.type, t.flags]));
 

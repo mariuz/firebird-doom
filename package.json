@@ -9,7 +9,9 @@
     "build": "node scripts/build.mjs",
     "serve": "node scripts/build.mjs --serve",
     "test": "node scripts/sql-smoke.mjs",
-    "test:all-maps": "node scripts/all-maps.mjs"
+    "test:all-maps": "node scripts/all-maps.mjs",
+    "test:renderers": "node scripts/compare-renderers.mjs",
+    "screenshots": "node scripts/screenshot.mjs"
   },
   "license": "MIT",
   "dependencies": {
