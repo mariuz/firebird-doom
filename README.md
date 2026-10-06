@@ -45,6 +45,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `EV_DoCeiling` crushers, `EV_CeilingCrushStop`, `raiseFloorCrush`, `P_ChangeSector` | the `crush` mover kind, `CRUSH_THINGS` |
 | `P_SpawnMissile` / `P_SpawnPlayerMissile` aiming, `P_AimLineAttack`, `P_ZMovement` for missiles | `MONSTER_MISSILE`, `FIRE_MISSILE`, `AIM_SLOPE`; 3D flight in `MONSTERS_THINK` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `MONSTERS_THINK` |
+| `P_NoiseAlert`, `P_RecursiveSound` (gunfire wakes monsters) | `NOISE_ALERT` flooding `SOUND_LINKS`, `SECTORS.SOUND_HEARD` |
 | `A_Tracer`, `A_SkelFist` (revenant), `A_FatAttack1/2/3` (mancubus), `A_VileTarget` / `A_Fire` / `A_VileAttack` / `A_VileChase` (arch-vile), `A_PainShootSkull` / `A_PainDie` | `MONSTERS_THINK` (the `melee`, `heal` and `raise` states, the `flame` kind), `MONSTER_MISSILE`, `PAIN_SHOOT_SKULL` |
 | `A_BossDeath`, `A_KeenDie` | `BOSS_DEATH`, `KEEN_DIE` |
 | `A_BrainSpit`, `A_SpawnFly`, `A_BrainScream` (the Icon of Sin) | the `shooter`, `cube` and `brain` kinds in `MONSTERS_THINK` |
@@ -199,7 +200,9 @@ sounds, damage, splash and pickups.
 
 Use `WAD=public/wads/freedoom2.wad` for the Phase 2 parts. `npm run test:physics` drives real crushers (descent, damage, gibs, stop and resume, floor
 crushers) and checks missile slopes, autoaim with its 5.625° fallback, floor impacts and the sky.
-It also checks that a level hitscan shot passes under a raised imp, that the right slope hits
+It checks that gunfire reaches open sectors but not past a closed door, that it wakes a monster
+out of sight in earshot but not one out of earshot or in ambush. It also checks that a level
+hitscan shot passes under a raised imp, that the right slope hits
 it, and that the pistol finds that slope itself but not beyond DOOM's aiming window.
 `npm run test:renderers` compares the
 BSP and brute-force renderers from several spots and headings on every map, and reports the
@@ -215,7 +218,8 @@ arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd>
 launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggles the chainsaw and
 <kbd>3</kbd> again the super shotgun. <kbd>Tab</kbd> shows the
 automap, and <kbd>P</kbd> pauses. Under the view you can set **Detail** (320 or 160 columns) and
-**Renderer** (BSP + solidsegs, or brute force), plus **Sound** and **Music** volume. These settings
+**Renderer** (BSP + solidsegs, or brute force), plus **Audio** on/off (<kbd>M</kbd>) and **Sound**
+and **Music** volume. These settings
 are remembered in your browser. The SQL console under the game queries the live game
 database. Try the `IDKFA` button.
 
@@ -229,6 +233,15 @@ GitHub Pages. Pull requests run everything except the deploy.
 ## Simplifications
 
 Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
+Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods
+out from your sector through every open two-sided line. A closed door stops it, and a line flagged
+*sound block* lets it through once but never twice. Every sector it reaches remembers. Idle
+monsters there wake up, even with no line of sight; ambush ("deaf") monsters still have to see
+you. The flood is a breadth-first search in SQL: each pass is one `MERGE` over `SOUND_LINKS`, a
+sector adjacency graph built at map load, and doors count live through the current sector
+heights. A shot costs 3 ms on E1M1 and about 40 ms on the largest maps. It reruns at most once a
+second from the same sector.
+
 Crushers work. Ceiling crushers (types 6, 25, 49, 73, 77 and the silent 141) cycle between
 their top and floor + 8. They deal 10 damage every 4 tics to whatever they squeeze, the slow ones
 drop to ⅛ speed while crushing, and corpses turn to gibs. Types 57 and 74 stop them, and

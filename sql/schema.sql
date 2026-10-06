@@ -12,6 +12,7 @@ CREATE TABLE game (
   map_name      VARCHAR(8),
   exit_kind     SMALLINT DEFAULT 0 NOT NULL,   -- 0 playing, 1 exit, 2 secret exit, 3 restart
   noise_tic     INTEGER DEFAULT -1000 NOT NULL, -- last tic the player made noise (gunfire)
+  noise_sector  INTEGER,                        -- …and where (re-flooding is throttled)
   root_node     INTEGER,                        -- BSP root (highest NODES id)
   sides_rev     INTEGER DEFAULT 0 NOT NULL,     -- bumped when a switch texture flips
   total_kills   INTEGER DEFAULT 0 NOT NULL,
@@ -118,7 +119,8 @@ CREATE TABLE sectors (
   min_light  INTEGER,                   -- darkest neighbour, for strobes/glows
   special    INTEGER NOT NULL,
   tag        INTEGER NOT NULL,
-  sky        SMALLINT DEFAULT 0 NOT NULL
+  sky        SMALLINT DEFAULT 0 NOT NULL,
+  sound_heard SMALLINT DEFAULT 0 NOT NULL     -- soundtarget: gunfire has reached this sector
 );
 CREATE INDEX sectors_tag ON sectors (tag);
 
@@ -291,6 +293,23 @@ CREATE TABLE sound_events (
   origin INTEGER,                 -- thing or sector making it; a new sound cuts the old one
   x      DOUBLE PRECISION,
   y      DOUBLE PRECISION
+);
+
+-- The sound graph, built by INIT_MAP: sector A is next to sector B through
+-- two-sided lines; BLOCK is 0 if any of those lines lets sound through freely.
+CREATE TABLE sound_links (
+  a     INTEGER NOT NULL,
+  b     INTEGER NOT NULL,
+  block SMALLINT NOT NULL,
+  PRIMARY KEY (a, b)
+);
+
+-- P_RecursiveSound's working set: sectors reached by the current noise, with
+-- the fewest sound-blocking lines crossed to get there.
+CREATE TABLE sound_flood (
+  sector_id INTEGER NOT NULL PRIMARY KEY,
+  blocks    SMALLINT NOT NULL,
+  frontier  SMALLINT NOT NULL          -- 1 = expand next pass, 2 = just reached
 );
 
 -- Moving floors and ceilings: doors, lifts, platforms.

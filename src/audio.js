@@ -33,6 +33,7 @@ export class DoomAudio {
     this.musicVolume = 0.5;
     this.pendingMusic = null;
     this.currentMusic = null;
+    this.enabled = true;
   }
 
   setWad(wad) {
@@ -45,6 +46,7 @@ export class DoomAudio {
 
   /** Browsers only allow audio after a user gesture: call from input handlers. */
   unlock() {
+    if (!this.enabled) return;
     if (!this.ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
@@ -77,8 +79,25 @@ export class DoomAudio {
 
   suspend(on) {
     if (!this.ctx) return;
-    if (on) this.ctx.suspend();
+    if (on || !this.enabled) this.ctx.suspend();
     else this.ctx.resume();
+  }
+
+  /** The Audio setting: off stops the music and silences everything. */
+  setEnabled(on) {
+    this.enabled = on;
+    if (!on) {
+      if (this.synth) this.synth.stop();
+      for (const src of this.channels.values()) {
+        try { src.stop(); } catch { /* already ended */ }
+      }
+      this.channels.clear();
+      if (this.ctx) this.ctx.suspend();
+    } else {
+      this.unlock();
+      // resuming is asynchronous: restart the music once the clock runs again
+      if (this.ctx) this.ctx.resume().then(() => this.playMusic(this.currentMusic, true));
+    }
   }
 
   /** A DMX sound lump: format 3, sample rate, sample count, 8-bit unsigned PCM. */
@@ -110,7 +129,7 @@ export class DoomAudio {
    * ({ x, y, angle }).
    */
   playEvents(rows, listener) {
-    if (!this.ctx || this.ctx.state !== 'running' || this.sfxVolume === 0) return;
+    if (!this.enabled || !this.ctx || this.ctx.state !== 'running' || this.sfxVolume === 0) return;
     for (const [, sound, origin, x, y] of rows.slice(-16)) {
       let vol = 1;
       let pan = 0;
@@ -167,6 +186,7 @@ export class DoomAudio {
   playMusic(lumpName, force = false) {
     if (!force && lumpName === this.currentMusic && this.synth?.timer) return;
     this.currentMusic = lumpName;
+    if (!this.enabled) return;
     if (!this.ctx || this.ctx.state !== 'running') {
       this.pendingMusic = lumpName;
       return;

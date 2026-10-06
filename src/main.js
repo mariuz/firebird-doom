@@ -33,7 +33,7 @@ let running = false;
 let paused = false;
 let lastTic = 0;
 // settings, remembered per browser
-const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', sfx: 70, music: 50 };
+const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('firebird-doom:settings') || '{}'));
 } catch { /* storage unavailable: defaults */ }
@@ -44,6 +44,7 @@ const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
 let showMap = false;
 const audio = new DoomAudio();
 audio.setVolumes(settings.sfx / 100, settings.music / 100);
+audio.setEnabled(settings.audio);
 let lastSoundId = 0;
 // audio may only start after a user gesture
 for (const ev of ['keydown', 'pointerdown', 'touchstart']) window.addEventListener(ev, () => audio.unlock(), { capture: true });
@@ -73,6 +74,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Tab') showMap = !showMap;
   if (e.code.startsWith('Digit')) weaponSel = Number(e.code.slice(5));
   if (e.code === 'KeyP' || e.code === 'Pause') paused = !paused;
+  if (e.code === 'KeyM') setAudio(!settings.audio);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 window.addEventListener('blur', () => keys.clear());
@@ -468,6 +470,18 @@ $('game').addEventListener('change', async (e) => {
 $('map').addEventListener('change', (e) => startMap(e.target.value, true).catch((err) => setStatus(err.message, true)));
 $('detail').value = settings.detail;
 $('renderer').value = settings.renderer;
+function setAudio(on) {
+  settings.audio = on;
+  saveSettings();
+  $('audio').checked = on;
+  $('sfxvol').disabled = !on;
+  $('musicvol').disabled = !on;
+  audio.setEnabled(on);
+}
+$('audio').checked = settings.audio;
+$('sfxvol').disabled = !settings.audio;
+$('musicvol').disabled = !settings.audio;
+$('audio').addEventListener('change', (e) => setAudio(e.target.checked));
 $('sfxvol').value = settings.sfx;
 $('musicvol').value = settings.music;
 for (const id of ['sfxvol', 'musicvol']) {

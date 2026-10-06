@@ -197,6 +197,100 @@ if (sky) {
   assert(!sbNow, 'a fireball flying into the sky vanishes without exploding');
 } else console.log('(no thing under open sky on this map)');
 
+// ── sound propagation (P_NoiseAlert) ───────────────────────────────────
+{
+  await loadMap(db, wad, res, maps[0]);
+  const resetNoise = () => db.exec('UPDATE sectors SET sound_heard = 0; UPDATE game SET noise_sector = NULL');
+  const pl = await one(`SELECT t.sector_id sec, t.x, t.y, t.z FROM things t WHERE t.kind = 'player'`);
+  const flood = async () => {
+    await resetNoise();
+    const t0 = performance.now();
+    await db.exec(`EXECUTE PROCEDURE noise_alert(${pl.SEC}, 1000)`);
+    return performance.now() - t0;
+  };
+  const ms = await flood();
+  const heard = (await one('SELECT COUNT(*) n FROM sectors WHERE sound_heard = 1')).N;
+  const total = (await one('SELECT COUNT(*) n FROM sectors')).N;
+  assert(heard > 1 && heard < total, `${maps[0]}: a shot is heard in ${heard} of ${total} sectors (${ms.toFixed(0)} ms)`);
+  assert((await one('SELECT MAX(blocks) m FROM sound_flood')).M <= 1, 'sound never crosses two sound-blocking lines');
+
+  // a closed door stops it; open, it carries on
+  const door = await one(`SELECT FIRST 1 d.id, d.floor_h, d.ceil_h FROM linedefs l
+                            JOIN sectors d ON d.id = l.back_sector
+                            JOIN sectors n ON n.id = l.front_sector
+                           WHERE l.special IN (1, 26, 27, 28, 31) AND d.ceil_h <= d.floor_h AND n.sound_heard = 1`);
+  if (door) {
+    assert((await one(`SELECT sound_heard h FROM sectors WHERE id = ${door.ID}`)).H === 0, 'a closed door keeps the sound out');
+    await db.exec(`UPDATE sectors SET ceil_h = floor_h + 72 WHERE id = ${door.ID}`);
+    await flood();
+    assert((await one(`SELECT sound_heard h FROM sectors WHERE id = ${door.ID}`)).H === 1, 'the same door, open, lets it through');
+    await db.exec(`UPDATE sectors SET ceil_h = ${door.CEIL_H} WHERE id = ${door.ID}`);
+  } else console.log('(no closed door next to a heard sector here)');
+
+  // soundblock lines: wherever the sound crossed one, it went no further than one more open line
+  const sb = await one(`SELECT COUNT(*) n FROM linedefs WHERE BIN_AND(flags, 64) = 64 AND back_sector IS NOT NULL`);
+  if (sb.N > 0) {
+    const crossed = (await one('SELECT COUNT(*) n FROM sound_flood WHERE blocks = 1')).N;
+    console.log(`(${sb.N} sound-blocking lines on ${maps[0]}; sound crossed one into ${crossed} sectors)`);
+  }
+
+  // gunfire wakes an idle monster that heard it but cannot see the player,
+  // and not one in a sector the sound never reached
+  await resetNoise();
+  await db.exec('UPDATE player SET health = 100000');
+  await db.exec(`UPDATE things SET st = 'dead', solid = 0 WHERE kind = 'monster'`);
+  await db.exec(`EXECUTE PROCEDURE noise_alert(${pl.SEC}, 1000)`);
+  const heardSet = new Set((await db.query('SELECT id FROM sectors WHERE sound_heard = 1')).rows.map((r) => r.ID));
+  await resetNoise();
+  /** An imp, idle and not deaf, placed in a sector chosen by PICK, out of the player's sight. */
+  async function placeImp(pick) {
+    const secs = (await db.query('SELECT id FROM sectors WHERE ceil_h - floor_h >= 64 ORDER BY id')).rows.map((r) => r.ID).filter(pick);
+    for (const s of secs) {
+      const at = await inside(s);
+      if (!at || (await one(`SELECT sector_at(${at.X}, ${at.Y}) s FROM rdb$database`)).S !== s) continue;
+      const fz = (await one(`SELECT floor_h f FROM sectors WHERE id = ${s}`)).F;
+      const seen = (await one(`SELECT check_sight(${at.X}, ${at.Y}, ${fz + 40}, ${pl.X}, ${pl.Y}, ${pl.Z + 41}) v FROM rdb$database`)).V;
+      if (seen) continue;
+      const id = await spawn(3001, at.X, at.Y);
+      await db.exec(`UPDATE things SET st = 'idle', flags = 0 WHERE id = ${id}`);
+      return id;
+    }
+    return null;
+  }
+  const hearer = await placeImp((s) => heardSet.has(s) && s !== pl.SEC);
+  const deaf = await placeImp((s) => !heardSet.has(s));
+  if (hearer) {
+    await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 1, 0, 0, 0)');       // one shot
+    await tic(16);
+    const st = (await one(`SELECT st FROM things WHERE id = ${hearer}`)).ST;
+    assert(st !== 'idle', `gunfire wakes a monster out of sight in a sector the sound reached (${st})`);
+    if (deaf) {
+      const st2 = (await one(`SELECT st FROM things WHERE id = ${deaf}`)).ST;
+      assert(st2 === 'idle', `…but not one in a sector it never reached (${st2})`);
+    }
+  } else console.log('(nowhere out of sight in earshot to put a monster)');
+
+  // ambush monsters in earshot still need to see you
+  await resetNoise();
+  const amb = await placeImp((s) => heardSet.has(s) && s !== pl.SEC);
+  if (amb) {
+    await db.exec(`UPDATE things SET flags = 8 WHERE id = ${amb}`);
+    await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 1, 0, 0, 0)');
+    await tic(16);
+    assert((await one(`SELECT st FROM things WHERE id = ${amb}`)).ST === 'idle', 'an ambush monster out of sight ignores the noise');
+  }
+
+  // the flood on the biggest maps
+  for (const big of maps.filter((m) => wad.map(m).sectors.length > 700).slice(0, 2)) {
+    await loadMap(db, wad, res, big);
+    const s0 = (await one(`SELECT sector_id s FROM things WHERE kind = 'player'`)).S;
+    const t0 = performance.now();
+    await db.exec(`EXECUTE PROCEDURE noise_alert(${s0}, 1000)`);
+    const n = (await one('SELECT COUNT(*) n FROM sectors WHERE sound_heard = 1')).N;
+    console.log(`(${big}: ${wad.map(big).sectors.length} sectors, flood reached ${n} in ${(performance.now() - t0).toFixed(0)} ms)`);
+  }
+}
+
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'physics ok');
 process.exit(failures ? 1 : 0);

@@ -978,6 +978,53 @@ BEGIN
   END
 END^
 
+-- P_NoiseAlert / P_RecursiveSound: gunfire floods out from the shooter's
+-- sector through every open two-sided line (a closed door stops it). A line
+-- flagged ML_SOUNDBLOCK (64) lets it through once, never twice. Every
+-- sector reached remembers it heard the player, for the rest of the level.
+-- Breadth first and set based: each pass is one MERGE that pushes the
+-- frontier across the open lines, keeping the fewest blocks per sector.
+CREATE OR ALTER PROCEDURE noise_alert (src INTEGER, tic INTEGER)
+AS
+DECLARE added INTEGER = 1;
+DECLARE passes INTEGER = 0;
+DECLARE last_sec INTEGER;
+DECLARE last_tic INTEGER;
+BEGIN
+  IF (src IS NULL) THEN EXIT;
+  SELECT g.noise_sector, g.noise_tic FROM game g WHERE g.id = 1 INTO last_sec, last_tic;
+  UPDATE game g SET noise_tic = :tic WHERE g.id = 1;
+  -- the same spot within a second: those sectors already know (doors may
+  -- have moved since, so flood again after that)
+  IF (last_sec = src AND tic - last_tic < 35) THEN EXIT;
+  UPDATE game g SET noise_sector = :src WHERE g.id = 1;
+
+  DELETE FROM sound_flood;
+  INSERT INTO sound_flood (sector_id, blocks, frontier) VALUES (:src, 0, 1);
+  WHILE (added > 0 AND passes < 500) DO
+  BEGIN
+    MERGE INTO sound_flood d
+    USING (SELECT n.nb, MIN(n.nblocks) nblocks
+             FROM (SELECT k.b nb, f.blocks + k.block nblocks
+                     FROM sound_flood f
+                     LEFT JOIN sound_links k ON k.a = f.sector_id
+                     LEFT JOIN sectors sa ON sa.id = k.a
+                     LEFT JOIN sectors sb ON sb.id = k.b
+                    WHERE f.frontier = 1
+                      AND MINVALUE(sa.ceil_h, sb.ceil_h) > MAXVALUE(sa.floor_h, sb.floor_h)) n   -- openrange > 0
+            WHERE n.nblocks < 2
+            GROUP BY n.nb) s
+       ON d.sector_id = s.nb
+     WHEN MATCHED AND s.nblocks < d.blocks THEN UPDATE SET blocks = s.nblocks, frontier = 2
+     WHEN NOT MATCHED THEN INSERT (sector_id, blocks, frontier) VALUES (s.nb, s.nblocks, 2);
+    added = ROW_COUNT;
+    UPDATE sound_flood SET frontier = frontier - 1 WHERE frontier > 0;
+    passes = passes + 1;
+  END
+  UPDATE sectors s SET sound_heard = 1
+   WHERE s.sound_heard = 0 AND EXISTS (SELECT 1 FROM sound_flood f WHERE f.sector_id = s.id);
+END^
+
 -- ── the player ────────────────────────────────────────────────────────────
 CREATE OR ALTER PROCEDURE player_think (
   fwd DOUBLE PRECISION, side DOUBLE PRECISION, turn DOUBLE PRECISION,
@@ -1312,7 +1359,7 @@ BEGIN
         RETURNING_VALUES shot_hit;
       i = i + 1;
     END
-    IF (weapon > 1) THEN UPDATE game SET noise_tic = :tic WHERE id = 1;   -- the chainsaw too
+    EXECUTE PROCEDURE noise_alert(sec, tic);   -- P_FireWeapon: every weapon, the fist too
   END
 
   UPDATE things SET x = :x, y = :y, z = :z, angle = :ang, momx = :momx, momy = :momy, momz = :momz,
@@ -1527,7 +1574,6 @@ DECLARE px DOUBLE PRECISION;
 DECLARE py DOUBLE PRECISION;
 DECLARE pz DOUBLE PRECISION;
 DECLARE pdead SMALLINT;
-DECLARE noise_tic INTEGER;
 DECLARE id INTEGER;
 DECLARE k VARCHAR(10);
 DECLARE x DOUBLE PRECISION;
@@ -1600,7 +1646,6 @@ DECLARE msky SMALLINT;
 BEGIN
   SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
     INTO px, py, pz, pdead, ptid, pang;
-  SELECT g.noise_tic FROM game g WHERE g.id = 1 INTO noise_tic;
 
   FOR SELECT t.id, t.kind, t.x, t.y, t.z, t.angle, t.st, t.st_tics, t.st_len, t.step, t.reaction,
              t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame, t.momz,
@@ -1880,10 +1925,11 @@ BEGIN
     END
     ELSE IF (st = 'idle') THEN
     BEGIN
-      -- A_Look: sight, or gunfire within earshot (unless deaf/ambush)
-      IF (k = 'monster' AND pdead = 0 AND dist < 2400
-          AND ((BIN_AND(flags, 8) = 0 AND tic - noise_tic < 16 AND dist < 1200)
-               OR check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1)) THEN
+      -- A_Look: the sector's soundtarget wakes it (ambush monsters must also
+      -- see the player), or it simply sees the player
+      IF (k = 'monster' AND pdead = 0
+          AND ((BIN_AND(flags, 8) = 0 AND (SELECT se.sound_heard FROM sectors se WHERE se.id = :sec) = 1)
+               OR (dist < 2400 AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1))) THEN
       BEGIN
         st = 'chase';
         st_tics = 0;
@@ -2221,6 +2267,17 @@ BEGIN
         len = SQRT((q.bx - q.ax) * (q.bx - q.ax) + (q.bby - q.ay) * (q.bby - q.ay)),
         front_sector = q.fsec, back_sector = q.bsec;
 
+  -- the sound graph for P_NoiseAlert, both directions
+  DELETE FROM sound_links;
+  INSERT INTO sound_links (a, b, block)
+  SELECT e.a, e.b, MIN(e.block)
+    FROM (SELECT front_sector a, back_sector b, IIF(BIN_AND(flags, 64) = 64, 1, 0) block
+            FROM linedefs WHERE back_sector IS NOT NULL AND back_sector <> front_sector
+          UNION ALL
+          SELECT back_sector, front_sector, IIF(BIN_AND(flags, 64) = 64, 1, 0)
+            FROM linedefs WHERE back_sector IS NOT NULL AND back_sector <> front_sector) e
+   GROUP BY e.a, e.b;
+
   MERGE INTO ssectors ss
   USING (SELECT ss2.id, sd.sector_id
            FROM ssectors ss2
@@ -2231,7 +2288,7 @@ BEGIN
    WHEN MATCHED THEN UPDATE SET sector_id = s.sector_id;
 
   UPDATE game
-     SET tic = 0, exit_kind = 0, noise_tic = -1000, map_name = :map_name,
+     SET tic = 0, exit_kind = 0, noise_tic = -1000, noise_sector = NULL, map_name = :map_name,
          root_node = (SELECT MAX(id) FROM nodes)
    WHERE id = 1;
 
