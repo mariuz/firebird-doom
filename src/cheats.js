@@ -35,6 +35,23 @@ export function makeParamCheatReader(code, n) {
 }
 
 /**
+ * IDMUS's digits → the map whose music to play, or null for vanilla's
+ * "IMPOSSIBLE SELECTION". DOOM I: episode and map, each 1–9, no further than
+ * the 32nd song (E4M5); DOOM II: songs 1–35.
+ */
+export function idmusMap(digits, doom2) {
+  if (!/^\d\d$/.test(digits)) return null;
+  if (doom2) {
+    const n = Number(digits);
+    return n >= 1 && n <= 35 ? `MAP${digits}` : null;
+  }
+  const e = Number(digits[0]);
+  const m = Number(digits[1]);
+  if (e < 1 || m < 1 || (e - 1) * 9 + (m - 1) > 31) return null;
+  return `E${e}M${m}`;
+}
+
+/**
  * IDCLEV's digits → a map in this WAD, or null. DOOM I reads them as episode
  * and map (13 → E1M3), DOOM II as the map number (07 → MAP07).
  */

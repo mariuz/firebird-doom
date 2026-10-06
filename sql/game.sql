@@ -2450,13 +2450,29 @@ END^
 -- ── the tic ───────────────────────────────────────────────────────────────
 -- G_Ticker: called by the browser with the input held since the last frame;
 -- runs `tics` 35 Hz game tics and returns the status bar.
+-- printf's %x for a 32-bit value: two's complement, lower case, no padding.
+CREATE OR ALTER FUNCTION hex32 (v BIGINT) RETURNS VARCHAR(8)
+AS
+DECLARE s VARCHAR(8) = '';
+BEGIN
+  v = MOD(MOD(v, 4294967296) + 4294967296, 4294967296);
+  IF (v = 0) THEN RETURN '0';
+  WHILE (v > 0) DO
+  BEGIN
+    s = SUBSTRING('0123456789abcdef' FROM MOD(v, 16) + 1 FOR 1) || s;
+    v = v / 16;
+  END
+  RETURN s;
+END^
+
 -- ST_Responder's cheats, typed during play (the browser spots the letters).
 -- IDDQD toggles god mode (and heals you to 100); IDKFA hands over every
 -- weapon (the super shotgun only in DOOM II), full ammo, 200 armour and every
 -- key. IDCLIP (or DOOM I's IDSPISPOPD) toggles walking through walls. A dead
 -- player can't cheat. IDBEHOLD alone lists the power-ups; with v/s/i/r/a/l
 -- after it, it toggles one. IDCHOPPERS hands over the chainsaw. (IDCLEV is
--- the browser's: it loads another map.)
+-- the browser's: it loads another map; so is IDMUS, which changes the music.)
+-- IDMYPOS shows where you are, the way DOOM printed it.
 CREATE OR ALTER PROCEDURE cheat (code VARCHAR(16))
 AS
 BEGIN
@@ -2476,6 +2492,14 @@ BEGIN
        SET msg = TRIM(IIF(p.noclip = 1, 'No Clipping Mode ON', 'No Clipping Mode OFF')), msg_tics = 70
      WHERE p.id = 1 AND p.dead = 0;
   END
+  ELSE IF (code = 'idmypos') THEN
+    -- "ang=0x%x;x,y=(0x%x,0x%x)": the angle in BAMs, x and y in 16.16 fixed point
+    UPDATE player p
+       SET msg = (SELECT 'ang=0x' || hex32(FLOOR(t.angle / (2 * PI()) * 4294967296))
+                         || ';x,y=(0x' || hex32(FLOOR(t.x * 65536)) || ',0x' || hex32(FLOOR(t.y * 65536)) || ')'
+                    FROM things t WHERE t.id = p.thing_id),
+           msg_tics = 70
+     WHERE p.id = 1;
   ELSE IF (code = 'idchoppers') THEN
     -- (vanilla also sets pw_invulnerability to "true": 1 tic, which cancels a sphere)
     UPDATE player p SET has_chainsaw = 1, invuln_tics = 1, msg = '... doesn''t suck - GM', msg_tics = 70

@@ -139,6 +139,14 @@ assert(spray > 0, 'BFG ball exploded');
   const o2 = (await db.query('SELECT health FROM player')).rows[0];
   assert(o.GOD === 0 && o.MSG === 'Degreelessness Mode Off' && o2.HEALTH === 90, `IDDQD again: off, and damage hurts (health ${o2.HEALTH})`);
 
+  // IDMYPOS: where you are, in DOOM's own units – BAMs and 16.16 fixed point, in hex
+  const here = (await db.query("SELECT x, y, angle FROM things WHERE kind = 'player'")).rows[0];
+  await db.exec(`UPDATE things SET x = 1, y = -1, angle = ${Math.PI / 2} WHERE kind = 'player'`);
+  await db.exec(`EXECUTE PROCEDURE cheat('idmypos')`);
+  const pos = (await db.query('SELECT msg FROM player')).rows[0].MSG;
+  await db.exec(`UPDATE things SET x = ${here.X}, y = ${here.Y}, angle = ${here.ANGLE} WHERE kind = 'player'`);
+  assert(pos === 'ang=0x40000000;x,y=(0x10000,0xffff0000)', `IDMYPOS at (1, -1) facing north: "${pos}"`);
+
   // IDCHOPPERS: the chainsaw, and vanilla's one tic of "invulnerability"
   await db.exec('UPDATE player SET has_chainsaw = 0, invuln_tics = 500');
   await db.exec(`EXECUTE PROCEDURE cheat('idchoppers')`);

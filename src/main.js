@@ -14,7 +14,7 @@ import { createSchema, loadResources, loadMap, setView, setRenderer } from './lo
 import { Renderer } from './renderer.js';
 import { drawStatusBar, drawText, drawWeapon } from './hud.js';
 import { AM_COLORS, automapColor } from './automap.js';
-import { clevMap, makeCheatReader, makeParamCheatReader } from './cheats.js';
+import { clevMap, idmusMap, makeCheatReader, makeParamCheatReader } from './cheats.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -47,9 +47,10 @@ let showMap = false;
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
 const iddt = makeCheatReader('iddt');
 // ST_Responder: IDDQD and IDKFA, typed any time during play
-const CHEATS = ['iddqd', 'idkfa', 'idclip', 'idspispopd', 'idchoppers', 'idbehold']
+const CHEATS = ['iddqd', 'idkfa', 'idclip', 'idspispopd', 'idchoppers', 'idbehold', 'idmypos']
   .map((code) => [code, makeCheatReader(code)]);
 const idbehold = makeParamCheatReader('idbehold', 1);   // …then v, s, i, r, a or l
+const idmus = makeParamCheatReader('idmus', 2);
 const idclev = makeParamCheatReader('idclev', 2);
 const audio = new DoomAudio();
 audio.setVolumes(settings.sfx / 100, settings.music / 100);
@@ -89,6 +90,16 @@ window.addEventListener('keydown', (e) => {
   const power = idbehold(e.key)?.toLowerCase();
   if (power && 'vsiral'.includes(power)) {
     db.query(`EXECUTE PROCEDURE cheat('idbehold${power}')`).catch((err) => console.error(err));
+  }
+  // IDMUS xy: S_ChangeMusic to another level's song, if there is such a song
+  const song = idmus(e.key);
+  if (song) {
+    const mapFor = idmusMap(song, wad.mapNames().some((m) => m.startsWith('MAP')));
+    const lump = mapFor && musicLumpFor(mapFor);
+    const ok = lump && wad.lump(lump);
+    if (ok) audio.playMusic(lump);
+    db.query(`UPDATE player SET msg = '${ok ? 'Music Change' : 'IMPOSSIBLE SELECTION'}', msg_tics = 70 WHERE id = 1`)
+      .catch((err) => console.error(err));
   }
   // IDCLEV xy: G_DeferedInitNew – a new game on that map, if this WAD has it
   const digits = idclev(e.key);

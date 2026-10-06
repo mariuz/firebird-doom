@@ -195,7 +195,7 @@ prints no message and isn't stored in the database.
 
 ### Cheats
 
-Type **IDDQD**, **IDKFA**, **IDCLIP**, **IDCHOPPERS**, **IDBEHOLD**<i>x</i> or **IDCLEV**<i>xy</i> any time during
+Type **IDDQD**, **IDKFA**, **IDCLIP**, **IDCHOPPERS**, **IDBEHOLD**<i>x</i>, **IDMYPOS**, **IDMUS**<i>xy</i> or **IDCLEV**<i>xy</i> any time during
 play (`ST_Responder`). The browser spots the letters
 and calls `EXECUTE PROCEDURE cheat('iddqd')`. The SQL console has buttons for both.
 
@@ -216,6 +216,13 @@ and calls `EXECUTE PROCEDURE cheat('iddqd')`. The SQL console has buttons for bo
   on gives the full time `P_GivePower` would, and berserk also heals you to 100. Switching one
   off leaves it one tic to run, and berserk goes straight to 0. As in vanilla, the computer area
   map can't be taken back.
+- **IDMYPOS** shows where you are the way DOOM printed it, `ang=0x…;x,y=(0x…,0x…)`: the
+  angle in BAMs and x/y in 16.16 fixed point, as 32-bit hex. A small PSQL function, `HEX32`,
+  does printf's `%x`.
+- **IDMUS**<i>xy</i> changes the music ("Music Change"). DOOM I reads the digits as episode and
+  map, up to vanilla's 32nd song (E4M5). DOOM II reads them as the song number, 1 to 35.
+  Anything else, or a song the WAD lacks, gets "IMPOSSIBLE SELECTION". It lives in the browser,
+  next to the synthesiser.
 - **IDCLEV**<i>xy</i> warps, as `G_DeferedInitNew` does: a new game on that map, inventory
   reset. DOOM I reads the digits as episode and map (`idclev13` is E1M3), DOOM II as the map
   number (`idclev07` is MAP07). Maps the WAD doesn't have are ignored. This cheat lives in the

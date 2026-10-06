@@ -636,7 +636,7 @@ if (slimeMap) {
     [automapColor({ flags: 4, special: 0 }, room, room, false, false, 1), AM_COLORS.twoSided, '…and flat openings, in grey'],
     [automapColor({ flags: 129, special: 0 }, room, null, false, false, 2), AM_COLORS.wall, '…and even ML_DONTDRAW lines'],
   ];
-  const { makeCheatReader, makeParamCheatReader, clevMap } = await import('../src/cheats.js');
+  const { makeCheatReader, makeParamCheatReader, clevMap, idmusMap } = await import('../src/cheats.js');
   const reader = makeCheatReader('iddt');
   const fired = [...'xidxiddtwidd', 'Shift', ...'T'].map((k) => reader(k));
   cases.push([fired.indexOf(true), 7, 'the cheat reader fires on the t of "iddt"'],
@@ -655,6 +655,13 @@ if (slimeMap) {
     [clevMap('07', d2), 'MAP07', 'DOOM II: 07 is MAP07'],
     [clevMap('19', d1), null, 'a map the WAD lacks is ignored'],
     [clevMap('4x', d1), null, 'so is anything but two digits'],
+    // IDMUS: vanilla's range rules ("IMPOSSIBLE SELECTION" past them)
+    [idmusMap('13', false), 'E1M3', 'IDMUS 13 on DOOM I: E1M3\'s song'],
+    [idmusMap('45', false), 'E4M5', '…as far as the 32nd song, E4M5'],
+    [idmusMap('46', false), null, '…but no further'],
+    [idmusMap('10', false), null, '…and no map 0'],
+    [idmusMap('35', true), 'MAP35', 'IDMUS 35 on DOOM II: the 35th song'],
+    [idmusMap('36', true), null, '…but not a 36th'],
   ];
   const clevBad = clevCases.filter(([g, w]) => g !== w).map(([, , what]) => what);
   assert(clevBad.length === 0, `IDCLEV parsing (${clevCases.length} cases${clevBad.length ? `; wrong: ${clevBad.join(', ')}` : ''})`);
