@@ -79,7 +79,7 @@ export const THING_TYPES = [
   I(82, 'SGN2', 'ssg', 8), I(83, 'MEGA', 'mega', 200, { walk: 'ABCD', bright: 1 }),
   I(5, 'BKEY', 'key', 1, { walk: 'AB' }), I(6, 'YKEY', 'key', 2, { walk: 'AB' }), I(13, 'RKEY', 'key', 4, { walk: 'AB' }),
   I(40, 'BSKU', 'key', 1, { walk: 'AB' }), I(39, 'YSKU', 'key', 2, { walk: 'AB' }), I(38, 'RSKU', 'key', 4, { walk: 'AB' }),
-  I(2023, 'PSTR', 'berserk', 100, { bright: 1 }), I(2026, 'PMAP', 'none', 0, { walk: 'ABCDCB', bright: 1 }),
+  I(2023, 'PSTR', 'berserk', 100, { bright: 1 }), I(2026, 'PMAP', 'allmap', 1, { walk: 'ABCDCB', bright: 1 }),
   I(2022, 'PINV', 'invuln', 1050, { walk: 'ABCD', bright: 1 }), I(2024, 'PINS', 'invis', 2100, { walk: 'ABCD', bright: 1 }),
   I(2025, 'SUIT', 'suit', 2100, { bright: 1 }), I(2045, 'PVIS', 'goggles', 4200, { walk: 'AB', bright: 1 }),
   I(2003, 'LAUN', 'launcher', 2), I(2004, 'PLAS', 'plasma', 40), I(2005, 'CSAW', 'chainsaw', 0), I(2006, 'BFUG', 'bfg', 40),

@@ -13,6 +13,7 @@ import { Wad } from './wad.js';
 import { createSchema, loadResources, loadMap, setView, setRenderer } from './loader.js';
 import { Renderer } from './renderer.js';
 import { drawStatusBar, drawText, drawWeapon } from './hud.js';
+import { automapColor } from './automap.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -168,10 +169,11 @@ async function startMap(name, newGame) {
   await loadMap(db, wad, res, name, { skill: 3, newGame });
   map = { name, skyTex: skyFor(name) };
   const { rows } = await db.query(
-    'SELECT id, front_side, back_side, flags, light_delta, x1, y1, x2, y2, front_sector, back_sector FROM linedefs',
+    'SELECT id, front_side, back_side, flags, light_delta, x1, y1, x2, y2, front_sector, back_sector, special FROM linedefs',
     [], { rowMode: 'array' });
   map.lines = new Map(rows.map((r) => [r[0], { fs: r[1], bs: r[2], flags: r[3], lightDelta: r[4] }]));
   map.linedefs = rows;
+  map.seen = new Set();   // ML_MAPPED: every line the renderer has drawn on this level
   await loadSides();
   sidesRev = -1;
   console.log(`[firebird-doom] ${name} loaded in ${(performance.now() - t0).toFixed(0)} ms`);
@@ -264,6 +266,7 @@ async function frame() {
       lastSoundId = sounds[sounds.length - 1][0];
       audio.playEvents(sounds, { x: hud.PX, y: hud.PY, angle: hud.PANGLE });
     }
+    for (const r of walls) map.seen.add(r[3]);
     lastFrame.walls = wallMs;
     lastFrame.sprites = spriteMs;
     lastFrame.rows = walls.length;
@@ -333,14 +336,12 @@ function drawAutomap() {
   const tx = (x) => cx + (x - hud.PX) * sc;
   const ty = (y) => cy - (y - hud.PY) * sc;
   for (const r of map.linedefs) {
-    const [, , bs, flags, , x1, y1, x2, y2, fsec, bsec] = r;
-    if (flags & 128) continue; // ML_DONTDRAW
+    const [id, , bs, flags, , x1, y1, x2, y2, fsec, bsec, special] = r;
     const f = map.sectors.get(fsec);
-    const b = bsec == null ? null : map.sectors.get(bsec);
-    if (bs == null || !b) ctx.strokeStyle = '#fc0000';
-    else if (f.floor !== b.floor) ctx.strokeStyle = '#bc7844';
-    else if (f.ceil !== b.ceil) ctx.strokeStyle = '#fcfc00';
-    else continue;
+    const b = bs == null || bsec == null ? null : map.sectors.get(bsec);
+    const color = automapColor({ flags, special }, f, b, map.seen.has(id), hud.ALLMAP === 1);
+    if (!color) continue;
+    ctx.strokeStyle = color;
     ctx.beginPath();
     ctx.moveTo(tx(x1), ty(y1));
     ctx.lineTo(tx(x2), ty(y2));

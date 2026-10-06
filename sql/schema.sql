@@ -290,7 +290,8 @@ CREATE TABLE player (
   invuln_tics  INTEGER DEFAULT 0 NOT NULL,   -- pw_invulnerability: tics of invulnerability left
   iron_tics    INTEGER DEFAULT 0 NOT NULL,   -- pw_ironfeet: the radiation suit
   infra_tics   INTEGER DEFAULT 0 NOT NULL,   -- pw_infrared: light amplification goggles
-  strength_tics INTEGER DEFAULT 0 NOT NULL   -- pw_strength: berserk, counting up from 1 (0 = none)
+  strength_tics INTEGER DEFAULT 0 NOT NULL,  -- pw_strength: berserk, counting up from 1 (0 = none)
+  allmap       SMALLINT DEFAULT 0 NOT NULL   -- pw_allmap: the computer area map, for this level
 );
 
 -- S_StartSound: every sound the simulation makes, for the browser to play.

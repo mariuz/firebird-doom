@@ -601,6 +601,40 @@ if (slimeMap) {
   await db.exec('UPDATE player SET health = 100, iron_tics = 0, infra_tics = 0');
 } else console.log('(no nukage or slime in this WAD)');
 
+// ── the computer area map ───────────────────────────────────────────────
+{
+  const sp = await one(`SELECT t.x, t.y FROM things t WHERE t.kind = 'player'`);
+  await db.exec('DELETE FROM sound_events');
+  await spawn(2026, sp.X, sp.Y);
+  const got = (await tic()).rows[0];
+  const pow = (await one(`SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSGETPOW'`)).N;
+  assert(got.ALLMAP === 1 && pow > 0, `the computer area map: allmap ${got.ALLMAP}`);
+  const second = await spawn(2026, sp.X, sp.Y);
+  await tic();
+  assert((await one(`SELECT COUNT(*) n FROM things WHERE id = ${second}`)).N === 1, '…and a second one stays where it lies (P_GivePower)');
+  await loadMap(db, wad, res, maps[0]);
+  assert((await tic()).rows[0].ALLMAP === 0, '…and the next level starts without it');
+
+  // AM_drawWalls: seen lines in their colours, unseen ones grey with the map, else hidden
+  const { automapColor, AM_COLORS } = await import('../src/automap.js');
+  const room = { floor: 0, ceil: 128 };
+  const step = { floor: 24, ceil: 128 };
+  const cases = [
+    [automapColor({ flags: 1, special: 0 }, room, null, true, false), AM_COLORS.wall, 'a seen wall is red'],
+    [automapColor({ flags: 4, special: 0 }, room, step, true, false), AM_COLORS.floor, 'a seen step is brown'],
+    [automapColor({ flags: 4, special: 0 }, room, room, true, false), null, 'a seen flat opening is left out'],
+    [automapColor({ flags: 36, special: 0 }, room, step, true, false), AM_COLORS.wall, 'a secret line passes for a wall'],
+    [automapColor({ flags: 4, special: 39 }, room, room, true, false), AM_COLORS.teleport, 'a teleporter line is dark red'],
+    [automapColor({ flags: 1, special: 0 }, room, null, false, false), null, 'an unseen wall is hidden'],
+    [automapColor({ flags: 1, special: 0 }, room, null, false, true), AM_COLORS.unseen, '…grey with the computer map'],
+    [automapColor({ flags: 4, special: 0 }, room, room, false, true), AM_COLORS.unseen, '…openings too'],
+    [automapColor({ flags: 129, special: 0 }, room, null, true, true), null, 'ML_DONTDRAW never shows'],
+    [automapColor({ flags: 257, special: 0 }, room, null, false, false), AM_COLORS.wall, 'ML_MAPPED shows unseen'],
+  ];
+  const bad = cases.filter(([got, want]) => got !== want).map(([, , what]) => what);
+  assert(bad.length === 0, `automap colours (${cases.length} cases${bad.length ? `; wrong: ${bad.join(', ')}` : ''})`);
+}
+
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'physics ok');
 process.exit(failures ? 1 : 0);

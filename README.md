@@ -176,6 +176,17 @@ does, `A_Punch` multiplies the fist's 2d10 by ten. The screen flushes red and fa
 `ST_doPaletteStuff` treats `12 - (strength >> 6)` as pain whenever it's stronger than any real
 pain flash.
 
+### The automap and the computer area map
+
+The automap (<kbd>Tab</kbd>) draws only the lines you've seen, as DOOM's does. Every line id that
+`FRAME_WALLS` returns counts as seen (`ML_MAPPED`) for the rest of the level, and lines the map
+pre-marks with flag 256 count too. Seen lines get `AM_drawWalls`' colours: red for walls, brown for
+floor steps, yellow for ceiling steps, dark red for teleporters. Secret lines pass for plain walls
+and `ML_DONTDRAW` lines never show. The computer area map sets `pw_allmap` (`PLAYER.ALLMAP`)
+for the level, and every line you haven't seen yet then shows in grey. As with `P_GivePower`,
+you can only carry one, so a second one stays on the floor. The colour rules live in
+[src/automap.js](src/automap.js) and are tested headless.
+
 ### Sound and music
 
 The simulation decides what you hear. `PLAY_SOUND` inserts a row into `SOUND_EVENTS` (sound
