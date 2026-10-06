@@ -112,10 +112,18 @@ assert(spray > 0, 'BFG ball exploded');
     `berserk: four punches did ${bare} bare, ${mad} berserk (2d10 × 10)`);
 }
 
-// the cheats: IDKFA arms you to the teeth, IDDQD toggles god mode
+// the cheats: IDFA and IDKFA arm you to the teeth, IDDQD toggles god mode
 {
-  await db.exec(`UPDATE player SET has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0,
-                 has_chainsaw = 0, has_ssg = 0, bullets = 1, shells = 0, rockets = 0, cells = 0, armor = 0, keycards = 0`);
+  const disarm = () => db.exec(`UPDATE player SET has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0,
+                 has_bfg = 0, has_chainsaw = 0, has_ssg = 0, bullets = 1, shells = 0, rockets = 0, cells = 0, armor = 0, keycards = 0`);
+  await disarm();
+  await db.exec(`EXECUTE PROCEDURE cheat('idfa')`);
+  const f = (await db.query('SELECT * FROM player')).rows[0];
+  assert(f.HAS_SHOTGUN && f.HAS_CHAINGUN && f.HAS_LAUNCHER && f.HAS_PLASMA && f.HAS_BFG && f.HAS_CHAINSAW
+    && f.BULLETS === f.MAX_BULLETS && f.CELLS === f.MAX_CELLS && f.ARMOR === 200 && f.KEYCARDS === 0
+    && f.MSG === 'Ammo (no keys) Added',
+    `IDFA: every weapon, full ammo, armor ${f.ARMOR}, but no keys (${f.KEYCARDS}): "${f.MSG}"`);
+  await disarm();
   await db.exec(`EXECUTE PROCEDURE cheat('IDKFA')`);
   const k = (await db.query('SELECT * FROM player')).rows[0];   // (before a tic: the monster nearby is awake)
   const phase2 = wad.mapNames()[0].startsWith('MAP');

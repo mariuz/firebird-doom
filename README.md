@@ -195,7 +195,7 @@ prints no message and isn't stored in the database.
 
 ### Cheats
 
-Type **IDDQD**, **IDKFA**, **IDCLIP**, **IDCHOPPERS**, **IDBEHOLD**<i>x</i>, **IDMYPOS**, **IDMUS**<i>xy</i> or **IDCLEV**<i>xy</i> any time during
+Type **IDDQD**, **IDKFA**, **IDFA**, **IDCLIP**, **IDCHOPPERS**, **IDBEHOLD**<i>x</i>, **IDMYPOS**, **IDMUS**<i>xy</i> or **IDCLEV**<i>xy</i> any time during
 play (`ST_Responder`). The browser spots the letters
 and calls `EXECUTE PROCEDURE cheat('iddqd')`. The SQL console has buttons for both.
 
@@ -204,7 +204,8 @@ and calls `EXECUTE PROCEDURE cheat('iddqd')`. The SQL console has buttons for bo
   turns gold. E1M8's exit floor switches it off, a new game clears it, and it carries over from
   level to level.
 - **IDKFA** hands over every weapon, ammo up to your current maximums, 200 armour and all three
-  keys. The super shotgun comes only on DOOM II maps.
+  keys. The super shotgun comes only on DOOM II maps. **IDFA** does the same without the keys
+  ("Ammo (no keys) Added").
 - **IDCLIP** (or DOOM I's **IDSPISPOPD**) toggles no clipping (`PLAYER.NOCLIP`, `CF_NOCLIP`).
   `P_CheckPosition` says yes before looking at a single line or thing, so you walk through walls
   and monsters. No lines are checked, so none trigger as you cross them. Your height still

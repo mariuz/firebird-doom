@@ -47,7 +47,7 @@ let showMap = false;
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
 const iddt = makeCheatReader('iddt');
 // ST_Responder: IDDQD and IDKFA, typed any time during play
-const CHEATS = ['iddqd', 'idkfa', 'idclip', 'idspispopd', 'idchoppers', 'idbehold', 'idmypos']
+const CHEATS = ['iddqd', 'idkfa', 'idfa', 'idclip', 'idspispopd', 'idchoppers', 'idbehold', 'idmypos']
   .map((code) => [code, makeCheatReader(code)]);
 const idbehold = makeParamCheatReader('idbehold', 1);   // …then v, s, i, r, a or l
 const idmus = makeParamCheatReader('idmus', 2);

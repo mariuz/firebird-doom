@@ -2466,7 +2466,7 @@ BEGIN
 END^
 
 -- ST_Responder's cheats, typed during play (the browser spots the letters).
--- IDDQD toggles god mode (and heals you to 100); IDKFA hands over every
+-- IDDQD toggles god mode (and heals you to 100); IDKFA (IDFA: no keys) hands over every
 -- weapon (the super shotgun only in DOOM II), full ammo, 200 armour and every
 -- key. IDCLIP (or DOOM I's IDSPISPOPD) toggles walking through walls. A dead
 -- player can't cheat. IDBEHOLD alone lists the power-ups; with v/s/i/r/a/l
@@ -2520,12 +2520,14 @@ BEGIN
            infra_tics = IIF(:code = 'idbeholdl', IIF(p.infra_tics > 0, 1, 4200), p.infra_tics),
            msg = 'Power-up Toggled', msg_tics = 70
      WHERE p.id = 1 AND p.dead = 0;
-  ELSE IF (code = 'idkfa') THEN
+  ELSE IF (code IN ('idkfa', 'idfa')) THEN
+    -- IDFA is IDKFA without the keys
     UPDATE player p
        SET has_shotgun = 1, has_chaingun = 1, has_launcher = 1, has_plasma = 1, has_bfg = 1, has_chainsaw = 1,
            has_ssg = IIF((SELECT g.map_name FROM game g WHERE g.id = 1) STARTING WITH 'MAP', 1, p.has_ssg),
            bullets = p.max_bullets, shells = p.max_shells, rockets = p.max_rockets, cells = p.max_cells,
-           armor = 200, keycards = 7, msg = 'Very Happy Ammo Added', msg_tics = 70
+           armor = 200, keycards = IIF(:code = 'idkfa', 7, p.keycards),
+           msg = TRIM(IIF(:code = 'idkfa', 'Very Happy Ammo Added', 'Ammo (no keys) Added')), msg_tics = 70
      WHERE p.id = 1 AND p.dead = 0;
 END^
 
