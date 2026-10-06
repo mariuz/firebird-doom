@@ -663,6 +663,22 @@ if (slimeMap) {
     [idmusMap('35', true), 'MAP35', 'IDMUS 35 on DOOM II: the 35th song'],
     [idmusMap('36', true), null, '…but not a 36th'],
   ];
+  // DOOM II's secret levels, against this WAD: IDCLEV 31/32 reach MAP31/MAP32, and IDMUS
+  // 31–35 play EVIL, ULTIMA and the three non-level songs
+  if (maps.includes('MAP31')) {
+    const { musicLumpFor } = await import('../src/audio.js');
+    const song = (d) => { const l = musicLumpFor(idmusMap(d, true)); return l && wad.lump(l) ? l : null; };
+    clevCases.push(
+      [clevMap('31', maps), 'MAP31', 'IDCLEV 31: MAP31, the first secret level'],
+      [clevMap('32', maps), 'MAP32', 'IDCLEV 32: MAP32, the second'],
+      [clevMap('33', maps), null, 'IDCLEV 33: no such map'],
+      [song('31'), 'D_EVIL', 'IDMUS 31: D_EVIL'],
+      [song('32'), 'D_ULTIMA', 'IDMUS 32: D_ULTIMA'],
+      [song('33'), 'D_READ_M', 'IDMUS 33: D_READ_M (the story screens)'],
+      [song('34'), 'D_DM2TTL', 'IDMUS 34: D_DM2TTL (the title)'],
+      [song('35'), 'D_DM2INT', 'IDMUS 35: D_DM2INT (the intermission)'],
+    );
+  }
   const clevBad = clevCases.filter(([g, w]) => g !== w).map(([, , what]) => what);
   assert(clevBad.length === 0, `IDCLEV parsing (${clevCases.length} cases${clevBad.length ? `; wrong: ${clevBad.join(', ')}` : ''})`);
 }

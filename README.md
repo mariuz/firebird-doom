@@ -221,7 +221,9 @@ and calls `EXECUTE PROCEDURE cheat('iddqd')`. The SQL console has buttons for bo
   angle in BAMs and x/y in 16.16 fixed point, as 32-bit hex. A small PSQL function, `HEX32`,
   does printf's `%x`.
 - **IDMUS**<i>xy</i> changes the music ("Music Change"). DOOM I reads the digits as episode and
-  map, up to vanilla's 32nd song (E4M5). DOOM II reads them as the song number, 1 to 35.
+  map, up to vanilla's 32nd song (E4M5). DOOM II reads them as the song number, 1 to 35: 31 and 32
+  are the secret levels' EVIL and ULTIMA, and 33–35 the story screens', title and intermission
+  tunes. IDCLEV 31 and 32 reach MAP31 and MAP32.
   Anything else, or a song the WAD lacks, gets "IMPOSSIBLE SELECTION". It lives in the browser,
   next to the synthesiser.
 - **IDCLEV**<i>xy</i> warps, as `G_DeferedInitNew` does: a new game on that map, inventory

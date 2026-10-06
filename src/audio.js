@@ -12,10 +12,13 @@ const CLOSE_DIST = 200;    // S_CLOSE_DIST: full volume inside this
 const CLIP_DIST = 1200;    // S_CLIPPING_DIST: silent beyond this
 const STEREO_SWING = 0.75; // S_STEREO_SWING, as a fraction of full pan
 
-// DOOM II's music lumps for MAP01..MAP32
+// DOOM II's music lumps: MAP01..MAP30, the secret levels (MAP31 EVIL, MAP32
+// ULTIMA), then the three that aren't level music but that IDMUS 33–35 reach
+// all the same – the story screens, the title and the intermission
 const D2_MUSIC = ['RUNNIN', 'STALKS', 'COUNTD', 'BETWEE', 'DOOM', 'THE_DA', 'SHAWN', 'DDTBLU', 'IN_CIT', 'DEAD',
   'STLKS2', 'THEDA2', 'DOOM2', 'DDTBL2', 'RUNNI2', 'DEAD2', 'STLKS3', 'ROMERO', 'SHAWN2', 'MESSAG', 'COUNT2',
-  'DDTBL3', 'AMPIE', 'THEDA3', 'ADRIAN', 'MESSG2', 'ROMER2', 'TENSE', 'SHAWN3', 'OPENIN', 'EVIL', 'ULTIMA'];
+  'DDTBL3', 'AMPIE', 'THEDA3', 'ADRIAN', 'MESSG2', 'ROMER2', 'TENSE', 'SHAWN3', 'OPENIN', 'EVIL', 'ULTIMA',
+  'READ_M', 'DM2TTL', 'DM2INT'];
 
 export function musicLumpFor(mapName) {
   if (/^E\dM\d$/.test(mapName)) return `D_${mapName}`;
