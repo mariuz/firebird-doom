@@ -324,7 +324,7 @@ BEGIN
   IF (hp <= 0) THEN
   BEGIN
     UPDATE things
-       SET hp = :hp, st = 'dying', solid = 0, momx = 0, momy = 0,
+       SET hp = :hp, st = 'dying', solid = 0, momx = 0, momy = 0, momz = IIF(:st = 'charge', 0, momz),
            st_tics = CHAR_LENGTH(:death_fr) * 5, st_len = CHAR_LENGTH(:death_fr) * 5,
            frame = SUBSTRING(:death_fr FROM 1 FOR 1), sprite = :death_sprite
      WHERE id = :tid;
@@ -337,6 +337,9 @@ BEGIN
   ELSE
   BEGIN
     UPDATE things t SET hp = :hp, reaction = 0, st = IIF(t.st = 'idle' AND t.kind = 'monster', 'chase', t.st) WHERE t.id = :tid;
+    -- a lost soul hurt in mid-charge stops dead
+    IF (st = 'charge') THEN
+      UPDATE things t SET st = 'chase', st_tics = 10, momx = 0, momy = 0, momz = 0 WHERE t.id = :tid;
     -- infighting: a monster hurt by another monster goes after it, and won't
     -- switch again for BASETHRESHOLD (100) chase steps. Hurt by the player
     -- once that has worn off, it comes back for the player. As in DOOM, an
@@ -1571,8 +1574,9 @@ BEGIN
   ny = sy + SIN(ang) * prestep;
   EXECUTE PROCEDURE check_position(-1, nx, ny, sz, 16, 56, 0) RETURNING_VALUES ok, fz, cz, dz, sec;
   IF (ok = 0 OR check_sight(sx, sy, sz + 32, nx, ny, sz + 32) = 0) THEN EXIT;
-  EXECUTE PROCEDURE spawn_thing(3006, nx, ny, NULL, ang) RETURNING_VALUES mid;
-  UPDATE things t SET st = 'chase', st_tics = 0, reaction = 0 WHERE t.id = :mid;
+  EXECUTE PROCEDURE spawn_thing(3006, nx, ny, sz, ang) RETURNING_VALUES mid;
+  -- …and A_SkullAttack: it launches itself at once (next tic)
+  UPDATE things t SET st = 'attack', st_len = 10, st_tics = 1, reaction = 0 WHERE t.id = :mid;
 END^
 
 -- A monster's attack lands on its target: the player (TGT NULL) or a monster.
@@ -1719,6 +1723,7 @@ DECLARE vtgt INTEGER;
 DECLARE mass INTEGER;
 DECLARE fl SMALLINT;
 DECLARE grav SMALLINT;
+DECLARE nsec INTEGER;
 BEGIN
   SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
     INTO ppx, ppy, ppz, ppdead, ptid, pang;
@@ -1895,6 +1900,51 @@ BEGIN
         st_tics = 0;
         step = 0;
         frame = SUBSTRING(walk_fr FROM 1 FOR 1);
+      END
+    END
+    ELSE IF (st = 'charge') THEN
+    BEGIN
+      -- MF_SKULLFLY: the lost soul hurtles on at 20 units a tic until it
+      -- slams into something. PIT_CheckThing: whatever solid thing it meets
+      -- takes ((P_Random() % 8) + 1) × 3; P_XYMovement: a wall stops it too.
+      frame = SUBSTRING(atk_fr FROM 1 + MOD(tic / 4, 2) FOR 1);
+      nx = x + momx;
+      ny = y + momy;
+      hit = NULL;
+      IF (ppdead = 0 AND ABS(ppx - nx) < 16 + rad AND ABS(ppy - ny) < 16 + rad
+          AND z <= ppz + 56 AND z + hgt >= ppz) THEN
+        hit = ptid;
+      ELSE
+        SELECT FIRST 1 t.id FROM things t
+         WHERE t.x BETWEEN :nx - 160 AND :nx + 160
+           AND t.solid = 1 AND t.id <> :id AND t.kind <> 'player'
+           AND ABS(t.x - :nx) < t.radius + :rad AND ABS(t.y - :ny) < t.radius + :rad
+           AND t.z <= :z + :hgt AND t.z + t.height >= :z
+          INTO hit;
+      ok = 0;
+      IF (hit = ptid) THEN
+        EXECUTE PROCEDURE damage_player(dmg_lo * (1 + CAST(FLOOR(RAND() * 8) AS INTEGER)));
+      ELSE IF (hit IS NOT NULL) THEN
+        EXECUTE PROCEDURE damage_thing(hit, dmg_lo * (1 + CAST(FLOOR(RAND() * 8) AS INTEGER)), id);
+      ELSE
+      BEGIN
+        -- (a flier: ledges don't stop it, only walls, steps and low ceilings)
+        EXECUTE PROCEDURE check_position(id, nx, ny, z, rad, hgt, 0) RETURNING_VALUES ok, fz, cz, dz, nsec;
+        IF (ok = 1) THEN
+        BEGIN
+          x = nx;
+          y = ny;
+          sec = nsec;
+        END
+      END
+      IF (ok = 0) THEN
+      BEGIN
+        -- back to its spawn state: a moment's pause, then the hunt again
+        st = 'chase';
+        st_tics = 10;
+        momz = 0;
+        frame = SUBSTRING(walk_fr FROM 1 FOR 1);
+        UPDATE things t SET momx = 0, momy = 0 WHERE t.id = :id;
       END
     END
     ELSE IF (st = 'melee') THEN
@@ -2118,7 +2168,17 @@ BEGIN
         UPDATE things t SET x = :sx, y = :sy WHERE t.kind = 'flame' AND t.owner_id = :id;
         EXECUTE PROCEDURE radius_attack(sx, sy, pz, 70, id);
       END
-      IF (st_tics = 7 AND pdead = 0 AND ttype <> 67 AND atk_kind <> 'vile') THEN
+      -- A_SkullAttack: face the target, scream, and fly at its middle
+      IF (atk_kind = 'skull' AND st_tics <= 0) THEN
+      BEGIN
+        st = 'charge';
+        EXECUTE PROCEDURE play_sound(atk_snd, id, x, y);
+        momx = COS(ang) * 20;
+        momy = SIN(ang) * 20;
+        momz = (pz + 28 - z) / MAXVALUE(1e0, dist / 20);
+        UPDATE things t SET momx = :momx, momy = :momy WHERE t.id = :id;
+      END
+      IF (st_tics = 7 AND pdead = 0 AND ttype <> 67 AND atk_kind NOT IN ('vile', 'skull')) THEN
       BEGIN
         melee_range = 60 + rad / 2;
         EXECUTE PROCEDURE play_sound(IIF(atk_kind = 'missile' AND dist < melee_range, 'DSCLAW', atk_snd), id, x, y);
@@ -2163,7 +2223,7 @@ BEGIN
         ELSE IF (atk_kind = 'missile') THEN
           EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad, ang, px, py, pz);
       END
-      IF (st_tics <= 0) THEN
+      IF (st_tics <= 0 AND st = 'attack') THEN
       BEGIN
         st = 'chase';
         st_tics = 0;
@@ -2219,7 +2279,9 @@ BEGIN
                      AND (dist < melee_range OR RAND() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2)))
                  -- P_CheckMissileRange: the arch-vile only reaches 14 × 64 units
                  OR (atk_kind = 'vile' AND dist < 896
-                     AND RAND() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2)))
+                     AND RAND() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2))
+                 -- the lost soul's range check counts half the distance
+                 OR (atk_kind = 'skull' AND RAND() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 4)))
             AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
         BEGIN
           ang = ATAN2(py - y, px - x);
@@ -2233,7 +2295,7 @@ BEGIN
           ELSE
           BEGIN
             st = 'attack';
-            st_len = CHAR_LENGTH(atk_fr) * 8;
+            st_len = IIF(atk_kind = 'skull', 10, CHAR_LENGTH(atk_fr) * 8);
             st_tics = st_len;
             frame = SUBSTRING(atk_fr FROM 1 FOR 1);
             IF (ttype = 67) THEN EXECUTE PROCEDURE play_sound('DSMANATK', id, x, y);
@@ -2288,13 +2350,15 @@ BEGIN
       END
       IF (z + hgt > mcz) THEN
       BEGIN
-        IF (momz > 0) THEN momz = 0;
+        IF (st = 'charge') THEN momz = -ABS(momz);   -- a charging skull bounces
+        ELSE IF (momz > 0) THEN momz = 0;
         z = mcz - hgt;
       END
       IF (z <= mfz) THEN
       BEGIN
         z = mfz;
-        IF (momz < 0) THEN momz = 0;
+        IF (st = 'charge') THEN momz = ABS(momz);
+        ELSE IF (momz < 0) THEN momz = 0;
       END
       ELSE IF (grav = 1) THEN
       BEGIN

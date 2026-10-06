@@ -296,6 +296,11 @@ The DOOM II monsters' signature attacks follow DOOM's code:
   masterminds or other arch-viles
 - the pain elemental spits lost souls (`A_PainShootSkull`), and three more when it dies
   (`A_PainDie`), never past 20 and only where there's room
+- lost souls charge (`A_SkullAttack`): 10 tics facing you, a scream, then a flight at 20 units a
+  tic aimed at your middle. They keep flying until they hit something. Whatever they hit (you, a
+  monster, a pillar) takes 3–24 damage, and a wall stops them too. Floors and ceilings bounce
+  them, a shot in mid-flight stops them dead, and their range check counts half the distance, so
+  they charge from far off. Souls spat out by a pain elemental charge at once
 
 Large maps with many monsters awake at once can still drop below 10 fps. The *Low* detail setting
 (160 columns, like DOOM's own) halves the render cost.
