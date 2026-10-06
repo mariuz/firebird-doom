@@ -274,8 +274,10 @@ async function frame() {
     // with the goggles, nearly full bright (1) – both flicker off in the last four seconds
     const blink = (n) => n > 4 * 32 || (n & 8);
     const fixedColormap = blink(hud.INVULN_TICS) ? 32 : blink(hud.INFRA_TICS) ? 1 : null;
-    // ST_doPaletteStuff: pain red, else pickup gold, else the radiation suit's green (13)
-    const palette = hud.DAMAGE_COUNT ? Math.min(8, (hud.DAMAGE_COUNT + 7) >> 3)
+    // ST_doPaletteStuff: pain red (berserk's red, fading over 768 tics, counts
+    // as pain), else pickup gold, else the radiation suit's green (13)
+    const red = Math.max(hud.DAMAGE_COUNT, hud.STRENGTH_TICS ? 12 - (hud.STRENGTH_TICS >> 6) : 0);
+    const palette = red > 0 ? Math.min(8, (red + 7) >> 3)
       : hud.BONUS_COUNT ? Math.min(12, 8 + ((hud.BONUS_COUNT + 7) >> 3))
         : blink(hud.IRON_TICS) ? 13 : 0;
     renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette, fixedColormap },

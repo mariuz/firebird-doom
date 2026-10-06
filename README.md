@@ -168,6 +168,14 @@ showing (`ST_doPaletteStuff`). The light amplification goggles (`pw_infrared`, 4
 `PLAYER.INFRA_TICS`) set fixed colormap 1, nearly full bright everywhere. Invulnerability's
 inverse greys win when both are on. Both effects flicker off in their last four seconds.
 
+### Berserk
+
+The berserk pack raises your health to 100 (`P_GiveBody`), puts the fist in your hand and sets
+`pw_strength`. `PLAYER.STRENGTH_TICS` counts up from 1 and lasts until the level ends. While it
+does, `A_Punch` multiplies the fist's 2d10 by ten. The screen flushes red and fades over 768 tics:
+`ST_doPaletteStuff` treats `12 - (strength >> 6)` as pain whenever it's stronger than any real
+pain flash.
+
 ### Sound and music
 
 The simulation decides what you hear. `PLAY_SOUND` inserts a row into `SOUND_EVENTS` (sound

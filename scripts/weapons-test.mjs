@@ -84,6 +84,32 @@ assert(spray > 0, 'BFG ball exploded');
   assert(snd.includes('DSSAWUP') && snd.includes('DSSAWHIT'), `chainsaw: played ${snd}`);
   s = await tic([1, 0, 0, 0, 0, 0, 1, 0]);
   assert(s.WEAPON === 1, 'chainsaw: key 1 again goes back to the fist');
+
+  // the berserk pack: health back to 100, out comes the fist, and it hits ten times as hard
+  const punches = async (n) => {
+    const h0 = (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0].HP;
+    for (let k = 0; k < n; k++) {
+      for (let i = 0; i < 18; i++) {
+        // (held in its pain state, so it stays in reach)
+        await db.exec(`UPDATE things SET st = 'pain', st_tics = 99, hp = MAXVALUE(hp, 100) WHERE id = ${target}`);
+        await tic([1, 0, 0, 0, i === 0 ? 1 : 0, 0, 0, 0]);
+      }
+    }
+    return h0 - (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0].HP;
+  };
+  await db.exec(`UPDATE things SET hp = 5000 WHERE id = ${target}`);
+  const bare = await punches(4);
+  await db.exec('UPDATE player SET health = 40, has_shotgun = 1, weapon = 3');
+  const p = (await db.query("SELECT x, y FROM things WHERE kind = 'player'")).rows[0];
+  await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
+      EXECUTE PROCEDURE spawn_thing(2023, ${p.X}, ${p.Y}, NULL, 0) RETURNING_VALUES id; END`);
+  s = await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  assert(s.HEALTH === 100 && s.WEAPON === 1 && s.STRENGTH_TICS > 0,
+    `berserk: health ${s.HEALTH}, weapon ${s.WEAPON} (the fist), strength ${s.STRENGTH_TICS}`);
+  await db.exec(`UPDATE things SET hp = 5000 WHERE id = ${target}`);
+  const mad = await punches(4);
+  assert(bare > 0 && bare <= 80 && mad >= 80 && mad > bare,   // (each bare punch ≤ 20, each berserk one ≥ 20)
+    `berserk: four punches did ${bare} bare, ${mad} berserk (2d10 × 10)`);
 }
 
 // the super shotgun, where the WAD has its graphics (DOOM II / Phase 2)
