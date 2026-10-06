@@ -292,6 +292,21 @@ if (sky) {
   }
 }
 
+// a monster killed by another thing's attack earlier in the same tic stays dead
+// (the monster loop must not write back its cursor's stale copy)
+{
+  await loadMap(db, wad, res, maps[0]);
+  await quiet();
+  const pl = await one(`SELECT t.x, t.y FROM things t WHERE t.kind = 'player'`);
+  const barrel = await spawn(2035, pl.X + 1000, pl.Y + 1000);    // spawned first: thinks first
+  const imp = await spawn(3001, pl.X + 1024, pl.Y + 1000);
+  await db.exec(`UPDATE things SET hp = 10, st = 'chase', st_tics = 3 WHERE id = ${imp}`);
+  await db.exec(`UPDATE things SET st = 'dying', st_len = 25, st_tics = 16 WHERE id = ${barrel}`);
+  await tic(4);
+  const st = (await one(`SELECT st, hp FROM things WHERE id = ${imp}`));
+  assert(['dying', 'dead'].includes(st.ST), `an imp killed by a barrel exploding earlier in the tic stays dead (${st.ST}, ${st.HP} hp)`);
+}
+
 // ── infighting ─────────────────────────────────────────────────────────
 {
   /** A map whose start has a heading with open, level floor out to 300 units. */
@@ -381,11 +396,57 @@ if (sky) {
       hit = (await one(`SELECT hp FROM things WHERE id = ${blocker}`)).HP < 1000;
     }
     const b = await one(`SELECT hp, target_id FROM things WHERE id = ${blocker}`);
-    assert(hit && b.TARGET_ID === zombie, `a zombieman's bullets hit an imp in the line of fire (${1000 - b.HP}), which turns on it`);
+    const zb = await one(`SELECT st, hp, target_id FROM things WHERE id = ${zombie}`);
+    assert(hit && b.TARGET_ID === zombie, `a zombieman's bullets hit an imp in the line of fire (${1000 - b.HP}), which turns on it (imp → ${b.TARGET_ID}, zombie ${zombie}: ${zb.ST}, ${zb.HP} hp, after ${zb.TARGET_ID})`);
     // and once the grudge wears off, the player can draw it back
     await db.exec(`UPDATE things SET threshold = 0 WHERE id = ${blocker}`);
     await db.exec(`EXECUTE PROCEDURE damage_thing(${blocker}, 1, ${pl.ID})`);
     assert((await one(`SELECT target_id t FROM things WHERE id = ${blocker}`)).T === null, 'with its threshold spent, hurting it brings it back to the player');
+    await db.exec(`DELETE FROM things WHERE id IN (${zombie}, ${blocker}) OR thing_type IN (9010, 9011)`);
+
+    // arch-viles: always provoked, never provoking
+    const vile = await placeMon(64, 280, `, angle = ${dir + Math.PI}`);
+    const demon2 = await placeMon(3002, 140);
+    const imp2 = await placeMon(3001, 200);
+    await db.exec(`UPDATE things SET target_id = ${imp2}, threshold = 80 WHERE id = ${vile}`);
+    await db.exec(`EXECUTE PROCEDURE damage_thing(${vile}, 5, ${demon2})`);
+    assert((await one(`SELECT target_id t FROM things WHERE id = ${vile}`)).T === demon2,
+      'an arch-vile hurt by a demon turns on it, even mid-grudge');
+    await db.exec(`UPDATE things SET threshold = 80 WHERE id = ${vile}`);
+    await db.exec(`EXECUTE PROCEDURE damage_thing(${vile}, 5, ${pl.ID})`);
+    assert((await one(`SELECT target_id t FROM things WHERE id = ${vile}`)).T === null,
+      '…and hurt by the player, it turns on the player, threshold or not');
+    await db.exec(`EXECUTE PROCEDURE damage_thing(${imp2}, 5, ${vile})`);
+    assert((await one(`SELECT target_id t FROM things WHERE id = ${imp2}`)).T === null, 'an arch-vile\'s damage provokes nobody');
+    await db.exec(`DELETE FROM things WHERE id = ${imp2}`);
+
+    // an arch-vile fighting a demon flames the demon, not the player
+    await db.exec(`UPDATE things SET target_id = ${demon2}, threshold = 100, st = 'attack', st_len = 80, st_tics = 80 WHERE id = ${vile}`);
+    await db.exec(`UPDATE things SET flags = 8, st = 'idle' WHERE id = ${demon2}`);
+    await db.exec('UPDATE player SET health = 1000, armor = 0');
+    const dhp0 = (await one(`SELECT hp FROM things WHERE id = ${demon2}`)).HP;
+    let nearDemon = 0;
+    let flameTics = 0;
+    let rose = 0;
+    for (let i = 0; i < 85; i++) {
+      await tic();
+      const f = await one(`SELECT f.x fx, f.y fy, d.x dx, d.y dy, p.z pz, s.floor_h pf
+                             FROM things d CROSS JOIN things p JOIN sectors s ON s.id = p.sector_id
+                             LEFT JOIN things f ON f.kind = 'flame' AND f.owner_id = ${vile}
+                            WHERE d.id = ${demon2} AND p.kind = 'player'`);
+      rose = Math.max(rose, f.PZ - f.PF);
+      if (f.FX != null) {
+        flameTics++;
+        if (Math.hypot(f.FX - f.DX, f.FY - f.DY) < 30) nearDemon++;
+      }
+    }
+    const dhp1 = (await one(`SELECT hp FROM things WHERE id = ${demon2}`)).HP;
+    const php = (await one('SELECT health FROM player')).HEALTH;
+    assert(flameTics > 50 && nearDemon / flameTics > 0.75, `the arch-vile's flame dances on the demon (${nearDemon} of ${flameTics} tics)`);
+    assert(dhp0 - dhp1 >= 20, `the blast hits the demon (${dhp0 - dhp1} damage)`);
+    // (hurt, the demon wakes and comes for the player – an arch-vile provokes nobody – so the
+    //  player may get bitten, but must not be blasted into the air)
+    assert(rose < 1, `and never blasts the player into the air (health ${php})`);
   } else console.log('(no open run from the player start for the infighting tests)');
 }
 

@@ -203,7 +203,8 @@ Use `WAD=public/wads/freedoom2.wad` for the Phase 2 parts. `npm run test:physics
 crushers) and checks missile slopes, autoaim with its 5.625° fallback, floor impacts and the sky.
 It checks infighting: a fireball turns a demon on an imp, which it then bites, and the demon
 returns to you when the imp dies. A fireball bursts harmlessly on its own species, and a
-zombieman's stray bullets provoke an imp in the way. It checks that gunfire reaches open sectors but not past a closed door, that it wakes a monster
+zombieman's stray bullets provoke an imp in the way. An arch-vile is always provoked but never
+provokes, and it flames the demon it's fighting instead of you. It checks that gunfire reaches open sectors but not past a closed door, that it wakes a monster
 out of sight in earshot but not one out of earshot or in ambush. It also checks that a level
 hitscan shot passes under a raised imp, that the right slope hits
 it, and that the pistol finds that slope itself but not beyond DOOM's aiming window.
@@ -250,8 +251,11 @@ on the attacker and won't switch again for 100 chase steps (`BASETHRESHOLD`). Af
 it yourself brings it back to you, and once its target dies it hunts you again. Monster projectiles
 hit any monster in their way, except members of the shooter's own species, which they burst on
 harmlessly (hell knights and barons count as one species). Zombie bullets hit whoever stands in the
-line of fire, and splash damage remembers who caused it. Arch-viles don't take part, because their
-attack only knows how to target you.
+line of fire, and splash damage remembers who caused it. Arch-viles follow DOOM's special rules:
+their attacks provoke nobody, but an arch-vile that gets hurt always turns on the attacker,
+grudge or not. Once it's fighting a monster, its flame dances on that monster and the blast lands
+there. Monsters aren't tossed into the air the way you are, because they have no vertical
+physics.
 
 Crushers work. Ceiling crushers (types 6, 25, 49, 73, 77 and the silent 141) cycle between
 their top and floor + 8. They deal 10 damage every 4 tics to whatever they squeeze, the slow ones

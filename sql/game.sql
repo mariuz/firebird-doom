@@ -315,17 +315,18 @@ BEGIN
     UPDATE things t SET hp = :hp, reaction = 0, st = IIF(t.st = 'idle' AND t.kind = 'monster', 'chase', t.st) WHERE t.id = :tid;
     -- infighting: a monster hurt by another monster goes after it, and won't
     -- switch again for BASETHRESHOLD (100) chase steps. Hurt by the player
-    -- once that has worn off, it comes back for the player. (Arch-viles
-    -- neither provoke nor get provoked here: their attack only knows the player.)
+    -- once that has worn off, it comes back for the player. As in DOOM, an
+    -- arch-vile's attacks provoke nobody, but an arch-vile that is hurt
+    -- always turns on whoever did it, threshold or not.
     IF (src IS NOT NULL AND src <> tid AND k = 'monster') THEN
     BEGIN
       SELECT s.kind, st2.atk_kind FROM things s JOIN thing_types st2 ON st2.thing_type = s.thing_type
        WHERE s.id = :src INTO skind, satk;
       SELECT t.threshold, tt3.atk_kind FROM things t JOIN thing_types tt3 ON tt3.thing_type = t.thing_type
        WHERE t.id = :tid INTO thr, vatk;
-      IF (skind = 'player' AND thr = 0) THEN
+      IF (skind = 'player' AND (thr = 0 OR vatk = 'vile')) THEN
         UPDATE things t SET target_id = NULL WHERE t.id = :tid;
-      ELSE IF (skind = 'monster' AND satk IS DISTINCT FROM 'vile' AND vatk IS DISTINCT FROM 'vile' AND thr = 0) THEN
+      ELSE IF (skind = 'monster' AND satk IS DISTINCT FROM 'vile' AND (thr = 0 OR vatk = 'vile')) THEN
         UPDATE things t SET target_id = :src, threshold = 100, st = IIF(t.st = 'idle', 'chase', t.st) WHERE t.id = :tid;
     END
     IF (pain_fr IS NOT NULL AND RAND() * 256 < pain_chance) THEN
@@ -1681,6 +1682,8 @@ DECLARE tgt INTEGER;
 DECLARE victim INTEGER;
 DECLARE htype INTEGER;
 DECLARE otype INTEGER;
+DECLARE gang DOUBLE PRECISION;
+DECLARE vtgt INTEGER;
 BEGIN
   SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
     INTO ppx, ppy, ppz, ppdead, ptid, pang;
@@ -1701,6 +1704,16 @@ BEGIN
              melee_fr, melee_snd, melee_hit_snd, melee_dmg, melee_rolls, target_id, threshold
   DO
   BEGIN
+    -- The cursor is stable (since Firebird 3 it doesn't see changes made after
+    -- it opened), so take this thing's live state: earlier in this tic another
+    -- monster may have hurt, killed or provoked it, and writing back the
+    -- cursor's stale copy would undo that.
+    ost = NULL;
+    SELECT t.st, t.st_tics, t.st_len, t.frame, t.reaction, t.target_id, t.threshold
+      FROM things t WHERE t.id = :id
+      INTO ost, st_tics, st_len, frame, reaction, target_id, threshold;
+    IF (ost IS NULL OR ost = 'dead') THEN CONTINUE;   -- gone (exploded, picked up) or just died
+    st = ost;
     del = 0;
     -- whom is it after? the player, unless another monster provoked it
     -- (px/py/pz/pdead below always mean "the target")
@@ -1708,12 +1721,13 @@ BEGIN
     py = ppy;
     pz = ppz;
     pdead = ppdead;
+    gang = pang;
     tgt = NULL;
     IF (k = 'monster' AND target_id IS NOT NULL) THEN
     BEGIN
       sx = NULL;
-      SELECT t.x, t.y, t.z FROM things t WHERE t.id = :target_id AND t.st NOT IN ('dying', 'dead')
-        INTO sx, sy, oz;
+      SELECT t.x, t.y, t.z, t.angle FROM things t WHERE t.id = :target_id AND t.st NOT IN ('dying', 'dead')
+        INTO sx, sy, oz, gang;
       IF (sx IS NULL) THEN
       BEGIN
         target_id = NULL;              -- it died: back to hunting the player
@@ -1799,18 +1813,23 @@ BEGIN
     END
     ELSE IF (k = 'flame') THEN
     BEGIN
-      -- A_Fire: hover 24 units in front of the player while the arch-vile
-      -- that conjured it can still see them; gone when its attack ends
+      -- A_Fire: hover 24 units in front of the arch-vile's target (the
+      -- player, or a monster it is fighting) while the arch-vile can still
+      -- see it; gone when its attack ends
       ost = NULL;
-      SELECT t.x, t.y, t.z, t.st FROM things t WHERE t.id = :owner_id INTO sx, sy, oz, ost;
+      vtgt = NULL;
+      SELECT t.x, t.y, t.z, t.st, t.target_id FROM things t WHERE t.id = :owner_id INTO sx, sy, oz, ost, vtgt;
+      IF (vtgt IS NOT NULL) THEN
+        SELECT t.x, t.y, t.z, t.angle FROM things t WHERE t.id = :vtgt AND t.st NOT IN ('dying', 'dead')
+          INTO px, py, pz, gang;
       IF (ost IS DISTINCT FROM 'attack') THEN del = 1;
       ELSE
       BEGIN
         frame = SUBSTRING(walk_fr FROM 1 + MOD(tic / 3, CHAR_LENGTH(walk_fr)) FOR 1);
         IF (check_sight(sx, sy, oz + 48, px, py, pz + 41) = 1) THEN
         BEGIN
-          x = px + COS(pang) * 24;
-          y = py + SIN(pang) * 24;
+          x = px + COS(gang) * 24;
+          y = py + SIN(gang) * 24;
           z = pz;
           sec = sector_at(x, y);
         END
@@ -2043,7 +2062,7 @@ BEGIN
         EXECUTE PROCEDURE play_sound(atk_snd, id, x, y);                       -- A_VileStart
       IF (atk_kind = 'vile' AND pdead = 0 AND st_len - st_tics = 8) THEN
       BEGIN
-        EXECUTE PROCEDURE spawn_thing(9015, px + COS(pang) * 24, py + SIN(pang) * 24, pz, 0) RETURNING_VALUES mid;
+        EXECUTE PROCEDURE spawn_thing(9015, px + COS(gang) * 24, py + SIN(gang) * 24, pz, 0) RETURNING_VALUES mid;
         UPDATE things t SET owner_id = :id, st = 'burn' WHERE t.id = :mid;     -- (idle things only think every 8 tics)
         EXECUTE PROCEDURE play_sound('DSFLAMST', mid, px, py);
       END
@@ -2051,8 +2070,9 @@ BEGIN
           AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
       BEGIN
         EXECUTE PROCEDURE play_sound('DSBAREXP', id, px, py);
-        EXECUTE PROCEDURE damage_player(20);
-        UPDATE things t SET momz = 10 WHERE t.kind = 'player';
+        EXECUTE PROCEDURE hurt_target(tgt, 20, id);
+        -- the toss (1000 / mass 100); monsters here have no vertical physics
+        IF (tgt IS NULL) THEN UPDATE things t SET momz = 10 WHERE t.kind = 'player';
         sx = px - COS(ang) * 24;
         sy = py - SIN(ang) * 24;
         UPDATE things t SET x = :sx, y = :sy WHERE t.kind = 'flame' AND t.owner_id = :id;
