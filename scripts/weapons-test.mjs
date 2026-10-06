@@ -112,6 +112,35 @@ assert(spray > 0, 'BFG ball exploded');
     `berserk: four punches did ${bare} bare, ${mad} berserk (2d10 × 10)`);
 }
 
+// the cheats: IDKFA arms you to the teeth, IDDQD toggles god mode
+{
+  await db.exec(`UPDATE player SET has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0,
+                 has_chainsaw = 0, has_ssg = 0, bullets = 1, shells = 0, rockets = 0, cells = 0, armor = 0, keycards = 0`);
+  await db.exec(`EXECUTE PROCEDURE cheat('IDKFA')`);
+  const k = await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  const phase2 = wad.mapNames()[0].startsWith('MAP');
+  assert(k.HAS_SHOTGUN && k.HAS_CHAINGUN && k.HAS_LAUNCHER && k.HAS_PLASMA && k.HAS_BFG && k.HAS_CHAINSAW
+    && k.HAS_SSG === (phase2 ? 1 : 0) && k.BULLETS === k.MAX_BULLETS && k.SHELLS === k.MAX_SHELLS
+    && k.ROCKETS === k.MAX_ROCKETS && k.CELLS === k.MAX_CELLS && k.ARMOR === 200 && k.KEYCARDS === 7
+    && k.MSG === 'Very Happy Ammo Added',
+    `IDKFA: every weapon (super shotgun ${k.HAS_SSG}), ${k.BULLETS}/${k.SHELLS}/${k.ROCKETS}/${k.CELLS} ammo, armor ${k.ARMOR}, keys ${k.KEYCARDS}`);
+
+  await db.exec('UPDATE player SET health = 30');
+  await db.exec(`EXECUTE PROCEDURE cheat('iddqd')`);
+  const g = await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  await db.exec('UPDATE player SET armor = 0');
+  await db.exec('EXECUTE PROCEDURE damage_player(999)');
+  const g2 = (await db.query('SELECT health, god FROM player')).rows[0];
+  assert(g.GOD === 1 && g.HEALTH === 100 && g.MSG === 'Degreelessness Mode On' && g2.HEALTH === 100,
+    `IDDQD: god mode on (god ${g.GOD}, "${g.MSG}"), healed to ${g.HEALTH}, and a hit for 999 does nothing (health ${g2.HEALTH})`);
+  await db.exec(`EXECUTE PROCEDURE cheat('iddqd')`);
+  const o = await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  await db.exec('EXECUTE PROCEDURE damage_player(10)');
+  const o2 = (await db.query('SELECT health FROM player')).rows[0];
+  assert(o.GOD === 0 && o.MSG === 'Degreelessness Mode Off' && o2.HEALTH === 90, `IDDQD again: off, and damage hurts (health ${o2.HEALTH})`);
+  await db.exec('UPDATE player SET health = 200');
+}
+
 // the super shotgun, where the WAD has its graphics (DOOM II / Phase 2)
 if (wad.lump('SHT2A0')) {
   const target = await lineUp();

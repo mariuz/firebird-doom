@@ -49,7 +49,7 @@
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows move ·
         <kbd>Ctrl</kbd> or click fire · <kbd>Space</kbd>/<kbd>E</kbd> use ·
         <kbd>Shift</kbd> run · <kbd>1</kbd>–<kbd>7</kbd> weapons (1 again: chainsaw, 3 again: super shotgun) ·
-        <kbd>Tab</kbd> map (IDDT on it reveals all) · <kbd>P</kbd> pause · <kbd>M</kbd> audio on/off.
+        <kbd>Tab</kbd> map (IDDT on it reveals all) · type IDDQD or IDKFA to cheat · <kbd>P</kbd> pause · <kbd>M</kbd> audio on/off.
         On touch screens the left half moves, the right half turns, and a tap fires.</p>
     </section>
 
@@ -62,7 +62,8 @@
         <button data-sql="SELECT FIRST 40 * FROM frame_walls">frame_walls</button>
         <button data-sql="SELECT * FROM frame_sprites ORDER BY depth">frame_sprites</button>
         <button data-sql="SELECT * FROM frame_visplanes ORDER BY pixels DESC">frame_visplanes</button>
-        <button data-sql="UPDATE player SET health = 200, armor = 200, bullets = 200, shells = 50, rockets = 50, cells = 300, has_shotgun = 1, has_chaingun = 1, has_launcher = 1, has_plasma = 1, has_bfg = 1, has_chainsaw = 1, has_ssg = 1, keycards = 7">IDKFA</button>
+        <button data-sql="EXECUTE PROCEDURE cheat('idkfa')">IDKFA</button>
+        <button data-sql="EXECUTE PROCEDURE cheat('iddqd')">IDDQD</button>
         <button data-sql="UPDATE things SET hp = 1 WHERE kind = 'monster'">one-hit monsters</button>
         <button data-sql="UPDATE sectors SET light = 255, base_light = 255">lights on</button>
       </div>

@@ -153,7 +153,7 @@ still land. At 280 units a zombieman hits about 65% of the time when it can see 
 ### Invulnerability
 
 The invulnerability sphere gives 30 seconds (`INVULNTICS`, 1050 tics in `PLAYER.INVULN_TICS`).
-`DAMAGE_PLAYER` ignores every hit below 10000, so a telefrag still kills. While it lasts, the
+`DAMAGE_PLAYER` ignores every hit below 1000, so a telefrag (10000) still kills. While it lasts, the
 view uses a fixed colormap, as DOOM's `R_SetupFrame` does. `COLORMAP` 32, the inverse greys,
 replaces every light level on walls, flats, sprites and your weapon, flickering off in the last
 four seconds. The sky stays in colour, as in vanilla, and the status bar shows the god face.
@@ -192,6 +192,21 @@ shows every line, hidden (`ML_DONTDRAW`) and unseen ones included, with flat two
 in grey (`TSWALLCOLORS`). Twice also draws every thing in the level as a green triangle facing
 its way (`AM_drawThings`), read live from `THINGS`. A third time turns it off. Like DOOM, the cheat
 prints no message and isn't stored in the database.
+
+### Cheats
+
+Type **IDDQD** or **IDKFA** any time during play (`ST_Responder`). The browser spots the letters
+and calls `EXECUTE PROCEDURE cheat('iddqd')`. The SQL console has buttons for both.
+
+- **IDDQD** toggles god mode (`PLAYER.GOD`, `CF_GODMODE`). It heals you to 100, and
+  `DAMAGE_PLAYER` then ignores every hit below 1000, the same rule as invulnerability. The face
+  turns gold. E1M8's exit floor switches it off, a new game clears it, and it carries over from
+  level to level.
+- **IDKFA** hands over every weapon, ammo up to your current maximums, 200 armour and all three
+  keys. The super shotgun comes only on DOOM II maps.
+
+Both say what they did ("Degreelessness Mode On", "Very Happy Ammo Added"). A dead player can't
+cheat.
 
 ### Sound and music
 

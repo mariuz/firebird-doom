@@ -275,15 +275,17 @@ END^
 
 CREATE OR ALTER PROCEDURE damage_player (dmg INTEGER)
 AS
+DECLARE god SMALLINT;
 DECLARE invuln INTEGER;
 DECLARE arm INTEGER;
 DECLARE saved INTEGER;
 DECLARE is_dead SMALLINT;
 BEGIN
-  SELECT armor, dead, invuln_tics FROM player WHERE id = 1 INTO arm, is_dead, invuln;
+  SELECT armor, dead, invuln_tics, god FROM player WHERE id = 1 INTO arm, is_dead, invuln, god;
   IF (is_dead = 1 OR COALESCE(dmg, 0) <= 0) THEN EXIT;
-  -- pw_invulnerability: nothing short of a telefrag (10000) gets through
-  IF (invuln > 0 AND dmg < 10000) THEN EXIT;
+  -- P_DamageMobj: invulnerable (pw_invulnerability) or in god mode
+  -- (CF_GODMODE), nothing under 1000 gets through – a telefrag (10000) does
+  IF ((invuln > 0 OR god = 1) AND dmg < 1000) THEN EXIT;
   saved = IIF(arm > 0, MINVALUE(arm, dmg / 3), 0);
   UPDATE player
      SET armor = armor - :saved,
@@ -1284,6 +1286,7 @@ BEGIN
     -- pw_ironfeet: the radiation suit keeps out nukage and slime; the worst
     -- floors (4, 16) still get through 5 times in 256, and E1M8's (11) always
     SELECT p.iron_tics FROM player p WHERE p.id = 1 INTO iron;
+    IF (sspec = 11) THEN UPDATE player SET god = 0 WHERE id = 1;   -- (E1M8's floor cancels IDDQD)
     IF (iron = 0 OR sspec = 11 OR (sspec IN (4, 16) AND RAND() * 256 < 5)) THEN
       EXECUTE PROCEDURE damage_player(CASE sspec WHEN 7 THEN 5 WHEN 5 THEN 10 ELSE 20 END);
   END
@@ -2443,6 +2446,31 @@ END^
 -- ── the tic ───────────────────────────────────────────────────────────────
 -- G_Ticker: called by the browser with the input held since the last frame;
 -- runs `tics` 35 Hz game tics and returns the status bar.
+-- ST_Responder's cheats, typed during play (the browser spots the letters).
+-- IDDQD toggles god mode (and heals you to 100); IDKFA hands over every
+-- weapon (the super shotgun only in DOOM II), full ammo, 200 armour and every
+-- key. A dead player can't cheat.
+CREATE OR ALTER PROCEDURE cheat (code VARCHAR(16))
+AS
+BEGIN
+  code = LOWER(code);
+  IF (code = 'iddqd') THEN
+  BEGIN
+    UPDATE player p SET god = 1 - p.god WHERE p.id = 1 AND p.dead = 0;
+    UPDATE player p
+       SET health = IIF(p.god = 1, 100, p.health),
+           msg = TRIM(IIF(p.god = 1, 'Degreelessness Mode On', 'Degreelessness Mode Off')), msg_tics = 70
+     WHERE p.id = 1 AND p.dead = 0;
+  END
+  ELSE IF (code = 'idkfa') THEN
+    UPDATE player p
+       SET has_shotgun = 1, has_chaingun = 1, has_launcher = 1, has_plasma = 1, has_bfg = 1, has_chainsaw = 1,
+           has_ssg = IIF((SELECT g.map_name FROM game g WHERE g.id = 1) STARTING WITH 'MAP', 1, p.has_ssg),
+           bullets = p.max_bullets, shells = p.max_shells, rockets = p.max_rockets, cells = p.max_cells,
+           armor = 200, keycards = 7, msg = 'Very Happy Ammo Added', msg_tics = 70
+     WHERE p.id = 1 AND p.dead = 0;
+END^
+
 CREATE OR ALTER PROCEDURE doom_tic (
   tics INTEGER, fwd DOUBLE PRECISION, side DOUBLE PRECISION, turn DOUBLE PRECISION,
   fire SMALLINT, use_key SMALLINT, weapon_sel SMALLINT, run SMALLINT)
@@ -2458,7 +2486,7 @@ RETURNS (
   secrets INTEGER, total_secrets INTEGER,
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
   sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER,
-  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT)
+  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT)
 AS
 DECLARE i INTEGER = 0;
 BEGIN
@@ -2489,7 +2517,7 @@ BEGIN
          p.max_bullets, p.max_shells, p.max_rockets, p.max_cells,
          p.attack_tics, p.attack_len, p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
          p.dead, g.exit_kind, p.kills, g.total_kills, p.items, g.total_items, p.secrets, g.total_secrets,
-         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics, p.iron_tics, p.infra_tics, p.strength_tics, p.allmap
+         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics, p.iron_tics, p.infra_tics, p.strength_tics, p.allmap, p.god
     FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g
    WHERE p.id = 1 AND g.id = 1
     INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards,
@@ -2497,7 +2525,7 @@ BEGIN
          max_bullets, max_shells, max_rockets, max_cells,
          attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind,
          kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z,
-         sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap;
+         sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god;
   SUSPEND;
 END^
 
@@ -2656,7 +2684,7 @@ BEGIN
        SET health = 100, armor = 0, bullets = 50, shells = 0, max_bullets = 200, max_shells = 50,
            weapon = 2, has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0,
            has_chainsaw = 0, has_ssg = 0,
-           rockets = 0, cells = 0, max_rockets = 50, max_cells = 300
+           rockets = 0, cells = 0, max_rockets = 50, max_cells = 300, god = 0
      WHERE id = 1;
   UPDATE player
      SET thing_id = (SELECT MAX(id) FROM things WHERE kind = 'player'),

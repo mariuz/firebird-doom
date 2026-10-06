@@ -45,6 +45,8 @@ const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
 let showMap = false;
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
 const iddt = makeCheatReader('iddt');
+// ST_Responder: IDDQD and IDKFA, typed any time during play
+const CHEATS = ['iddqd', 'idkfa'].map((code) => [code, makeCheatReader(code)]);
 const audio = new DoomAudio();
 audio.setVolumes(settings.sfx / 100, settings.music / 100);
 audio.setEnabled(settings.audio);
@@ -77,6 +79,9 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Tab') showMap = !showMap;
   // AM_Responder: the automap listens for IDDT while it's open
   if (showMap && iddt(e.key)) amCheating = (amCheating + 1) % 3;
+  for (const [code, read] of CHEATS) {
+    if (read(e.key)) db.query(`EXECUTE PROCEDURE cheat('${code}')`).catch((err) => console.error(err));
+  }
   if (e.code.startsWith('Digit')) weaponSel = Number(e.code.slice(5));
   if (e.code === 'KeyP' || e.code === 'Pause') paused = !paused;
   if (e.code === 'KeyM') setAudio(!settings.audio);

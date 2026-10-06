@@ -32,7 +32,7 @@ export function drawStatusBar(renderer, hud, palette) {
   const band = Math.min(4, Math.floor((100 - Math.min(100, hud.HEALTH)) / 20));
   let face = `STFST${band}${[0, 1, 2, 1][(hud.TIC >> 4) & 3]}`;
   if (hud.DEAD) face = 'STFDEAD0';
-  else if (hud.INVULN_TICS > 0) face = 'STFGOD0';                  // ST_GODFACE
+  else if (hud.INVULN_TICS > 0 || hud.GOD) face = 'STFGOD0';      // ST_GODFACE
   else if (hud.DAMAGE_COUNT > 10) face = `STFOUCH${band}`;
   else if (hud.ATTACK_TICS > 0 && hud.WEAPON > 1) face = `STFKILL${band}`;
   renderer.patch(renderer.pictureByName(face) ?? renderer.pictureByName(`STFST${band}0`), 143, 168, pb);
