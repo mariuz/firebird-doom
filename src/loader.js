@@ -49,8 +49,7 @@ export async function createSchema(db, sql) {
  */
 export async function loadResources(db, wad, { width = 320, height = 168, dehacked = '' } = {}) {
   // DeHackEd: the WAD's DEHACKED lump, then any patch given (a .deh file)
-  const lump = wad.lump('DEHACKED');
-  const dehText = (lump ? new TextDecoder('latin1').decode(wad.data(lump)) : '') + '\n' + (dehacked ?? '');
+  const dehText = wad.dehacked() + '\n' + (dehacked ?? '');
   const deh = applyDehacked(THING_TYPES, parseDehacked(dehText));
   // Wall textures: first definition of a name wins (R_TextureNumForName).
   const texDefs = [];
@@ -70,7 +69,7 @@ export async function loadResources(db, wad, { width = 320, height = 168, dehack
   const frames = new Map();
   for (const f of wad.spriteFrames()) frames.set(`${f.sprite}${f.frame}${f.rot}`, f);
 
-  await db.exec('DELETE FROM textures; DELETE FROM flats; DELETE FROM sprite_frames; DELETE FROM thing_types; DELETE FROM screen_cols; DELETE FROM game; DELETE FROM player; DELETE FROM viewcfg');
+  await db.exec('DELETE FROM textures; DELETE FROM flats; DELETE FROM sprite_frames; DELETE FROM thing_types; DELETE FROM screen_cols; DELETE FROM game; DELETE FROM player; DELETE FROM viewcfg; DELETE FROM rules');
   await insertRows(db, 'textures', ['id', 'name', 'w', 'h'], texDefs.map((d, i) => [i + 1, d.name, d.w, d.h]));
   await insertRows(db, 'flats', ['id', 'name', 'is_sky'], flats.map((l, i) => [i + 1, l.name, l.name === 'F_SKY1' ? 1 : 0]));
   await insertRows(

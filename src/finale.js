@@ -83,11 +83,13 @@ export function frontLump(names, sprite, frame) {
 /** A BEX [STRINGS] section → Map of KEY → text (\n escapes, \-continued lines). */
 export function parseDehStrings(text) {
   const out = new Map();
-  const at = text.search(/^\[STRINGS\]/m);
-  if (at < 0) return out;
-  const lines = text.slice(at).split(/\r?\n/).slice(1);
+  // every [STRINGS] section, in order (one patch after another: the later wins)
+  const lines = text.split(/\r?\n/);
+  let inside = false;
   for (let i = 0; i < lines.length; i++) {
-    if (/^\[/.test(lines[i])) break;
+    if (/^\[STRINGS\]/i.test(lines[i])) { inside = true; continue; }
+    if (/^\[/.test(lines[i]) || /^(Patch File|Thing|Frame|Weapon|Ammo|Misc|Cheat|Sound|Pointer|Text)\b/i.test(lines[i])) { inside = false; continue; }
+    if (!inside) continue;
     const m = /^\s*([A-Za-z0-9_]+)\s*=\s?(.*)$/.exec(lines[i]);
     if (!m) continue;
     let value = m[2];
@@ -231,8 +233,7 @@ export function buildCast(thingTypes, strings) {
 /** The finale on screen: FinaleState plus F_TextWrite and F_CastDrawer. */
 /** The WAD's DEHACKED strings (Freedoom ships its own text). */
 function wadStrings(wad) {
-  const deh = wad.lump('DEHACKED');
-  return deh ? parseDehStrings(new TextDecoder('latin1').decode(wad.data(deh))) : new Map();
+  return parseDehStrings(wad.dehacked());
 }
 
 // DOOM II's story text for WADs that have none (id's doom2.wad keeps C1TEXT–

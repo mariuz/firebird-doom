@@ -25,7 +25,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `sql/render.sql` | The visibility half of the renderer: `RENDER_SLICES` (brute force), `RENDER_SLICES_BSP` (BSP walk with solidsegs), `RENDER_WALLS` (clipping and visplane rows), `RENDER_SPRITES`, and the views `FRAME_WALLS`, `FRAME_WALLS_WINDOWED`, `FRAME_SPRITES`, `FRAME_SECTORS`, `FRAME_VISPLANES`. |
 | `src/main.js` | The page: boots Firebird, loads WADs and maps, reads input, runs the frame loop, and owns the intermission and finale objects, the settings and the cheats. |
 | `src/loader.js` | WAD → Firebird: `createSchema`, `loadResources` (textures, flats, sprites, thing types), `loadMap` (one level's lumps plus `INIT_MAP`), `setView`, `setRenderer`. Inserts in chunks of 200 (see the gotchas). |
-| `src/wad.js` | The WAD reader: lumps, maps, pictures (column-major `pix` plus `alpha`), texture composition, `COLORMAP`. |
+| `src/wad.js` | The WAD reader: lumps, maps, pictures (column-major `pix` plus `alpha`), texture composition, `COLORMAP`. `new Wad(iwad, ...pwads)` merges files like `W_AddFile` (each lump knows its `file`); `dehacked()` is every file's patch in order. |
 | `src/thinginfo.js` | DOOM's `mobjinfo`, trimmed: every thing type's sprite, size, health, speed, frames, attacks, sounds, flags (`hang`, `floats`, `shadow`, `mass`). Loaded into `THING_TYPES`. |
 | `src/renderer.js` | The rasteriser: walls, visplanes (`R_MakeSpans`/`R_MapPlane`), sky, masked middles and sprites, fuzz, HUD patches, automap lines. **Works in palette indices.** |
 | `src/present.js` | The last step: palette indices → colours. `WebGLPresenter` (a fragment shader over a 256×14 palette texture) or `Canvas2DPresenter`. Smooth upscaling. |
@@ -168,6 +168,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `finale-test.mjs` | Every text screen and ending, the cast call, the bunny scroll, the id-WAD layouts and the fallback text. |
 | `intermission-test.mjs` | Pars, counting and sounds, skipping, the after-stats flow, the episode-map animations, the secret routes. |
 | `savegame-test.mjs` | Plays, saves (through JSON), plays on, loads: every saved row comes back exactly; new ids don't collide; the game runs on; other versions are refused. |
+| `pwad-test.mjs` | A PWAD built in memory (map, flat, sprite, music, DEHACKED) over Freedoom: what replaces what, in the directory and in Firebird; loading twice into one database. |
 | `dehacked-test.mjs` | Freedoom's lump (pars, cheats, frame patches reported), and a patch with every kind of block: patched things and pickups, the Misc rules in play, respelt cheats, par times. |
 | `demo-test.mjs` | A recorded demo (through JSON) replays into the same game, row for row; a third run too; another seed diverges; `P_RANDOM` is repeatable and even; thing ids repeat across loads. |
 | `menu-test.mjs` | The title loop; menu navigation, remembered cursors, New Game → episode → skill, Nightmare's question, options and sliders, Load/Save, Quit, Read This!, coordinates, and every graphic present in both WADs. |

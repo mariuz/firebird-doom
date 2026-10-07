@@ -30,6 +30,11 @@
           </select></label>
         <label>WAD <span id="wadname" class="pill">—</span>
           <input id="wadfile" type="file" accept=".wad,.WAD"></label>
+        <label title="PWADs on top of the main WAD (-file): their maps, graphics, sounds and music replace the main WAD's by name">PWAD
+          <input id="pwadfile" type="file" accept=".wad,.WAD" multiple></label>
+        <label title="A DeHackEd patch (-deh): things, ammo, rules, cheats, par times">Patch
+          <input id="dehfile" type="file" accept=".deh,.bex,.DEH,.BEX,.txt"></label>
+        <button id="pwad-clear" type="button" title="Back to the main WAD alone" disabled>Clear</button>
         <label>Map <select id="map"></select></label>
         <label>Detail <select id="detail">
           <option value="high">High (320 columns)</option>

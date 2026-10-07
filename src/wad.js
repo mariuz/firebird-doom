@@ -13,32 +13,56 @@ function name8(bytes, off) {
   return td.decode(bytes.subarray(off, end)).toUpperCase();
 }
 
+/**
+ * One WAD, or an IWAD with PWADs on top: new Wad(iwad, ...pwads). Like
+ * W_AddFile, every file's lumps go into one directory in load order, and a
+ * name finds the last of them – so a PWAD replaces maps, graphics, sounds,
+ * music and texture lists by name. Flats and sprites between their markers
+ * are gathered from every file (later ones replacing earlier ones by name),
+ * as Chocolate Doom's -merge and Boom do; vanilla needed the PWAD merged in
+ * with DeuTex for those.
+ */
 export class Wad {
-  constructor(buffer) {
-    this.buf = buffer instanceof ArrayBuffer ? buffer : buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-    this.bytes = new Uint8Array(this.buf);
-    this.view = new DataView(this.buf);
-    const magic = td.decode(this.bytes.subarray(0, 4));
-    if (magic !== 'IWAD' && magic !== 'PWAD') throw new Error(`not a WAD file (magic ${JSON.stringify(magic)})`);
-    const n = this.view.getInt32(4, true);
-    const dir = this.view.getInt32(8, true);
+  constructor(buffer, ...more) {
+    this.files = [];
     this.lumps = [];
-    for (let i = 0; i < n; i++) {
-      const o = dir + i * 16;
-      this.lumps.push({
-        index: i,
-        pos: this.view.getInt32(o, true),
-        size: this.view.getInt32(o + 4, true),
-        name: name8(this.bytes, o + 8),
-      });
+    for (const b of [buffer, ...more]) {
+      const buf = b instanceof ArrayBuffer ? b : b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+      const bytes = new Uint8Array(buf);
+      const view = new DataView(buf);
+      const magic = td.decode(bytes.subarray(0, 4));
+      if (magic !== 'IWAD' && magic !== 'PWAD') throw new Error(`not a WAD file (magic ${JSON.stringify(magic)})`);
+      const file = this.files.length;
+      this.files.push({ buf, bytes, view, magic });
+      const n = view.getInt32(4, true);
+      const dir = view.getInt32(8, true);
+      for (let i = 0; i < n; i++) {
+        const o = dir + i * 16;
+        this.lumps.push({
+          index: this.lumps.length,
+          file,
+          pos: view.getInt32(o, true),
+          size: view.getInt32(o + 4, true),
+          name: name8(bytes, o + 8),
+        });
+      }
     }
+    // (the first file's buffers, for code that reads the WAD file itself)
+    ({ buf: this.buf, bytes: this.bytes, view: this.view } = this.files[0]);
     this._byName = new Map();
     for (const l of this.lumps) this._byName.set(l.name, l); // last one wins, like DOOM
   }
 
   lump(name) { return this._byName.get(name.toUpperCase()); }
-  data(lump) { return this.bytes.subarray(lump.pos, lump.pos + lump.size); }
-  dv(lump) { return new DataView(this.buf, lump.pos, lump.size); }
+  /** Every lump of this name, in load order (each file's DEHACKED, say). */
+  lumpsNamed(name) { return this.lumps.filter((l) => l.name === name.toUpperCase()); }
+  data(lump) { return this.files[lump.file ?? 0].bytes.subarray(lump.pos, lump.pos + lump.size); }
+  dv(lump) { return new DataView(this.files[lump.file ?? 0].buf, lump.pos, lump.size); }
+  /** Every DEHACKED lump's text, in load order (the IWAD's, then each PWAD's). */
+  dehacked() {
+    if (!this.lump('DEHACKED')) return '';   // (none – or hidden, as the id-layout tests do)
+    return this.lumpsNamed('DEHACKED').map((l) => new TextDecoder('latin1').decode(this.data(l))).join('\n');
+  }
 
   /** Lumps between two markers, e.g. F_START/F_END, also accepting FF_ variants. */
   between(start, end) {
@@ -53,10 +77,19 @@ export class Wad {
   }
 
   mapNames() {
-    return this.lumps
+    // (a PWAD's map replaces the IWAD's of that name: listed once, where it first appeared)
+    return [...new Set(this.lumps
       .filter((l) => /^(E\dM\d|MAP\d\d)$/.test(l.name))
       .filter((l) => this.lumps[l.index + 1]?.name === 'THINGS')
-      .map((l) => l.name);
+      .map((l) => l.name))];
+  }
+
+  /** The maps the PWADs bring (none for a single WAD). */
+  pwadMapNames() {
+    return [...new Set(this.lumps
+      .filter((l) => l.file > 0 && /^(E\dM\d|MAP\d\d)$/.test(l.name))
+      .filter((l) => this.lumps[l.index + 1]?.name === 'THINGS')
+      .map((l) => l.name))];
   }
 
   // ── graphics ───────────────────────────────────────────────────────────

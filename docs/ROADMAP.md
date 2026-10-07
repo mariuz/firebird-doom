@@ -56,8 +56,9 @@ you find missing.
   Misc, Cheat and BEX [PARS]. Not possible: Frame, Pointer, Weapon, Sound and Text blocks need
   state tables the port doesn't have. Loading a `.deh` file comes with PWADs (the loader already
   takes the text: `loadResources(db, wad, { dehacked })`).
-- **PWADs.** The WAD picker loads one IWAD. Loading a PWAD on top (replacing maps and resources by
-  lump name) is missing.
+- ~~**PWADs.**~~ Done: PWADs on top of the main WAD (`-file`, with flats and sprites merged as
+  `-merge` does), and a `.deh` patch (`-deh`). Still missing: remembering them across reloads (the
+  files aren't kept).
 
 ## Rendering
 

@@ -284,8 +284,7 @@ async function loadFromSlot(slot) {
 function makeMenu() {
   const maps = wad.mapNames();
   const doom2 = maps.some((m) => m.startsWith('MAP'));
-  const deh = wad.lump('DEHACKED');
-  const strings = deh ? parseDehStrings(new TextDecoder('latin1').decode(wad.data(deh))) : new Map();
+  const strings = parseDehStrings(wad.dehacked() + '\n' + (dehPatch?.text ?? ''));
   const quitSounds = ['DSPLDETH', 'DSDMPAIN', 'DSPOPAIN', 'DSSLOP', 'DSTELEPT', 'DSPOSIT1', 'DSPOSIT3', 'DSSGTATK'];
   const play = (lump) => audio.playEvents([[0, lump, 'menu', null, null]], { x: 0, y: 0, angle: 0 });
   menu = new Menu({
@@ -753,13 +752,28 @@ async function openDatabase() {
   return instance;
 }
 
+// what's loaded: the main WAD, PWADs on top of it (-file), and a DeHackEd patch (-deh)
+let baseWad = null;                 // { buffer, label }
+let pwads = [];                     // [{ buffer, name }]
+let dehPatch = null;                // { text, name }
+
+/** Load the main WAD (dropping any PWADs and patch: they belonged with the old one). */
 async function useWad(buffer, label) {
+  baseWad = { buffer, label };
+  pwads = [];
+  dehPatch = null;
+  await loadWads();
+}
+
+/** W_InitMultipleFiles: the main WAD, the PWADs over it, the patch over all; then the first map. */
+async function loadWads() {
   running = false;
-  wad = new Wad(buffer);
+  wad = new Wad(baseWad.buffer, ...pwads.map((p) => p.buffer));
+  const label = [baseWad.label, ...pwads.map((p) => p.name), ...(dehPatch ? [dehPatch.name] : [])].join(' + ');
   const maps = wad.mapNames();
   if (!maps.length) throw new Error(`${label} has no maps`);
   setStatus(`Copying ${label} resources into Firebird…`);
-  res = await loadResources(db, wad, { width: viewWidth(), height: 168 });
+  res = await loadResources(db, wad, { width: viewWidth(), height: 168, dehacked: dehPatch?.text ?? '' });
   await setRenderer(db, settings.renderer === 'bsp');
   renderer = new Renderer(wad, res);
   renderer.attach(presenter);
@@ -778,7 +792,11 @@ async function useWad(buffer, label) {
   const sel = $('map');
   sel.innerHTML = maps.map((m) => `<option>${m}</option>`).join('');
   $('wadname').textContent = label;
-  await startMap(maps[0], true);
+  $('pwad-clear').disabled = !pwads.length && !dehPatch;
+  // (with a PWAD, start on its first map – vanilla would need -warp for that)
+  const first = wad.pwadMapNames()[0] ?? maps[0];
+  sel.value = first;
+  await startMap(first, true);
 }
 
 /** Fetch one of the bundled Freedoom IWADs and load it into Firebird. */
@@ -805,6 +823,9 @@ async function boot() {
       // to the map after the one named, as if you'd just finished it (DOOM I's
       // endings excepted: they end the game)
       get menu() { return menu; },
+      get files() { return { base: baseWad?.label, pwads: pwads.map((p) => p.name), deh: dehPatch?.name ?? null }; },
+      addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await loadWads(); },
+      useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await loadWads(); },
       get demo() { return { recording: !!recorder, playing: !!demoPlayer, last: lastDemo }; },
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },
@@ -846,6 +867,36 @@ $('wadfile').addEventListener('change', async (e) => {
   } catch (err) {
     setStatus(err.message, true);
   }
+});
+// PWADs on top of the main WAD, and a DeHackEd patch
+$('pwadfile').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  if (!files.length || !db || !baseWad) return;
+  try {
+    for (const f of files) pwads.push({ buffer: await f.arrayBuffer(), name: f.name });
+    await loadWads();
+  } catch (err) {
+    pwads = pwads.filter((p) => !files.some((f) => f.name === p.name));
+    setStatus(err.message, true);
+  }
+  e.target.value = '';
+});
+$('dehfile').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (!f || !db || !baseWad) return;
+  try {
+    dehPatch = { text: new TextDecoder('latin1').decode(await f.arrayBuffer()), name: f.name };
+    await loadWads();
+  } catch (err) {
+    dehPatch = null;
+    setStatus(err.message, true);
+  }
+  e.target.value = '';
+});
+$('pwad-clear').addEventListener('click', async () => {
+  pwads = [];
+  dehPatch = null;
+  try { await loadWads(); } catch (err) { setStatus(err.message, true); }
 });
 $('game').value = settings.game;
 $('game').addEventListener('change', async (e) => {

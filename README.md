@@ -379,6 +379,21 @@ text (`C4TEXT`) and cast names (`CC_*`), so none of id's text is reproduced. Spr
 front view hides in the mirrored half of a lump name (`SKELA1D1` holds frame D flipped) are
 found and drawn flipped. `npm run test:finale` checks all of this without a screen.
 
+### PWADs and patches
+
+**PWAD** under the view adds one or more PWADs on top of the main WAD, as `-file` does
+([src/wad.js](src/wad.js)). Like `W_AddFile`, their lumps go into one directory after the
+main WAD's, and a name finds the last one. So a PWAD's maps, graphics, sounds, music and texture
+lists replace the main WAD's of the same name. Flats and sprites between their markers are
+gathered from every file, later ones winning, as Chocolate Doom's `-merge` and Boom do; vanilla
+needed the PWAD merged in with DeuTex for those. Every file's `DEHACKED` lump is applied in
+order, the main WAD's first. **Patch** loads a DeHackEd file on top of all of them, as `-deh`
+does. With a PWAD loaded, the game starts on the PWAD's first map (vanilla would need `-warp`).
+The WAD label shows what's loaded, and **Clear** goes back to the main WAD alone. Picking another
+main WAD drops the PWADs and the patch. Saves and demos are kept per combination.
+`npm run test:pwad` builds a PWAD with a map, a flat, a sprite, music and a patch, and loads it
+over Freedoom.
+
 ### DeHackEd patches
 
 A WAD's `DEHACKED` lump is applied when the WAD loads ([src/dehacked.js](src/dehacked.js), after

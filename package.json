@@ -20,7 +20,8 @@
     "test:menu": "node scripts/menu-test.mjs",
     "test:savegame": "node scripts/savegame-test.mjs",
     "test:demo": "node scripts/demo-test.mjs",
-    "test:dehacked": "node scripts/dehacked-test.mjs"
+    "test:dehacked": "node scripts/dehacked-test.mjs",
+    "test:pwad": "node scripts/pwad-test.mjs"
   },
   "license": "MIT",
   "dependencies": {
