@@ -24,7 +24,6 @@ const ATTACK_TICS = 8;   // …its attack frames
 const DEATH_TICS = 5;    // …its death frames
 const LAST_TICS = 15;    // F_CastTicker: a state lasting forever holds 15 tics
 const TEXTWAIT = 250;    // DOOM I: tics after the text before the art screen
-const ART_HOLD = 35;     // …and how long the art stays before a key moves on
 
 // F_StartFinale for DOOM II: which text, over which flat, after which map
 // (secret: only when it was left by the secret exit, into MAP31 or MAP32)
@@ -107,7 +106,8 @@ export class FinaleState {
    * @param castAfter the cast call follows the text (MAP30); otherwise the
    *                  text ends the screen (stage 'done': on to the next map)
    * @param artAfter  DOOM I: the text can't be skipped, and the art screen
-   *                  follows it on its own (stage 'art'), then a key ends it
+   *                  follows it on its own (stage 'art'). That's the end of
+   *                  the game: the art stays until the menu starts another
    */
   constructor(text, cast, sound = () => {}, castAfter = true, artAfter = false) {
     this.text = text;
@@ -130,11 +130,12 @@ export class FinaleState {
     this.count++;
     if (this.stage === 'done') return;
     if (this.artAfter) {
-      // F_Ticker, DOOM I: no skipping the text; TEXTWAIT after it, the art
+      // F_Ticker, DOOM I: no skipping the text; TEXTWAIT after it, the art,
+      // for good (finalestage 1 has no way out: the game is over)
       if (this.stage === 'text' && this.count > 10 + this.text.length * TEXTSPEED + TEXTWAIT) {
         this.stage = 'art';
         this.count = 0;
-      } else if (this.stage === 'art' && buttons && this.count > ART_HOLD) this.stage = 'done';
+      }
       return;
     }
     if (this.stage === 'text') {

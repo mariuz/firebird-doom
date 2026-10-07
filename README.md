@@ -226,7 +226,7 @@ prints no message and isn't stored in the database.
 
 When you leave a level, [src/progress.js](src/progress.js) picks the next one, as `G_DoCompleted`
 does. On DOOM I, a secret exit leads to E?M9, and E?M9 returns to the map after the one with the
-secret exit. E?M8 carries on into the next episode, since there's no finale screen. On DOOM II,
+secret exit. E?M8 ends the episode, and the game, with its ending below. On DOOM II,
 MAP15's secret exit leads to MAP31 and MAP31's to MAP32, and the normal exits of both secret
 levels return to MAP16. A secret exit on any other map counts as a normal one. MAP30 ends the
 game with the finale below. Only a WAD without the finale's pictures goes back to MAP01.
@@ -274,8 +274,9 @@ the episode's art screen follows (`F_Drawer`):
   `PFUB1`, then "THE END" stamps in letter by letter (`END0`–`END6`), each with a pistol shot.
 - **E4:** `ENDPIC`.
 
-DOOM ends the game there, but this port carries on: fire or use takes you into the next
-episode, and after E4 back to E1M1.
+That's the end of the game, as in DOOM: the picture stays up (the bunny's "THE END" too) and no
+key moves on. Esc brings up the menu for a new game or another episode. Saving isn't possible
+there, as in DOOM.
 
 
 Finishing MAP30 starts DOOM II's ending ([src/finale.js](src/finale.js), after `f_finale.c`). First
@@ -310,7 +311,8 @@ doom.finale('MAP15', true)       // the screen on MAP15's secret exit
 doom.intermission('E2M3', 'E2M4', { kills: 20, totalKills: 20 })
 ```
 
-Afterwards the game goes on to the next map, as if you'd just finished the one named.
+Afterwards the game goes on to the next map, as if you'd just finished the one named, except
+after DOOM I's endings, which end the game.
 `npm run test:finale` simulates both id layouts by hiding Freedoom's `DEHACKED` (and `E4M1`).
 
 ### The title screen and the menus

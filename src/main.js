@@ -533,7 +533,8 @@ async function frame() {
       for (let i = 0; i < tics; i++) finale.tick(input[4] === 1 || input[5] === 1);
       if (finale.done) {
         // G_WorldDone after a text screen: on to the next map (MAP31/32 after a
-        // secret exit's; the next episode after E1M8's), inventory kept
+        // secret exit's), inventory kept. DOOM I's endings never get here: the
+        // game is over, and their art stays until the menu starts another
         await startMap(nextMap(finale.from, finale.secret, wad.mapNames()), false);
         nextFrame();
         return;
@@ -570,6 +571,7 @@ async function frame() {
           // G_DoCompleted: DOOM I's E?M8 goes straight to the ending, no stats
           finale = new Finale(renderer, audio, wad, THING_TYPES, map.name, secret);
           finaleKey = false;
+          setStatus(`The end of episode ${level.episode}. Esc for the menu: a new game, or another episode.`);
         } else {
           // WI_Start: kills, items, secrets, time and par; then G_WorldDone
           if (!level.doom2 && level.map === 8) didSecret.add(level.episode);   // E?M9 done
@@ -805,7 +807,8 @@ async function boot() {
       get renderer() { return renderer; }, get presenter() { return presenter; },
       // previews for testing a WAD's screens without playing to them (try id's
       // doom.wad: doom.finale('E3M8') is the bunny); afterwards the game goes on
-      // to the map after the one named, as if you'd just finished it
+      // to the map after the one named, as if you'd just finished it (DOOM I's
+      // endings excepted: they end the game)
       get menu() { return menu; },
       get demo() { return { recording: !!recorder, playing: !!demoPlayer, last: lastDemo }; },
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),

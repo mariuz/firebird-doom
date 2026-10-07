@@ -36,7 +36,7 @@ intermission, menu, savegame and demo (both WADs) and the build. All of them mus
 
 - **Vanilla fidelity first.** Follow id's source (`p_*.c`, `r_*.c`, `wi_stuff.c`, `f_finale.c`,
   `st_stuff.c`) and name the functions in comments (`A_SkullAttack`, `P_ZMovement`, …). When the
-  port must deviate (no menus, so episodes chain on; Freedoom placeholders), say so in code and
+  port must deviate (no `.lmp` demos; Freedoom placeholders), say so in code and
   README. Ask before adding non-vanilla features: the user turned down an invented Doom II
   intermission animation.
 - **Every feature lands with:** a test (extend the existing script that fits), a README section or

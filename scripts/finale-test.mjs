@@ -119,16 +119,13 @@ if (fs.existsSync(wad1Path)) {
   const held = fin.state.stage;
   fin.tick(false);
   assert(held === 'text' && fin.state.stage === 'art', `fire held all along doesn't skip the text; ${10 + len * 3 + 250} tics in, the art screen`);
-  fin.tick(true);
-  const early = fin.state.stage;
-  for (let i = 0; i < 40; i++) fin.tick(false);
-  fin.tick(true);
-  const { nextMap } = await import('../src/progress.js');
-  assert(early === 'art' && fin.done && nextMap('E1M8', false, wad1.mapNames()) === 'E2M1',
-    'the art holds a second, then fire carries on into E2M1');
+  // …and that's the end of the game: no key moves on (F_Ticker's finalestage 1)
+  for (let i = 0; i < 35 * 60; i++) fin.tick(i % 2 === 0);
+  fin.press();
+  assert(fin.state.stage === 'art' && !fin.done, 'the art stays for good: a minute of fire and a key press later it is still up (the game is over)');
 
-  // episodes 2–4: their own text, flat and art, then the next episode (after E4, E1M1)
-  for (const [m, key, art, next] of [['E2M8', 'E2TEXT', 'VICTORY2', 'E3M1'], ['E3M8', 'E3TEXT', 'bunny', 'E4M1'], ['E4M8', 'E4TEXT', 'ENDPIC', 'E1M1']]) {
+  // episodes 2–4: their own text, flat and art, and the end
+  for (const [m, key, art] of [['E2M8', 'E2TEXT', 'VICTORY2'], ['E3M8', 'E3TEXT', 'bunny'], ['E4M8', 'E4TEXT', 'ENDPIC']]) {
     const tunes = [];
     const shots = [];
     const f = new Finale(null, { playMusic: (t) => tunes.push(t), playEvents: (rows) => shots.push(rows[0][1]) }, wad1, THING_TYPES, m);
@@ -139,9 +136,9 @@ if (fs.existsSync(wad1Path)) {
     f.tick(true);
     const pic = art === 'bunny' ? 'PFUB1' : art;
     assert(Finale.available(wad1, m) && f.state.text === strings1.get(key) && f.art === art && !!wad1.lump(pic)
-      && atArt === 'art' && f.done && nextMap(m, false, wad1.mapNames()) === next
+      && atArt === 'art' && !f.done && f.state.stage === 'art'
       && (art !== 'bunny' || (tunes.join() === 'D_VICTOR,D_BUNNY' && shots.filter((s) => s === 'DSPISTOL').length === 6)),
-      `${m}: ${key} (${n} characters), then ${art}${art === 'bunny' ? ` to ${tunes[1]} with ${shots.filter((s) => s === 'DSPISTOL').length} pistol shots` : ''}, then ${next}`);
+      `${m}: ${key} (${n} characters), then ${art}${art === 'bunny' ? ` to ${tunes[1]} with ${shots.filter((s) => s === 'DSPISTOL').length} pistol shots` : ''}, for good`);
   }
 } else console.log('(no freedoom1.wad)');
 

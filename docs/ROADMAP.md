@@ -23,9 +23,8 @@ you find missing.
   need a bit-identical simulation (fixed point, the 256-entry random table consumed in the same
   order), and this is a re-implementation. That also means the title loop has no attract demos.
   Still missing: demos that span several levels, and multiplayer.
-- **The end of the game.** After Doom I's E?M8 ending the port carries on into the next episode,
-  and after E4 into E1M1. After Doom II's cast call it loops, as in vanilla. Vanilla ends the game
-  after each episode. An option for vanilla behaviour may be wanted.
+- ~~**The end of the game.**~~ Done: as in vanilla, Doom I's E?M8 ending is the end of the game.
+  Its picture stays until the menu starts a new game, and Doom II's cast call loops.
 
 ## Simulation (`sql/game.sql`)
 
