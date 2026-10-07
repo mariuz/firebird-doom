@@ -97,6 +97,8 @@ assert(spray > 0, 'BFG ball exploded');
     }
     return h0 - (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0].HP;
   };
+  // (everyone but the punching bag lies down: a woken monster mustn't hurt us between action and check)
+  await db.exec(`UPDATE things SET st = 'dead', solid = 0 WHERE kind = 'monster' AND id <> ${target}`);
   await db.exec(`UPDATE things SET hp = 5000 WHERE id = ${target}`);
   const bare = await punches(4);
   await db.exec('UPDATE player SET health = 40, has_shotgun = 1, weapon = 3');
@@ -114,6 +116,9 @@ assert(spray > 0, 'BFG ball exploded');
 
 // the cheats: IDFA and IDKFA arm you to the teeth, IDDQD toggles god mode
 {
+  // (nobody nibbling at the health checks; they get up again afterwards)
+  const sleepers = (await db.query("SELECT id FROM things WHERE kind = 'monster' AND st <> 'dead'")).rows.map((r) => r.ID);
+  if (sleepers.length) await db.exec(`UPDATE things SET st = 'dead', solid = 0 WHERE id IN (${sleepers.join()})`);
   const disarm = () => db.exec(`UPDATE player SET has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0,
                  has_bfg = 0, has_chainsaw = 0, has_ssg = 0, bullets = 1, shells = 0, rockets = 0, cells = 0, armor = 0, keycards = 0`);
   await disarm();
@@ -179,6 +184,7 @@ assert(spray > 0, 'BFG ball exploded');
     `IDBEHOLD v/s/i/r/a/l: all on (${on.INVULN_TICS}/${on.STRENGTH_TICS}/${on.INVIS_TICS}/${on.IRON_TICS}/${on.ALLMAP}/${on.INFRA_TICS}), `
     + `again all off but the map (${off.INVULN_TICS}/${off.STRENGTH_TICS}/${off.INVIS_TICS}/${off.IRON_TICS}/${off.ALLMAP}/${off.INFRA_TICS})`);
   await db.exec('UPDATE player SET health = 200');
+  if (sleepers.length) await db.exec(`UPDATE things SET st = 'idle', solid = 1 WHERE id IN (${sleepers.join()})`);
 }
 
 // the super shotgun, where the WAD has its graphics (DOOM II / Phase 2)

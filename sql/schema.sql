@@ -17,7 +17,8 @@ CREATE TABLE game (
   sides_rev     INTEGER DEFAULT 0 NOT NULL,     -- bumped when a switch texture flips
   total_kills   INTEGER DEFAULT 0 NOT NULL,
   total_items   INTEGER DEFAULT 0 NOT NULL,
-  total_secrets INTEGER DEFAULT 0 NOT NULL
+  total_secrets INTEGER DEFAULT 0 NOT NULL,
+  skill         SMALLINT DEFAULT 3 NOT NULL     -- 1 (easiest) … 5 (nightmare: fast, respawning)
 );
 
 CREATE TABLE viewcfg (
@@ -228,6 +229,10 @@ CREATE TABLE things (
   z          DOUBLE PRECISION DEFAULT 0 NOT NULL,
   angle      DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- radians
   flags      INTEGER DEFAULT 0 NOT NULL,
+  spawn_x    DOUBLE PRECISION,                 -- where the map put it (P_NightmareRespawn)
+  spawn_y    DOUBLE PRECISION,
+  spawn_angle DOUBLE PRECISION,
+  dead_tic   INTEGER,                          -- when it became a corpse
   sector_id  INTEGER,
   hp         INTEGER,
   st         VARCHAR(8) DEFAULT 'idle' NOT NULL,    -- idle chase attack pain dying dead

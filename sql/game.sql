@@ -283,6 +283,8 @@ DECLARE is_dead SMALLINT;
 BEGIN
   SELECT armor, dead, invuln_tics, god FROM player WHERE id = 1 INTO arm, is_dead, invuln, god;
   IF (is_dead = 1 OR COALESCE(dmg, 0) <= 0) THEN EXIT;
+  -- P_DamageMobj: on the easiest skill you take half
+  IF ((SELECT g.skill FROM game g WHERE g.id = 1) = 1) THEN dmg = dmg / 2;
   -- P_DamageMobj: invulnerable (pw_invulnerability) or in god mode
   -- (CF_GODMODE), nothing under 1000 gets through – a telefrag (10000) does
   IF ((invuln > 0 OR god = 1) AND dmg < 1000) THEN EXIT;
@@ -1150,6 +1152,7 @@ DECLARE has_ssg SMALLINT;
 DECLARE shot_hit SMALLINT;
 DECLARE old_weapon SMALLINT;
 DECLARE bslope DOUBLE PRECISION;
+DECLARE mult INTEGER;
 DECLARE tries INTEGER;
 DECLARE noclip SMALLINT;
 BEGIN
@@ -1446,6 +1449,8 @@ BEGIN
                     view_h = :view_h, view_z = :view_z
    WHERE id = 1;
 
+  -- P_GiveAmmo: twice the ammo on the easiest skill and on Nightmare
+  mult = IIF((SELECT g.skill FROM game g WHERE g.id = 1) IN (1, 5), 2, 1);
   -- P_TouchSpecialThing: pick up anything we overlap
   FOR SELECT t.id, tt.pickup, tt.amount, tt.label
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
@@ -1461,6 +1466,8 @@ BEGIN
            rockets, cells, maxr, maxc, has_rl, has_pl, has_bfg;
     SELECT p.has_chainsaw, p.has_ssg FROM player p WHERE p.id = 1 INTO has_saw, has_ssg;
     took = 1;
+    IF (pk IN ('bullets', 'shells', 'rockets', 'cells', 'shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'ssg', 'backpack')) THEN
+      amt = amt * mult;
     IF (pk = 'health') THEN
       IF (health >= 100) THEN took = 0; ELSE health = MINVALUE(100, health + amt);
     ELSE IF (pk = 'health+') THEN health = MINVALUE(200, health + amt);
@@ -1538,9 +1545,9 @@ BEGIN
       maxr = 100;
       maxc = 600;
       bullets = MINVALUE(maxb, bullets + amt);
-      shells = MINVALUE(maxs, shells + 4);
-      rockets = MINVALUE(maxr, rockets + 1);
-      cells = MINVALUE(maxc, cells + 20);
+      shells = MINVALUE(maxs, shells + 4 * mult);
+      rockets = MINVALUE(maxr, rockets + 1 * mult);
+      cells = MINVALUE(maxc, cells + 20 * mult);
     END
     IF (took = 1) THEN
     BEGIN
@@ -1579,6 +1586,8 @@ DECLARE spd DOUBLE PRECISION;
 DECLARE flight DOUBLE PRECISION;
 BEGIN
   SELECT speed FROM thing_types WHERE thing_type = :mtype INTO spd;
+  -- Nightmare (-fast): imp, cacodemon and baron fireballs fly at 20
+  IF (mtype IN (9000, 9001, 9002) AND (SELECT g.skill FROM game g WHERE g.id = 1) = 5) THEN spd = 20;
   EXECUTE PROCEDURE spawn_thing(mtype, sx + COS(ang) * (rad + 8), sy + SIN(ang) * (rad + 8), sz + 32, ang)
     RETURNING_VALUES mid;
   -- momz = (dest z − source z) / tics of flight: feet to feet, so a missile
@@ -1760,10 +1769,12 @@ DECLARE mass INTEGER;
 DECLARE fl SMALLINT;
 DECLARE grav SMALLINT;
 DECLARE nsec INTEGER;
+DECLARE skill SMALLINT;
 DECLARE pinvis SMALLINT;
 DECLARE tshadow SMALLINT;
 DECLARE shadowed SMALLINT;
 BEGIN
+  SELECT g.skill FROM game g WHERE g.id = 1 INTO skill;
   SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle, IIF(p.invis_tics > 0, 1, 0)
     FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
     INTO ppx, ppy, ppz, ppdead, ptid, pang, pinvis;
@@ -2007,7 +2018,7 @@ BEGIN
       BEGIN
         st = 'chase';
         st_tics = 0;
-        reaction = 3;
+        reaction = IIF(skill = 5, 0, 3);   -- (A_Chase: Nightmare attacks again at once)
       END
     END
     ELSE IF (k = 'fx') THEN
@@ -2143,6 +2154,7 @@ BEGIN
         ELSE
         BEGIN
           st = 'dead';
+          UPDATE things t SET dead_tic = :tic WHERE t.id = :id;
           IF (k = 'keen') THEN EXECUTE PROCEDURE keen_die;
           ELSE EXECUTE PROCEDURE boss_death(ttype);
         END
@@ -2163,7 +2175,7 @@ BEGIN
       BEGIN
         st = 'chase';
         st_tics = 0;
-        reaction = 2;
+        reaction = IIF(skill = 5, 0, 2);   -- (Nightmare: no hesitation)
         EXECUTE PROCEDURE play_sound(see_snd, id, x, y);
       END
     END
@@ -2171,7 +2183,7 @@ BEGIN
     BEGIN
       st_tics = st_tics - 1;
       ang = ATAN2(py - y, px - x);
-      idx = MINVALUE(CHAR_LENGTH(atk_fr) - 1, (st_len - st_tics) / 8);
+      idx = MINVALUE(CHAR_LENGTH(atk_fr) - 1, (st_len - st_tics) / IIF(skill = 5 AND ttype IN (3002, 58), 4, 8));
       frame = SUBSTRING(atk_fr FROM 1 + idx FOR 1);
       -- A_FatAttack1/2/3: the mancubus fires three volleys of two fireballs,
       -- as each "H" frame of its GHI GHI GHI G attack begins. FATSPREAD is
@@ -2278,7 +2290,7 @@ BEGIN
       BEGIN
         st = 'chase';
         st_tics = 0;
-        reaction = 3;
+        reaction = IIF(skill = 5, 0, 3);   -- (A_Chase: Nightmare attacks again at once)
       END
     END
     ELSE IF (st = 'chase') THEN
@@ -2286,7 +2298,8 @@ BEGIN
       st_tics = st_tics - 1;
       IF (st_tics <= 0) THEN
       BEGIN
-        st_tics = IIF(spd >= 10, 3, 4);
+        -- Nightmare (-fast) halves the demons' run states: double speed
+        st_tics = IIF(skill = 5 AND ttype IN (3002, 58), 1 + MOD(step, 2), IIF(spd >= 10, 3, 4));
         step = step + 1;
         frame = SUBSTRING(walk_fr FROM 1 + MOD(step, CHAR_LENGTH(walk_fr)) FOR 1);
         IF (reaction > 0) THEN reaction = reaction - 1;
@@ -2346,7 +2359,7 @@ BEGIN
           ELSE
           BEGIN
             st = 'attack';
-            st_len = IIF(atk_kind = 'skull', 10, CHAR_LENGTH(atk_fr) * 8);
+            st_len = IIF(atk_kind = 'skull', 10, CHAR_LENGTH(atk_fr) * IIF(skill = 5 AND ttype IN (3002, 58), 4, 8));
             st_tics = st_len;
             frame = SUBSTRING(atk_fr FROM 1 FOR 1);
             IF (ttype = 67) THEN EXECUTE PROCEDURE play_sound('DSMANATK', id, x, y);
@@ -2429,6 +2442,53 @@ BEGIN
   END
 END^
 
+-- P_NightmareRespawn: on Nightmare a monster's corpse that has lain 12 seconds
+-- may get back up – every 32 tics each one tries, 4 times in 256 – at the
+-- spot the map put it, in a flash of teleport fog, if there's room. Lost
+-- souls don't count as kills and don't come back.
+CREATE OR ALTER PROCEDURE nightmare_respawn (tic INTEGER)
+AS
+DECLARE id INTEGER;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE sx DOUBLE PRECISION;
+DECLARE sy DOUBLE PRECISION;
+DECLARE sa DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE ok SMALLINT;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
+DECLARE dz DOUBLE PRECISION;
+DECLARE sec INTEGER;
+DECLARE mid INTEGER;
+BEGIN
+  FOR SELECT t.id, t.x, t.y, t.spawn_x, t.spawn_y, t.spawn_angle, tt.radius, tt.height
+        FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+       WHERE t.kind = 'monster' AND t.st = 'dead' AND t.thing_type <> 3006
+         AND t.spawn_x IS NOT NULL AND t.dead_tic IS NOT NULL AND :tic - t.dead_tic >= 12 * 35
+        INTO id, x, y, sx, sy, sa, rad, hgt
+  DO
+  BEGIN
+    IF (RAND() * 256 > 4) THEN CONTINUE;
+    EXECUTE PROCEDURE check_position(id, sx, sy, (SELECT se.floor_h FROM sectors se WHERE se.id = sector_at(:sx, :sy)),
+                                     rad, hgt, 1)
+      RETURNING_VALUES ok, fz, cz, dz, sec;
+    IF (ok = 0) THEN CONTINUE;
+    -- fog where the corpse lay, and where it rises
+    EXECUTE PROCEDURE spawn_thing(9016, x, y, NULL, 0) RETURNING_VALUES mid;
+    EXECUTE PROCEDURE spawn_thing(9016, sx, sy, NULL, 0) RETURNING_VALUES mid;
+    EXECUTE PROCEDURE play_sound('DSTELEPT', mid, sx, sy);
+    UPDATE things t
+       SET x = :sx, y = :sy, angle = :sa, z = :fz, sector_id = :sec, momx = 0, momy = 0, momz = 0,
+           hp = (SELECT tt.hp FROM thing_types tt WHERE tt.thing_type = t.thing_type),
+           st = 'idle', st_tics = 0, st_len = 0, step = 0, solid = 1, sprite = NULL,
+           frame = (SELECT SUBSTRING(tt.walk_fr FROM 1 FOR 1) FROM thing_types tt WHERE tt.thing_type = t.thing_type),
+           reaction = 18, target_id = NULL, threshold = 0, dead_tic = NULL
+     WHERE t.id = :id;
+  END
+END^
+
 -- Light specials: T_LightFlash, T_StrobeFlash, T_Glow, T_FireFlicker.
 CREATE OR ALTER PROCEDURE lights_think (tic INTEGER)
 AS
@@ -2477,6 +2537,8 @@ CREATE OR ALTER PROCEDURE cheat (code VARCHAR(16))
 AS
 BEGIN
   code = LOWER(code);
+  -- ST_Responder: none of these work on Nightmare
+  IF ((SELECT g.skill FROM game g WHERE g.id = 1) = 5) THEN EXIT;
   IF (code = 'iddqd') THEN
   BEGIN
     UPDATE player p SET god = 1 - p.god WHERE p.id = 1 AND p.dead = 0;
@@ -2559,6 +2621,8 @@ BEGIN
     EXECUTE PROCEDURE player_think(fwd, side, turn / tics, fire, use_key, IIF(i = 0, weapon_sel, 0), run, tic);
     EXECUTE PROCEDURE movers_think;
     EXECUTE PROCEDURE monsters_think(tic);
+    IF (MOD(tic, 32) = 0 AND (SELECT g.skill FROM game g WHERE g.id = 1) = 5) THEN
+      EXECUTE PROCEDURE nightmare_respawn(tic);
     IF (MOD(tic, 2) = 0) THEN EXECUTE PROCEDURE lights_think(tic);
     UPDATE player p
        SET damage_count = MAXVALUE(0, p.damage_count - 1),
@@ -2592,7 +2656,7 @@ END^
 -- ── level setup ───────────────────────────────────────────────────────────
 -- P_SetupLevel: derive everything the hot paths need from the raw lumps,
 -- then P_SpawnMapThing for the chosen skill.
-CREATE OR ALTER PROCEDURE init_map (map_name VARCHAR(8), skill_bit INTEGER, new_game SMALLINT)
+CREATE OR ALTER PROCEDURE init_map (map_name VARCHAR(8), skill_bit INTEGER, new_game SMALLINT, skill SMALLINT = 3)
 AS
 DECLARE tid INTEGER;
 DECLARE sid INTEGER;
@@ -2686,7 +2750,7 @@ BEGIN
    WHEN MATCHED THEN UPDATE SET sector_id = s.sector_id;
 
   UPDATE game
-     SET tic = 0, exit_kind = 0, noise_tic = -1000, noise_sector = NULL, map_name = :map_name,
+     SET tic = 0, exit_kind = 0, noise_tic = -1000, noise_sector = NULL, map_name = :map_name, skill = :skill,
          root_node = (SELECT MAX(id) FROM nodes)
    WHERE id = 1;
 
@@ -2701,10 +2765,14 @@ BEGIN
    WHERE min_light IS NULL OR min_light >= base_light;
 
   -- things for this skill level, minus multiplayer-only ones
-  INSERT INTO things (id, thing_type, kind, x, y, angle, flags, hp, radius, height, solid, st, frame)
+  INSERT INTO things (id, thing_type, kind, x, y, angle, flags, hp, radius, height, solid, st, frame,
+                      spawn_x, spawn_y, spawn_angle, reaction)
   SELECT NEXT VALUE FOR thing_seq, m.ttype, tt.kind, m.x, m.y, m.angle * PI() / 180, m.flags,
          tt.hp, tt.radius, tt.height, tt.solid, 'idle',
-         IIF(tt.kind = 'monster', SUBSTRING(tt.walk_fr FROM 1 FOR 1), NULL)
+         IIF(tt.kind = 'monster', SUBSTRING(tt.walk_fr FROM 1 FOR 1), NULL),
+         m.x, m.y, m.angle * PI() / 180,
+         -- P_SpawnMobj: on Nightmare monsters start with no reaction time
+         IIF(:skill = 5, 0, 2)
     FROM map_things m JOIN thing_types tt ON tt.thing_type = m.ttype
    WHERE BIN_AND(m.flags, 16) = 0 AND BIN_AND(m.flags, :skill_bit) <> 0 AND tt.kind <> 'player';
 

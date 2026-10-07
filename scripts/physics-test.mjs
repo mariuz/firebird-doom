@@ -573,6 +573,85 @@ if (sky) {
   } else console.log('(no open run from the player start for the infighting tests)');
 }
 
+// ── skill levels ────────────────────────────────────────────────────────
+{
+  // which things spawn: easy, normal and hard flags
+  const counts = {};
+  for (const skill of [1, 3, 4]) {
+    await loadMap(db, wad, res, maps[0], { skill });
+    counts[skill] = (await one("SELECT COUNT(*) n FROM things WHERE kind = 'monster'")).N;
+  }
+  assert(counts[1] <= counts[3] && counts[3] <= counts[4] && counts[1] < counts[4],
+    `${maps[0]}: ${counts[1]} monsters on skill 1, ${counts[3]} on 3, ${counts[4]} on 4`);
+
+  const at = async () => one(`SELECT t.x, t.y, t.z FROM things t WHERE t.kind = 'player'`);
+  const hurtAndClip = async () => {
+    await db.exec('UPDATE player SET health = 100, armor = 0, bullets = 10, max_bullets = 200');
+    await db.exec('EXECUTE PROCEDURE damage_player(20)');
+    const p = await at();
+    await spawn(2007, p.X, p.Y);
+    await tic();
+    return one('SELECT health, bullets FROM player');
+  };
+  await loadMap(db, wad, res, maps[0], { skill: 3 });
+  await quiet();
+  const normal = await hurtAndClip();
+  await loadMap(db, wad, res, maps[0], { skill: 1 });
+  await quiet();
+  const baby = await hurtAndClip();
+  assert((await one('SELECT skill FROM game')).SKILL === 1 && normal.HEALTH === 80 && normal.BULLETS === 20
+    && baby.HEALTH === 90 && baby.BULLETS === 30,
+    `skill 1 takes half damage (20 → ${100 - baby.HEALTH}, normal ${100 - normal.HEALTH}) and gets double ammo (a clip: +${baby.BULLETS - 10}, normal +${normal.BULLETS - 10})`);
+
+  // Nightmare
+  await loadMap(db, wad, res, maps[0], { skill: 5 });
+  await quiet();
+  const nm = await hurtAndClip();
+  const p = await at();
+  await db.exec(`EXECUTE PROCEDURE monster_missile(${(await one("SELECT MIN(id) i FROM things WHERE kind = 'monster'")).I}, 9000,
+                 ${p.X}, ${p.Y}, ${p.Z}, 20, 0, ${p.X + 200}, ${p.Y}, ${p.Z})`);
+  const ball = await one('SELECT SQRT(momx * momx + momy * momy) v FROM things WHERE thing_type = 9000 ORDER BY id DESC ROWS 1');
+  await db.exec(`EXECUTE PROCEDURE cheat('iddqd')`);
+  const god = (await one('SELECT god FROM player')).GOD;
+  assert(nm.HEALTH === 80 && nm.BULLETS === 30 && Math.abs(ball.V - 20) < 0.01 && god === 0,
+    `Nightmare: full damage, double ammo (+${nm.BULLETS - 10}), imp fireballs at ${ball.V.toFixed(0)}, and IDDQD does nothing`);
+  // demons run twice as often
+  const demon = await spawn(3002, p.X + 96, p.Y);
+  const steps = [];
+  for (let i = 0; i < 6; i++) {
+    await db.exec(`UPDATE things SET st = 'chase', st_tics = 1, reaction = 9, hp = 1000 WHERE id = ${demon}`);
+    await tic();
+    steps.push((await one(`SELECT st_tics FROM things WHERE id = ${demon}`)).ST_TICS);
+  }
+  assert(steps.every((s) => s >= 1 && s <= 2), `Nightmare demons take a step every 1–2 tics (${steps.join(' ')}), not every 3`);
+  await db.exec(`DELETE FROM things WHERE id = ${demon} OR thing_type = 9000`);
+
+  // a corpse gets back up at its spawn spot, in teleport fog; a lost soul doesn't
+  await db.exec('DELETE FROM sound_events');
+  const corpse = await spawn(3001, p.X + 64, p.Y);
+  const soul = await spawn(3006, p.X - 64, p.Y);
+  await db.exec(`UPDATE things SET st = 'dead', hp = 0, solid = 0, frame = 'M', dead_tic = 0,
+                 spawn_x = x, spawn_y = y, spawn_angle = 1.5, x = x + 8 WHERE id IN (${corpse}, ${soul})`);
+  let tries = 0;
+  while ((await one(`SELECT st FROM things WHERE id = ${corpse}`)).ST === 'dead' && tries++ < 3000) {
+    await db.exec('EXECUTE PROCEDURE nightmare_respawn(100000)');
+  }
+  const up = await one(`SELECT t.st, t.hp, t.solid, t.x, t.angle, t.dead_tic FROM things t WHERE t.id = ${corpse}`);
+  const lost = (await one(`SELECT st FROM things WHERE id = ${soul}`)).ST;
+  const fog = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9016')).N;
+  const tele = (await one(`SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSTELEPT'`)).N;
+  assert(up.ST === 'idle' && up.HP === 60 && up.SOLID === 1 && Math.abs(up.X - (p.X + 64)) < 0.01 && Math.abs(up.ANGLE - 1.5) < 1e-9
+    && up.DEAD_TIC === null && lost === 'dead' && fog >= 2 && tele > 0,
+    `Nightmare: an imp's corpse rises after ${tries} tries (4/256 each), at its spawn spot with full health, in teleport fog; the lost soul stays down`);
+  await db.exec(`DELETE FROM things WHERE id IN (${corpse}, ${soul}) OR thing_type = 9016`);
+  // a corpse younger than 12 seconds stays put
+  const young = await spawn(3001, p.X + 64, p.Y);
+  await db.exec(`UPDATE things SET st = 'dead', hp = 0, solid = 0, dead_tic = 99900, spawn_x = x, spawn_y = y WHERE id = ${young}`);
+  for (let i = 0; i < 300; i++) await db.exec('EXECUTE PROCEDURE nightmare_respawn(100000)');
+  assert((await one(`SELECT st FROM things WHERE id = ${young}`)).ST === 'dead', 'a corpse dead less than 12 seconds stays down');
+  await db.exec(`DELETE FROM things WHERE id = ${young}`);
+}
+
 // ── the radiation suit and the light amplification goggles ─────────────
 const slimeMap = maps.find((m) => wad.map(m).sectors.some((s) => s.special === 5 || s.special === 7));
 if (slimeMap) {

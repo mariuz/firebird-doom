@@ -64,6 +64,8 @@ export const THING_TYPES = [
   { type: 9009, sprite: 'BOSF', kind: 'cube', radius: 6, height: 32, speed: 10, walk: 'ABCD', bright: 1 },
   { type: 9013, sprite: 'MISL', kind: 'fx', radius: 1, height: 1, walk: 'BCD', bright: 1 },
   { type: 9014, sprite: 'FIRE', kind: 'fx', radius: 1, height: 1, walk: 'ABCDEFGH', bright: 1 },
+  // teleport fog (MT_TFOG): a monster getting back up on Nightmare
+  { type: 9016, sprite: 'TFOG', kind: 'fx', radius: 1, height: 1, walk: 'ABABCDEFGHIJ', bright: 1 },
   // shootable barrel – "dies" by exploding
   { type: 2035, sprite: 'BAR1', kind: 'barrel', radius: 10, height: 42, solid: 1, hp: 20, walk: 'AB', death: 'ABCDE', deathSprite: 'BEXP', bright: 0, deathSnd: 'DSBAREXP' },
 

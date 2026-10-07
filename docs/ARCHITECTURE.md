@@ -49,7 +49,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
    gets attached to the page's presenter.
 3. `startMap` runs `loadMap`, which inserts the level's lumps and calls `INIT_MAP`. That derives
    denormalised line coordinates, the blockmap, the sound-link graph and the BSP child bounding
-   boxes, spawns the things for skill 3, and resets the player (or only the per-level state, when
+   boxes, spawns the things for the chosen skill (stored in `game.skill`), and resets the player (or only the per-level state, when
    not a new game).
 4. The frame loop starts (`requestAnimationFrame`, with a timer as backstop).
 

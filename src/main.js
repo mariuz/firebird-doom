@@ -41,7 +41,7 @@ let running = false;
 let paused = false;
 let lastTic = 0;
 // settings, remembered per browser
-const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, display: 'webgl', smooth: false };
+const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, display: 'webgl', smooth: false, skill: 3 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('firebird-doom:settings') || '{}'));
 } catch { /* storage unavailable: defaults */ }
@@ -105,7 +105,7 @@ window.addEventListener('keydown', (e) => {
   }
   // IDMUS xy: S_ChangeMusic to another level's song, if there is such a song
   const song = idmus(e.key);
-  if (song) {
+  if (song && settings.skill !== 5) {   // (ST_Responder: not on Nightmare)
     const mapFor = idmusMap(song, wad.mapNames().some((m) => m.startsWith('MAP')));
     const lump = mapFor && musicLumpFor(mapFor);
     const ok = lump && wad.lump(lump);
@@ -241,7 +241,7 @@ async function startMap(name, newGame) {
   if (newGame) didSecret.clear();
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
-  await loadMap(db, wad, res, name, { skill: 3, newGame });
+  await loadMap(db, wad, res, name, { skill: settings.skill, newGame });
   map = { name, skyTex: skyFor(name) };
   const { rows } = await db.query(
     'SELECT id, front_side, back_side, flags, light_delta, x1, y1, x2, y2, front_sector, back_sector, special FROM linedefs',
@@ -645,6 +645,13 @@ $('renderer').addEventListener('change', async (e) => {
   settings.renderer = e.target.value;
   saveSettings();
   if (db) await setRenderer(db, settings.renderer === 'bsp');
+});
+// the skill: a new game on the current map, as DOOM's New Game menu would
+$('skill').value = String(settings.skill);
+$('skill').addEventListener('change', (e) => {
+  settings.skill = Number(e.target.value);
+  saveSettings();
+  if (db && map) startMap(map.name, true).catch((err) => setStatus(err.message, true));
 });
 $('display').value = settings.display;
 $('smooth').checked = settings.smooth;

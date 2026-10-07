@@ -313,6 +313,24 @@ doom.intermission('E2M3', 'E2M4', { kills: 20, totalKills: 20 })
 Afterwards the game goes on to the next map, as if you'd just finished the one named.
 `npm run test:finale` simulates both id layouts by hiding Freedoom's `DEHACKED` (and `E4M1`).
 
+### Skill levels
+
+The **Skill** setting (1–5, default 3) picks which things spawn: easy, normal or hard, by each
+map thing's flags. Changing it starts a new game on the current map, as DOOM's New Game menu
+would. The skills follow DOOM's rules:
+
+- **1 (easiest):** you take half damage (`P_DamageMobj`), and ammo pickups give double
+  (`P_GiveAmmo`), weapons and backpacks included.
+- **2–4:** the spawn flags change, nothing else.
+- **5 (Nightmare):**
+  - Double ammo.
+  - Fast monsters: demons run twice as often, and imp, cacodemon and baron fireballs fly at 20.
+  - Monsters react and attack again without hesitating.
+  - Corpses come back (`P_NightmareRespawn`). Every 32 tics, each one that has lain 12 seconds
+    has a 5-in-256 chance to rise at the spot the map put it, at full health and in teleport fog,
+    if there's room. Lost souls don't come back.
+  - The cheats don't work, except IDCLEV and the automap's IDDT, as in `ST_Responder`.
+
 ### Cheats
 
 Type **IDDQD**, **IDKFA**, **IDFA**, **IDCLIP**, **IDCHOPPERS**, **IDBEHOLD**<i>x</i>, **IDMYPOS**, **IDMUS**<i>xy</i> or **IDCLEV**<i>xy</i> any time during
@@ -454,7 +472,7 @@ arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd>
 launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggles the chainsaw and
 <kbd>3</kbd> again the super shotgun. <kbd>Tab</kbd> shows the
 automap (type IDDT on it to reveal everything), and <kbd>P</kbd> pauses. Under the view you can set **Detail** (320 or 160 columns),
-**Renderer** (BSP + solidsegs, or brute force), **Display** (WebGL palette shader or Canvas 2D),
+**Renderer** (BSP + solidsegs, or brute force), **Skill** (1–5), **Display** (WebGL palette shader or Canvas 2D),
 **Smooth upscaling**, **Audio** on/off (<kbd>M</kbd>), and **Sound** and **Music** volume. These settings
 are remembered in your browser. The SQL console under the game queries the live game
 database. Try the `IDKFA` button.

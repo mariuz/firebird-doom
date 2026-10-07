@@ -7,10 +7,9 @@ you find missing.
 
 ## Game flow and menus
 
-- **Skill levels.** Every game runs on skill 3 (Hurt Me Plenty): `startMap` calls `loadMap` with
-  `skill: 3`. A setting is needed, and `INIT_MAP` already takes `skill_bit`. The damage, monster
-  speed and respawn rules for skills 1 and 5 (`I'm Too Young To Die` halves damage and doubles
-  ammo; `Nightmare` is fast monsters that respawn) are missing in `game.sql`.
+- ~~**Skill levels.**~~ Done: the **Skill** setting, with spawn flags, half damage and double ammo
+  on 1, and Nightmare's fast monsters, instant reactions, respawning and no cheats on 5.
+  Still missing: DOOM's dropped clips giving half ammo (`MF_DROPPED`), on any skill.
 - **Main menu, new game and episode select.** Today a game starts at the first map, and the
   **Map** selector starts a new game anywhere. There's no `M_*` menu, title screen (`TITLEPIC`),
   demo loop or help screens.

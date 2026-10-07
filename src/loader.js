@@ -149,6 +149,6 @@ export async function loadMap(db, wad, res, name, { skill = 3, newGame = true } 
     m.things.map((t) => [t.id, t.x, t.y, t.angle, t.type, t.flags]));
 
   const skillBit = skill <= 2 ? 1 : skill === 3 ? 2 : 4;
-  await db.exec(`EXECUTE PROCEDURE init_map('${name}', ${skillBit}, ${newGame ? 1 : 0})`);
+  await db.exec(`EXECUTE PROCEDURE init_map('${name}', ${skillBit}, ${newGame ? 1 : 0}, ${skill})`);
   return m;
 }
