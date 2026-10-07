@@ -4,6 +4,26 @@
 // Case doesn't matter and keys that aren't characters (Shift, arrows…)
 // are ignored, so they don't break a cheat being typed.
 
+/** The codes, as DOOM spells them (a DeHackEd Cheat block can respell them; dehacked.js). */
+export const CHEAT_CODES = {
+  iddqd: 'iddqd', idkfa: 'idkfa', idfa: 'idfa', idclip: 'idclip', idspispopd: 'idspispopd', idchoppers: 'idchoppers',
+  idbehold: 'idbehold', idmypos: 'idmypos', idbeholdv: 'idbeholdv', idbeholds: 'idbeholds', idbeholdi: 'idbeholdi',
+  idbeholdr: 'idbeholdr', idbeholda: 'idbeholda', idbeholdl: 'idbeholdl', iddt: 'iddt', idmus: 'idmus', idclev: 'idclev',
+};
+
+/**
+ * Every reader, for these spellings: `fixed` is [code the CHEAT procedure
+ * knows, reader] (the six IDBEHOLD powers are fixed codes too, as in
+ * m_cheat.c); iddt, idmus and idclev on their own.
+ */
+export function cheatReaders(codes = CHEAT_CODES) {
+  const c = { ...CHEAT_CODES, ...codes };
+  const fixed = ['iddqd', 'idkfa', 'idfa', 'idclip', 'idspispopd', 'idchoppers', 'idbehold', 'idmypos',
+    'idbeholdv', 'idbeholds', 'idbeholdi', 'idbeholdr', 'idbeholda', 'idbeholdl']
+    .map((k) => [k, makeCheatReader(c[k])]);
+  return { fixed, iddt: makeCheatReader(c.iddt), idmus: makeParamCheatReader(c.idmus, 2), idclev: makeParamCheatReader(c.idclev, 2) };
+}
+
 /** A fixed code (IDDQD, IDKFA, IDCLIP, IDDT…): true once it has been typed. */
 export function makeCheatReader(code) {
   let typed = '';

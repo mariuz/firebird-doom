@@ -71,7 +71,7 @@ export const THING_TYPES = [
 
   // items: pickup kind + amount
   I(2011, 'STIM', 'health', 10), I(2012, 'MEDI', 'health', 25),
-  I(2014, 'BON1', 'health+', 1, { walk: 'ABCDCB' }), I(2013, 'SOUL', 'health+', 100, { walk: 'ABCDCB', bright: 1 }),
+  I(2014, 'BON1', 'health+', 1, { walk: 'ABCDCB' }), I(2013, 'SOUL', 'soul', 100, { walk: 'ABCDCB', bright: 1 }),
   I(2015, 'BON2', 'armor+', 1, { walk: 'ABCDCB' }),
   I(2018, 'ARM1', 'armor', 100, { walk: 'AB' }), I(2019, 'ARM2', 'armor', 200, { walk: 'AB', bright: 1 }),
   I(2007, 'CLIP', 'bullets', 10), I(2048, 'AMMO', 'bullets', 50),

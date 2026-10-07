@@ -22,6 +22,7 @@ WAD=public/wads/freedoom2.wad npm run test:weapons   # weapons/specials/physics 
 npm run test:finale && npm run test:intermission && npm run test:menu
 WAD=public/wads/freedoom2.wad npm run test:savegame  # (and without WAD=)
 WAD=public/wads/freedoom2.wad npm run test:demo      # determinism (and without WAD=)
+npm run test:dehacked      # DeHackEd patches
 npm run test:renderers -- E1M1 E1M2 E1M3
 node scripts/all-maps.mjs public/wads/freedoom2.wad  # every map (the WAD is an argument here, not WAD=)
 npm run build              # dist/ (also writes dist/wads/freedoom-strings.json)
@@ -30,7 +31,7 @@ npm run screenshots        # regenerates docs/screenshot-*.png
 ```
 
 Before every commit, run the smoke test, weapons/specials/physics on **both** WADs, finale,
-intermission, menu, savegame and demo (both WADs) and the build. All of them must pass; CI runs the same set.
+intermission, menu, dehacked, savegame and demo (both WADs) and the build. All of them must pass; CI runs the same set.
 
 ## How the user likes it
 
@@ -96,6 +97,7 @@ intermission, menu, savegame and demo (both WADs) and the build. All of them mus
 | Screens between levels | `src/intermission.js`, `src/finale.js`, `src/progress.js`; the hand-off is in `main.js`'s `frame()` |
 | Cheats | SQL `CHEAT` procedure; readers in `src/cheats.js`; key handling in `main.js` |
 | Save and load | `src/savegame.js` (what's saved: its `WHOLE`/`MOVING` lists; **add a column there if the simulation starts changing a new one**), `saveToSlot`/`loadFromSlot` in `main.js` |
+| DeHackEd, rules a patch can change | `src/dehacked.js`, the `RULES` table (SQL reads it instead of hard-coding those numbers) |
 | Demos | `src/demo.js`; recording and playback in `main.js` (`startRecording`, `playDemo`, the frame loop) |
 | Title screen, menus, options | `src/menu.js`; the actions (new game, settings) are wired in `main.js`'s `makeMenu` |
 | Previewing screens in the browser | `doom.finale('E3M8')`, `doom.intermission('E2M3', 'E2M4')` in the console |

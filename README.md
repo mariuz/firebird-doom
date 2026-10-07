@@ -379,6 +379,28 @@ text (`C4TEXT`) and cast names (`CC_*`), so none of id's text is reproduced. Spr
 front view hides in the mirrored half of a lump name (`SKELA1D1` holds frame D flipped) are
 found and drawn flipped. `npm run test:finale` checks all of this without a screen.
 
+### DeHackEd patches
+
+A WAD's `DEHACKED` lump is applied when the WAD loads ([src/dehacked.js](src/dehacked.js), after
+Chocolate Doom's `deh_*.c`):
+
+- **Thing** blocks change a monster's, item's or missile's hit points, speed, size, pain chance,
+  mass, missile damage, sounds, map number (`ID #`), and the bits the port models (solid,
+  floating, shadow, hanging from the ceiling). The patched list is what goes into `THING_TYPES`.
+- **Ammo** and **Misc** change the rules in the `RULES` table: starting health and bullets, the
+  caps for bonuses and the soulsphere, what the soulsphere and megasphere give, the armour classes,
+  IDDQD's health and IDFA's and IDKFA's armour, BFG cells per shot, max ammo and clip sizes. Every
+  ammo pickup's amount follows the clip size, as `P_GiveAmmo` counts in clips.
+- **Cheat** respells the cheat codes, and BEX **[PARS]** sets par times. Freedoom's own lump has both:
+  its par times show on the intermission, and in Phase 1 IDCLIP and IDSPISPOPD swap places.
+- **Frame**, **Pointer**, **Weapon**, **Sound** and **Text** blocks can't be applied. The port has no
+  state tables (each thing type is a state machine with frame letters), so they're listed in the
+  console instead. Freedoom's seven frame patches (brighter muzzle flashes, a shorter super
+  shotgun flash) are among them.
+
+`npm run test:dehacked` reads Freedoom's lump and a patch with every kind of block, then plays the
+patched rules in Firebird.
+
 ### Testing with id's WADs
 
 The game ships with Freedoom, but the **WAD** picker loads any IWAD, id's `doom.wad` and

@@ -102,8 +102,13 @@ export function levelOf(name) {
   return { doom2: true, episode: 0, map: Number(name.slice(3)) - 1 };
 }
 
+let parOverrides = new Map();
+/** A DeHackEd patch's [PARS] (Map: 'E1M1' / 'MAP01' → seconds); an empty map for DOOM's own. */
+export function setParOverrides(pars) { parOverrides = pars ?? new Map(); }
+
 /** The par time for a level in seconds, or null where DOOM shows none (episode 4, MAP33+). */
 export function parTime(name) {
+  if (parOverrides.has(name)) return parOverrides.get(name);
   const l = levelOf(name);
   if (l.doom2) return CPARS[l.map] ?? null;
   return PARS[l.episode]?.[l.map + 1] ?? null;

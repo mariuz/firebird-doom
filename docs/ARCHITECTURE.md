@@ -37,6 +37,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `src/savegame.js` | Save and load: `captureGame` (the live tables as JSON), `restoreGame` (written back over a freshly loaded map, `thing_seq` moved on), `saveStore` (IndexedDB, or memory). |
 | `src/demo.js` | Demos: `DemoRecorder` (start + every `DOOM_TIC` call), `DemoPlayer`, `demoProblem`. Recording, playback and the buttons are wired in `main.js`. |
 | `src/menu.js` | The title loop (`D_DoAdvanceDemo`) and the menus (`m_menu.c`): `Menu` (menus, cursor, messages, sliders; actions are callbacks) and `TitleLoop`. |
+| `src/dehacked.js` | DeHackEd: `parseDehacked`, `applyDehacked` (a patched copy of `THING_TYPES`, the `RULES` row, cheat spellings, par times, a report of what can't apply), `MOBJ_TYPES`, `SFX`. Applied in `loadResources`. |
 | `src/cheats.js` | `cht_CheckCheat`: readers for fixed cheats, IDCLEV/IDMUS digits, `clevMap`, `idmusMap`. |
 | `src/audio.js` / `src/music.js` | Sound effects from `SOUND_EVENTS`, positioned like `S_AdjustSoundParams`; MUS/MIDI music on an OPL2-style FM synthesiser with the WAD's `GENMIDI`. |
 | `public/` | `index.html`, `style.css`, `coi-serviceworker.js` (cross-origin isolation for the Worker), and `wads/` (fetched, not committed). |
@@ -167,6 +168,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `finale-test.mjs` | Every text screen and ending, the cast call, the bunny scroll, the id-WAD layouts and the fallback text. |
 | `intermission-test.mjs` | Pars, counting and sounds, skipping, the after-stats flow, the episode-map animations, the secret routes. |
 | `savegame-test.mjs` | Plays, saves (through JSON), plays on, loads: every saved row comes back exactly; new ids don't collide; the game runs on; other versions are refused. |
+| `dehacked-test.mjs` | Freedoom's lump (pars, cheats, frame patches reported), and a patch with every kind of block: patched things and pickups, the Misc rules in play, respelt cheats, par times. |
 | `demo-test.mjs` | A recorded demo (through JSON) replays into the same game, row for row; a third run too; another seed diverges; `P_RANDOM` is repeatable and even; thing ids repeat across loads. |
 | `menu-test.mjs` | The title loop; menu navigation, remembered cursors, New Game → episode → skill, Nightmare's question, options and sliders, Load/Save, Quit, Read This!, coordinates, and every graphic present in both WADs. |
 | `compare-renderers.mjs` | BSP and brute-force renderers agree, column by column. |

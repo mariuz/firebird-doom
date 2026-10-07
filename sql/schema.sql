@@ -341,6 +341,34 @@ CREATE TABLE sound_flood (
 );
 
 -- Moving floors and ceilings: doors, lifts, platforms.
+-- The rules a DeHackEd patch's Misc and Ammo blocks can change (vanilla's by default; src/dehacked.js)
+CREATE TABLE rules (
+  id           INTEGER NOT NULL PRIMARY KEY,
+  init_health  INTEGER DEFAULT 100 NOT NULL,
+  init_bullets INTEGER DEFAULT 50 NOT NULL,
+  max_health   INTEGER DEFAULT 200 NOT NULL,   -- what health bonuses go up to
+  max_armor    INTEGER DEFAULT 200 NOT NULL,   -- …and armour bonuses
+  green_class  INTEGER DEFAULT 1 NOT NULL,
+  blue_class   INTEGER DEFAULT 2 NOT NULL,
+  max_soul     INTEGER DEFAULT 200 NOT NULL,
+  soul_health  INTEGER DEFAULT 100 NOT NULL,
+  mega_health  INTEGER DEFAULT 200 NOT NULL,
+  god_health   INTEGER DEFAULT 100 NOT NULL,
+  idfa_armor   INTEGER DEFAULT 200 NOT NULL,
+  idfa_class   INTEGER DEFAULT 2 NOT NULL,
+  idkfa_armor  INTEGER DEFAULT 200 NOT NULL,
+  idkfa_class  INTEGER DEFAULT 2 NOT NULL,
+  bfg_cells    INTEGER DEFAULT 40 NOT NULL,
+  max_bullets  INTEGER DEFAULT 200 NOT NULL,
+  max_shells   INTEGER DEFAULT 50 NOT NULL,
+  max_cells    INTEGER DEFAULT 300 NOT NULL,
+  max_rockets  INTEGER DEFAULT 50 NOT NULL,
+  clip_bullets INTEGER DEFAULT 10 NOT NULL,
+  clip_shells  INTEGER DEFAULT 4 NOT NULL,
+  clip_cells   INTEGER DEFAULT 20 NOT NULL,
+  clip_rockets INTEGER DEFAULT 1 NOT NULL
+);
+
 CREATE TABLE movers (
   sector_id INTEGER NOT NULL PRIMARY KEY,
   kind      VARCHAR(8) NOT NULL,        -- door lift floor crush

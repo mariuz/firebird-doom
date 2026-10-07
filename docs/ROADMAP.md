@@ -52,8 +52,10 @@ you find missing.
   for 18 tics.
 - **Multiplayer and deathmatch.** Single player only. Co-op and deathmatch starts and things are
   skipped.
-- **DEHACKED beyond `[STRINGS]`.** Thing, frame, weapon, ammo and pointer patches aren't applied,
-  so mods that rely on them won't behave.
+- ~~**DEHACKED beyond `[STRINGS]`.**~~ Done ([src/dehacked.js](../src/dehacked.js)): Thing, Ammo,
+  Misc, Cheat and BEX [PARS]. Not possible: Frame, Pointer, Weapon, Sound and Text blocks need
+  state tables the port doesn't have. Loading a `.deh` file comes with PWADs (the loader already
+  takes the text: `loadResources(db, wad, { dehacked })`).
 - **PWADs.** The WAD picker loads one IWAD. Loading a PWAD on top (replacing maps and resources by
   lump name) is missing.
 

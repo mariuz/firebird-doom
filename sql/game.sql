@@ -1718,7 +1718,7 @@ BEGIN
   -- becomes the pending weapon, and nothing is fired
   IF (attack_tics = 0 AND weapon_y = 0 AND weapon_down = 0 AND pending = 0 AND (fire = 1 OR was_attacking = 1)
       AND ((weapon IN (2, 4) AND bullets = 0) OR (weapon = 3 AND shells = 0) OR (weapon = 5 AND rockets = 0)
-        OR (weapon = 6 AND cells = 0) OR (weapon = 7 AND cells < 40) OR (weapon = 9 AND shells < 2))) THEN
+        OR (weapon = 6 AND cells = 0) OR (weapon = 7 AND cells < (SELECT r.bfg_cells FROM rules r WHERE r.id = 1)) OR (weapon = 9 AND shells < 2))) THEN
   BEGIN
     pending = CASE WHEN has_pl = 1 AND cells > 0 THEN 6
                    WHEN has_ssg = 1 AND shells >= 2 THEN 9
@@ -1727,7 +1727,7 @@ BEGIN
                    WHEN bullets > 0 THEN 2
                    WHEN has_saw = 1 THEN 8
                    WHEN has_rl = 1 AND rockets > 0 THEN 5
-                   WHEN has_bfg = 1 AND cells >= 40 THEN 7
+                   WHEN has_bfg = 1 AND cells >= (SELECT r.bfg_cells FROM rules r WHERE r.id = 1) THEN 7
                    ELSE 1 END;
     IF (pending = weapon) THEN pending = 0;
   END
@@ -1807,7 +1807,7 @@ BEGIN
     ELSE IF (weapon = 7) THEN
     BEGIN
       attack_len = 60;
-      cells = cells - 40;
+      cells = cells - (SELECT r.bfg_cells FROM rules r WHERE r.id = 1);
     END
     attack_tics = attack_len;
     EXECUTE PROCEDURE play_sound(CASE weapon WHEN 1 THEN 'DSPUNCH' WHEN 3 THEN 'DSSHOTGN' WHEN 5 THEN 'DSRLAUNC'
@@ -1857,7 +1857,9 @@ BEGIN
       amt = amt * mult;
     IF (pk = 'health') THEN
       IF (health >= 100) THEN took = 0; ELSE health = MINVALUE(100, health + amt);
-    ELSE IF (pk = 'health+') THEN health = MINVALUE(200, health + amt);
+    ELSE IF (pk = 'health+') THEN health = MINVALUE((SELECT r.max_health FROM rules r WHERE r.id = 1), health + amt);
+    -- the soulsphere: its own cap (deh_max_soulsphere)
+    ELSE IF (pk = 'soul') THEN health = MINVALUE((SELECT r.max_soul FROM rules r WHERE r.id = 1), health + amt);
     -- P_GiveArmor: the green armour is type 1 (100 points), the blue type 2
     -- (200); taken only if it's more than you have
     ELSE IF (pk = 'armor') THEN
@@ -1872,7 +1874,7 @@ BEGIN
     -- an armour bonus: a point, and green armour's type if you had none
     ELSE IF (pk = 'armor+') THEN
     BEGIN
-      armor = MINVALUE(200, armor + amt);
+      armor = MINVALUE((SELECT r.max_armor FROM rules r WHERE r.id = 1), armor + amt);
       IF (armor_type = 0) THEN armor_type = 1;
     END
     ELSE IF (pk = 'bullets') THEN
@@ -1936,20 +1938,21 @@ BEGIN
     END
     ELSE IF (pk = 'mega') THEN
     BEGIN
-      health = 200;
-      armor = 200;                          -- P_GiveArmor(player, 2)
-      armor_type = 2;
+      health = amt;                         -- deh_megasphere_health
+      armor_type = (SELECT r.blue_class FROM rules r WHERE r.id = 1);      -- P_GiveArmor(player, deh_blue_armor_class)
+      armor = 100 * armor_type;
     END
     ELSE IF (pk = 'backpack') THEN
     BEGIN
-      maxb = 400;
-      maxs = 100;
-      maxr = 100;
-      maxc = 600;
+      -- the first one doubles every maximum; each gives a clip of everything
+      maxb = 2 * (SELECT r.max_bullets FROM rules r WHERE r.id = 1);
+      maxs = 2 * (SELECT r.max_shells FROM rules r WHERE r.id = 1);
+      maxr = 2 * (SELECT r.max_rockets FROM rules r WHERE r.id = 1);
+      maxc = 2 * (SELECT r.max_cells FROM rules r WHERE r.id = 1);
       bullets = MINVALUE(maxb, bullets + amt);
-      shells = MINVALUE(maxs, shells + 4 * mult);
-      rockets = MINVALUE(maxr, rockets + 1 * mult);
-      cells = MINVALUE(maxc, cells + 20 * mult);
+      shells = MINVALUE(maxs, shells + (SELECT r.clip_shells FROM rules r WHERE r.id = 1) * mult);
+      rockets = MINVALUE(maxr, rockets + (SELECT r.clip_rockets FROM rules r WHERE r.id = 1) * mult);
+      cells = MINVALUE(maxc, cells + (SELECT r.clip_cells FROM rules r WHERE r.id = 1) * mult);
     END
     IF (took = 1) THEN
     BEGIN
@@ -1971,7 +1974,7 @@ BEGIN
              msg = 'Picked up ' || :lbl || '.', msg_tics = 70
        WHERE id = 1;
       EXECUTE PROCEDURE play_sound(CASE WHEN pk IN ('shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'chainsaw', 'ssg') THEN 'DSWPNUP'
-                                        WHEN pk IN ('none', 'mega', 'invis', 'invuln', 'suit', 'goggles', 'berserk', 'allmap') THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
+                                        WHEN pk IN ('none', 'soul', 'mega', 'invis', 'invuln', 'suit', 'goggles', 'berserk', 'allmap') THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);
     END
   END
 END^
@@ -3213,7 +3216,7 @@ BEGIN
   BEGIN
     UPDATE player p SET god = 1 - p.god WHERE p.id = 1 AND p.dead = 0;
     UPDATE player p
-       SET health = IIF(p.god = 1, 100, p.health),
+       SET health = IIF(p.god = 1, (SELECT r.god_health FROM rules r WHERE r.id = 1), p.health),
            msg = TRIM(IIF(p.god = 1, 'Degreelessness Mode On', 'Degreelessness Mode Off')), msg_tics = 70
      WHERE p.id = 1 AND p.dead = 0;
   END
@@ -3258,7 +3261,9 @@ BEGIN
        SET has_shotgun = 1, has_chaingun = 1, has_launcher = 1, has_plasma = 1, has_bfg = 1, has_chainsaw = 1,
            has_ssg = IIF((SELECT g.map_name FROM game g WHERE g.id = 1) STARTING WITH 'MAP', 1, p.has_ssg),
            bullets = p.max_bullets, shells = p.max_shells, rockets = p.max_rockets, cells = p.max_cells,
-           armor = 200, armor_type = 2, keycards = IIF(:code = 'idkfa', 7, p.keycards),
+           armor = IIF(:code = 'idkfa', (SELECT r.idkfa_armor FROM rules r WHERE r.id = 1), (SELECT r.idfa_armor FROM rules r WHERE r.id = 1)),
+           armor_type = IIF(:code = 'idkfa', (SELECT r.idkfa_class FROM rules r WHERE r.id = 1), (SELECT r.idfa_class FROM rules r WHERE r.id = 1)),
+           keycards = IIF(:code = 'idkfa', 7, p.keycards),
            msg = TRIM(IIF(:code = 'idkfa', 'Very Happy Ammo Added', 'Ammo (no keys) Added')), msg_tics = 70
      WHERE p.id = 1 AND p.dead = 0;
 END^
@@ -3502,10 +3507,11 @@ BEGIN
   UPDATE player SET pending_weapon = 0, weapon_y = 90, weapon_down = 0, attack_tics = 0 WHERE id = 1;
   IF (new_game = 1) THEN
     UPDATE player
-       SET health = 100, armor = 0, armor_type = 0, bullets = 50, shells = 0, max_bullets = 200, max_shells = 50,
+       SET health = (SELECT r.init_health FROM rules r WHERE r.id = 1), armor = 0, armor_type = 0, bullets = (SELECT r.init_bullets FROM rules r WHERE r.id = 1), shells = 0,
+           max_bullets = (SELECT r.max_bullets FROM rules r WHERE r.id = 1), max_shells = (SELECT r.max_shells FROM rules r WHERE r.id = 1),
            weapon = 2, has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0,
            has_chainsaw = 0, has_ssg = 0,
-           rockets = 0, cells = 0, max_rockets = 50, max_cells = 300, god = 0, noclip = 0
+           rockets = 0, cells = 0, max_rockets = (SELECT r.max_rockets FROM rules r WHERE r.id = 1), max_cells = (SELECT r.max_cells FROM rules r WHERE r.id = 1), god = 0, noclip = 0
      WHERE id = 1;
   UPDATE player
      SET thing_id = (SELECT MAX(id) FROM things WHERE kind = 'player'),

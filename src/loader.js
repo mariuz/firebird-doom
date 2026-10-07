@@ -4,6 +4,7 @@
 // (scripts/sql-smoke.mjs), so CI exercises exactly the SQL the page runs.
 
 import { THING_TYPES } from './thinginfo.js';
+import { applyDehacked, parseDehacked } from './dehacked.js';
 
 const ITEM_LABELS = {
   STIM: 'a stimpack', MEDI: 'a medikit', BON1: 'a health bonus', SOUL: 'a supercharge',
@@ -46,7 +47,11 @@ export async function createSchema(db, sql) {
  * Resources: everything that does not change between maps.
  * Returns the lookup tables the JS renderer needs alongside.
  */
-export async function loadResources(db, wad, { width = 320, height = 168 } = {}) {
+export async function loadResources(db, wad, { width = 320, height = 168, dehacked = '' } = {}) {
+  // DeHackEd: the WAD's DEHACKED lump, then any patch given (a .deh file)
+  const lump = wad.lump('DEHACKED');
+  const dehText = (lump ? new TextDecoder('latin1').decode(wad.data(lump)) : '') + '\n' + (dehacked ?? '');
+  const deh = applyDehacked(THING_TYPES, parseDehacked(dehText));
   // Wall textures: first definition of a name wins (R_TextureNumForName).
   const texDefs = [];
   const texId = new Map();
@@ -78,7 +83,7 @@ export async function loadResources(db, wad, { width = 320, height = 168 } = {})
       'pain_fr', 'death_fr', 'death_sprite', 'bright', 'atk_kind', 'missile_type', 'dmg_lo', 'dmg_hi', 'shots',
       'drop_type', 'pickup', 'amount', 'label', 'see_snd', 'atk_snd', 'pain_snd', 'death_snd', 'hang',
       'melee_fr', 'melee_snd', 'melee_hit_snd', 'melee_dmg', 'melee_rolls', 'mass', 'floats', 'shadow', 'active_snd'],
-    THING_TYPES.map((t) => [
+    deh.types.map((t) => [
       t.type, t.sprite, t.kind, t.radius, t.height, t.solid ?? 0, t.hp ?? null, t.speed ?? null, t.painChance ?? null,
       t.walk ?? 'A', t.attack ?? null, t.pain ?? null, t.death ?? null, t.deathSprite ?? null, t.bright ?? 0,
       t.atk ?? null, t.missile ?? null, t.dmgLo ?? null, t.dmgHi ?? null, t.shots ?? null, t.drop ?? null,
@@ -93,9 +98,11 @@ EXECUTE BLOCK AS DECLARE i INTEGER = 0;
 BEGIN WHILE (i < 1280) DO BEGIN INSERT INTO screen_cols (x) VALUES (:i); i = i + 1; END END^
 SET TERM ; ^`);
   await db.exec('INSERT INTO game (id) VALUES (1); INSERT INTO player (id) VALUES (1)');
+  const rk = Object.keys(deh.rules);
+  await db.exec(`INSERT INTO rules (id, ${rk.join(', ')}) VALUES (1, ${rk.map((k) => Math.trunc(deh.rules[k])).join(', ')})`);
   await setView(db, width, height);
 
-  return { texDefs, texId, flats, flatId };
+  return { texDefs, texId, flats, flatId, dehacked: { cheats: deh.cheats, pars: deh.pars, report: deh.report, types: deh.types } };
 }
 
 /**

@@ -14,13 +14,13 @@ import { createSchema, loadResources, loadMap, setView, setRenderer } from './lo
 import { Renderer } from './renderer.js';
 import { drawStatusBar, drawText, drawWeapon } from './hud.js';
 import { AM_COLORS, automapColor } from './automap.js';
-import { clevMap, idmusMap, makeCheatReader, makeParamCheatReader } from './cheats.js';
+import { cheatReaders, clevMap, idmusMap } from './cheats.js';
 import { nextMap } from './progress.js';
 import { Finale, parseDehStrings, setFallbackStrings } from './finale.js';
 import { Menu, TitleLoop } from './menu.js';
 import { captureGame, restoreGame, saveStore, SLOTS } from './savegame.js';
 import { DemoPlayer, DemoRecorder, demoProblem } from './demo.js';
-import { Intermission, levelOf } from './intermission.js';
+import { Intermission, levelOf, setParOverrides } from './intermission.js';
 import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 import { createPresenter } from './present.js';
@@ -71,13 +71,8 @@ let lastSeed = null;                // the seed the current map started from
 let wiButtons = true;               // fire/use held last tic: only a new press accelerates
 const didSecret = new Set();        // DOOM I episodes whose secret level is done (wbs->didsecret)
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
-const iddt = makeCheatReader('iddt');
-// ST_Responder: IDDQD and IDKFA, typed any time during play
-const CHEATS = ['iddqd', 'idkfa', 'idfa', 'idclip', 'idspispopd', 'idchoppers', 'idbehold', 'idmypos']
-  .map((code) => [code, makeCheatReader(code)]);
-const idbehold = makeParamCheatReader('idbehold', 1);   // …then v, s, i, r, a or l
-const idmus = makeParamCheatReader('idmus', 2);
-const idclev = makeParamCheatReader('idclev', 2);
+// ST_Responder's cheats, typed any time during play (respelt by a DeHackEd patch: cheatReaders)
+let cheats = cheatReaders();
 const audio = new DoomAudio();
 audio.setVolumes(settings.sfx / 100, settings.music / 100);
 audio.setEnabled(settings.audio);
@@ -132,17 +127,13 @@ window.addEventListener('keydown', (e) => {
   if (finale) finaleKey = true;
   if (e.code === 'Tab') showMap = !showMap;
   // AM_Responder: the automap listens for IDDT while it's open
-  if (showMap && iddt(e.key)) amCheating = (amCheating + 1) % 3;
-  for (const [code, read] of CHEATS) {
+  if (showMap && cheats.iddt(e.key)) amCheating = (amCheating + 1) % 3;
+  for (const [code, read] of cheats.fixed) {
     if (recorder || demoPlayer) break;   // (a cheat isn't an input: it would desync the demo)
     if (read(e.key)) db.query(`EXECUTE PROCEDURE cheat('${code}')`).catch((err) => console.error(err));
   }
-  const power = idbehold(e.key)?.toLowerCase();
-  if (power && 'vsiral'.includes(power)) {
-    db.query(`EXECUTE PROCEDURE cheat('idbehold${power}')`).catch((err) => console.error(err));
-  }
   // IDMUS xy: S_ChangeMusic to another level's song, if there is such a song
-  const song = idmus(e.key);
+  const song = cheats.idmus(e.key);
   if (song && settings.skill !== 5) {   // (ST_Responder: not on Nightmare)
     const mapFor = idmusMap(song, wad.mapNames().some((m) => m.startsWith('MAP')));
     const lump = mapFor && musicLumpFor(mapFor);
@@ -152,7 +143,7 @@ window.addEventListener('keydown', (e) => {
       .catch((err) => console.error(err));
   }
   // IDCLEV xy: G_DeferedInitNew – a new game on that map, if this WAD has it
-  const digits = idclev(e.key);
+  const digits = cheats.idclev(e.key);
   const warp = digits && clevMap(digits, wad.mapNames());
   if (warp && !recorder && !demoPlayer) {
     $('map').value = warp;
@@ -773,6 +764,10 @@ async function useWad(buffer, label) {
   renderer = new Renderer(wad, res);
   renderer.attach(presenter);
   audio.setWad(wad);
+  // DeHackEd: the WAD's patch respells cheats and sets par times (the rest went into Firebird)
+  cheats = cheatReaders(res.dehacked.cheats);
+  setParOverrides(res.dehacked.pars);
+  if (res.dehacked.report.length) console.info(`DEHACKED (${label}): ${res.dehacked.report.join('; ')}`);
   wadKey = `${label}|${maps.length}`;
   saveSlots = Array(SLOTS).fill(null);
   refreshSlots();
