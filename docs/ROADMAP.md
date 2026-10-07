@@ -44,10 +44,12 @@ you find missing.
   strobe (it was only hurting). Every type `P_SpawnSpecials` knows is handled now.
 - ~~**Linedef specials.**~~ Done: every special the player can trigger, the scrolling wall (48)
   included (see the README's list).
-- **Monsters crossing lines.** Monsters never trigger lines. In DOOM they walk through teleporters
-  (39, 97, and the monster-only 125/126) and open some doors and lifts (4, 10, 88) as they cross,
-  and open manual doors (1, 32–34) they bump into (`P_Move`'s special lines).
-- **Telefrag.** A teleport onto a monster should kill it (10000 damage).
+- ~~**Monsters crossing lines.**~~ Done: teleporters 39/97/125/126, door 4 and lifts 10/88 as they
+  walk over, door 1 as they bump into it. A charging lost soul doesn't trigger lines (its flight
+  isn't a `P_Move`).
+- ~~**Telefrag.**~~ Done: the player's teleport kills what stands on the destination; monsters are
+  blocked by it (except on MAP30). Teleports also leave fog at both ends and freeze the player
+  for 18 tics.
 - **Multiplayer and deathmatch.** Single player only. Co-op and deathmatch starts and things are
   skipped.
 - **DEHACKED beyond `[STRINGS]`.** Thing, frame, weapon, ammo and pointer patches aren't applied,

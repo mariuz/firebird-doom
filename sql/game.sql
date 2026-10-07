@@ -432,8 +432,71 @@ BEGIN
   VALUES (:sec, 'floor', IIF(:target > :fh, 1, -1), :spd, :target, :target, 0, 1);
 END^
 
+-- EV_Teleport: TID to the teleport destination (thing 14) in the first sector
+-- tagged TG that has one. Missiles never teleport. P_TeleportMove / PIT_StompThing:
+-- whatever shootable thing stands there is telefragged (10000 damage) – when
+-- the player arrives; a monster is blocked by it instead, except on MAP30. Fog
+-- and DSTELEPT where it left and 20 units ahead of where it lands; it faces the
+-- destination's way, stopped dead, and the player can't move for 18 tics
+-- (reactiontime).
+CREATE OR ALTER PROCEDURE teleport_thing (tid INTEGER, tg INTEGER)
+RETURNS (ok SMALLINT)
+AS
+DECLARE k VARCHAR(10);
+DECLARE rad DOUBLE PRECISION;
+DECLARE ox DOUBLE PRECISION;
+DECLARE oy DOUBLE PRECISION;
+DECLARE oz DOUBLE PRECISION;
+DECLARE dx DOUBLE PRECISION;
+DECLARE dy DOUBLE PRECISION;
+DECLARE da DOUBLE PRECISION;
+DECLARE fz DOUBLE PRECISION;
+DECLARE sec INTEGER;
+DECLARE vid INTEGER;
+DECLARE vk VARCHAR(10);
+DECLARE fog INTEGER;
+DECLARE mname VARCHAR(8);
+BEGIN
+  ok = 0;
+  SELECT t.kind, t.radius, t.x, t.y, t.z FROM things t WHERE t.id = :tid INTO k, rad, ox, oy, oz;
+  IF (k IS NULL OR k = 'missile') THEN EXIT;
+  SELECT FIRST 1 t.x, t.y, t.angle
+    FROM things t JOIN sectors s ON s.id = t.sector_id
+   WHERE t.thing_type = 14 AND s.tag = :tg
+   ORDER BY s.id, t.id
+    INTO dx, dy, da;
+  IF (dx IS NULL) THEN EXIT;
+  SELECT g.map_name FROM game g WHERE g.id = 1 INTO mname;
+  IF (k <> 'player' AND mname IS DISTINCT FROM 'MAP30'
+      AND EXISTS (SELECT 1 FROM things t
+                   WHERE t.id <> :tid AND t.kind IN ('monster', 'player', 'barrel', 'keen', 'brain')
+                     AND t.st NOT IN ('dying', 'dead')
+                     AND ABS(t.x - :dx) < t.radius + :rad AND ABS(t.y - :dy) < t.radius + :rad)) THEN EXIT;
+  FOR SELECT t.id, t.kind FROM things t
+       WHERE t.id <> :tid AND t.kind IN ('monster', 'player', 'barrel', 'keen', 'brain')
+         AND t.st NOT IN ('dying', 'dead')
+         AND ABS(t.x - :dx) < t.radius + :rad AND ABS(t.y - :dy) < t.radius + :rad
+       ORDER BY t.id
+        INTO vid, vk
+  DO
+    IF (vk = 'player') THEN EXECUTE PROCEDURE damage_player(10000);
+    ELSE EXECUTE PROCEDURE damage_thing(vid, 10000, IIF(:k = 'player', NULL, :tid));
+  sec = sector_at(dx, dy);
+  SELECT floor_h FROM sectors WHERE id = :sec INTO fz;
+  UPDATE things t
+     SET x = :dx, y = :dy, z = :fz, angle = :da, momx = 0, momy = 0, momz = 0, sector_id = :sec,
+         reaction = IIF(t.kind = 'player', 18, t.reaction)
+   WHERE t.id = :tid;
+  EXECUTE PROCEDURE spawn_thing(9016, ox, oy, oz, 0) RETURNING_VALUES fog;
+  EXECUTE PROCEDURE play_sound('DSTELEPT', fog, ox, oy);
+  EXECUTE PROCEDURE spawn_thing(9016, dx + 20 * COS(da), dy + 20 * SIN(da), fz, 0) RETURNING_VALUES fog;
+  EXECUTE PROCEDURE play_sound('DSTELEPT', fog, dx + 20 * COS(da), dy + 20 * SIN(da));
+  ok = 1;
+END^
+
 -- EV_DoDoor / EV_DoPlat / EV_DoFloor / G_ExitLevel, dispatched on line special.
-CREATE OR ALTER PROCEDURE activate_line (line_id INTEGER, how VARCHAR(5))
+-- WHO is the monster that set it off (NULL: the player).
+CREATE OR ALTER PROCEDURE activate_line (line_id INTEGER, how VARCHAR(5), who INTEGER = NULL)
 AS
 DECLARE sp INTEGER;
 DECLARE tg INTEGER;
@@ -459,10 +522,22 @@ DECLARE step_h DOUBLE PRECISION;
 DECLARE step_spd DOUBLE PRECISION;
 DECLARE nflat INTEGER;
 DECLARE nspecial INTEGER;
+DECLARE lflags INTEGER;
 BEGIN
-  SELECT special, tag, back_sector, front_side, front_sector FROM linedefs WHERE id = :line_id
-    INTO sp, tg, bsec, fside, fsec;
+  SELECT special, tag, back_sector, front_side, front_sector, flags FROM linedefs WHERE id = :line_id
+    INTO sp, tg, bsec, fside, fsec, lflags;
   IF (sp IS NULL OR sp = 0) THEN EXIT;
+  -- P_CrossSpecialLine / P_UseSpecialLine: a monster walking over a line only
+  -- sets off teleporters, door 4 and lifts 10/88; bumping into one, only a plain
+  -- door (1, not on a secret line – the keyed ones are the player's). 125 and
+  -- 126 are the monsters' own teleporters.
+  IF (who IS NOT NULL) THEN
+  BEGIN
+    IF (how = 'walk' AND sp NOT IN (39, 97, 125, 126, 4, 10, 88)) THEN EXIT;
+    IF (how = 'use' AND (sp <> 1 OR BIN_AND(lflags, 32) <> 0)) THEN EXIT;
+    IF (how = 'shoot') THEN EXIT;
+  END
+  ELSE IF (sp IN (125, 126)) THEN EXIT;
 
   need = CASE WHEN sp IN (26, 32, 99, 133) THEN 1
               WHEN sp IN (27, 34, 136, 137) THEN 2
@@ -502,7 +577,7 @@ BEGIN
           WHEN sp IN (100, 127) THEN 'stairs16'
           WHEN sp IN (11, 52) THEN 'exit'
           WHEN sp IN (51, 124) THEN 'secret'
-          WHEN sp IN (39, 97) THEN 'teleport'
+          WHEN sp IN (39, 97, 125, 126) THEN 'teleport'
           WHEN sp IN (6, 25, 49, 73, 77, 141) THEN 'crush'
           WHEN sp IN (57, 74) THEN 'crushstop'
           WHEN sp IN (55, 56, 65, 94) THEN 'fl_crush'
@@ -513,17 +588,17 @@ BEGIN
            WHEN sp IN (2, 3, 4, 5, 8, 10, 19, 36, 38, 39, 52, 58, 75, 82, 83, 86, 88, 90, 91, 92, 97, 98,
                        105, 106, 107, 108, 109, 110, 119, 120, 121, 124, 128) THEN 'walk'
            WHEN sp IN (12, 13, 16, 17, 22, 30, 35, 37, 40, 53, 54, 59, 72, 76, 79, 80, 81, 84, 87, 89, 93, 95, 96,
-                       100, 104, 129, 130) THEN 'walk'
+                       100, 104, 125, 126, 129, 130) THEN 'walk'
            WHEN sp IN (24, 46, 47) THEN 'shoot'
            ELSE 'use'
          END;
   repeatable = IIF(sp IN (65, 73, 74, 77, 94, 1, 26, 27, 28, 117, 42, 45, 46, 60, 61, 62, 63, 64, 69, 70, 75, 82, 83, 86, 88,
                           90, 91, 92, 97, 98, 99, 105, 106, 107, 114, 115, 116, 120, 123, 128, 134, 136,
-                          72, 76, 79, 80, 81, 84, 87, 89, 93, 95, 96, 129,
+                          72, 76, 79, 80, 81, 84, 87, 89, 93, 95, 96, 126, 129,
                           43, 66, 67, 68, 132, 138, 139), 1, 0);
   IF (act IS NULL OR trig <> how) THEN EXIT;
 
-  IF (need > 0) THEN
+  IF (need > 0 AND who IS NULL) THEN
   BEGIN
     SELECT keycards FROM player WHERE id = 1 INTO keys;
     IF (BIN_AND(keys, need) = 0) THEN
@@ -543,7 +618,16 @@ BEGIN
     IF (bsec IS NULL) THEN EXIT;
     IF (EXISTS (SELECT 1 FROM movers WHERE sector_id = :bsec)) THEN
     BEGIN
-      IF (act = 'door_man') THEN
+      -- EV_VerticalDoor: a monster only sends a closing door back up ("bad guys never close doors")
+      IF (who IS NOT NULL) THEN
+      BEGIN
+        IF (EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = :bsec AND m.kind = 'door' AND m.dir = -1)) THEN
+        BEGIN
+          UPDATE movers SET dir = 1 WHERE sector_id = :bsec;
+          EXECUTE PROCEDURE sector_sound('DSDOROPN', bsec);
+        END
+      END
+      ELSE IF (act = 'door_man') THEN
       BEGIN
         UPDATE movers SET dir = IIF(dir = -1, 1, -1), wait_left = 0 WHERE sector_id = :bsec AND kind = 'door';
         SELECT IIF(m.dir = 1, 'DSDOROPN', 'DSDORCLS') FROM movers m WHERE m.sector_id = :bsec INTO act;
@@ -555,21 +639,8 @@ BEGIN
     did = 1;
   END
   ELSE IF (act = 'teleport') THEN
-  BEGIN
-    -- EV_Teleport: to the destination thing in the sector tagged by the line
-    SELECT FIRST 1 t.x, t.y, t.angle FROM things t JOIN sectors s ON s.id = t.sector_id
-     WHERE t.thing_type = 14 AND s.tag = :tg
-      INTO fh, ch, h;
-    IF (fh IS NOT NULL) THEN
-    BEGIN
-      UPDATE things t
-         SET x = :fh, y = :ch, angle = :h, momx = 0, momy = 0, sector_id = sector_at(:fh, :ch),
-             z = (SELECT floor_h FROM sectors s WHERE s.id = sector_at(:fh, :ch))
-       WHERE t.kind = 'player';
-      EXECUTE PROCEDURE play_sound('DSTELEPT', 0, fh, ch);
-      did = 1;
-    END
-  END
+    EXECUTE PROCEDURE teleport_thing(COALESCE(who, (SELECT p.thing_id FROM player p WHERE p.id = 1)), tg)
+      RETURNING_VALUES did;
   ELSE IF (act IN ('exit', 'secret')) THEN
   BEGIN
     UPDATE game SET exit_kind = IIF(:act = 'exit', 1, 2) WHERE id = 1;
@@ -810,7 +881,7 @@ BEGIN
     END
   END
 
-  IF (did = 1 AND how = 'use') THEN
+  IF (did = 1 AND how = 'use' AND who IS NULL) THEN
     -- flip SW1xxxx <-> SW2xxxx on the switch the player pressed
     UPDATE sidedefs sd
        SET mid_tex = COALESCE((SELECT FIRST 1 t2.id FROM textures t1
@@ -1417,6 +1488,7 @@ DECLARE weapon_y INTEGER;
 DECLARE weapon_down SMALLINT;
 DECLARE was_attacking INTEGER;
 DECLARE neww SMALLINT;
+DECLARE preact INTEGER;
 DECLARE bslope DOUBLE PRECISION;
 DECLARE mult INTEGER;
 DECLARE tries INTEGER;
@@ -1443,6 +1515,16 @@ BEGIN
                       weapon_y = MINVALUE(96, weapon_y + 6), weapon_down = 1
      WHERE id = 1;
     EXIT;
+  END
+
+  -- P_PlayerThink: just teleported (reactiontime), it can't turn or move
+  SELECT COALESCE(t.reaction, 0) FROM things t WHERE t.id = :tid INTO preact;
+  IF (preact > 0) THEN
+  BEGIN
+    fwd = 0;
+    side = 0;
+    turn = 0;
+    UPDATE things SET reaction = :preact - 1 WHERE id = :tid;
   END
 
   -- P_MovePlayer: turn, thrust, friction
@@ -2001,9 +2083,10 @@ END^
 CREATE OR ALTER PROCEDURE p_move (
   id INTEGER, x DOUBLE PRECISION, y DOUBLE PRECISION, z DOUBLE PRECISION, rad DOUBLE PRECISION,
   hgt DOUBLE PRECISION, spd DOUBLE PRECISION, fl SMALLINT, momz DOUBLE PRECISION, dir SMALLINT)
-RETURNS (ok SMALLINT, nx DOUBLE PRECISION, ny DOUBLE PRECISION, nz DOUBLE PRECISION, sec INTEGER)
+RETURNS (ok SMALLINT, nx DOUBLE PRECISION, ny DOUBLE PRECISION, nz DOUBLE PRECISION, sec INTEGER, bumped SMALLINT)
 AS
 DECLARE d DOUBLE PRECISION = 0.7171630859375e0;
+DECLARE lid INTEGER;
 DECLARE tx DOUBLE PRECISION;
 DECLARE ty DOUBLE PRECISION;
 DECLARE fz DOUBLE PRECISION;
@@ -2011,6 +2094,7 @@ DECLARE cz DOUBLE PRECISION;
 DECLARE dz DOUBLE PRECISION;
 BEGIN
   ok = 0;
+  bumped = 0;
   nx = x;
   ny = y;
   nz = z;
@@ -2028,6 +2112,60 @@ BEGIN
     -- on the ground it steps up and down with the floor; tossed or flying,
     -- it keeps its height
     nz = IIF(momz = 0 AND fl = 0, fz, MAXVALUE(z, fz));
+  END
+  ELSE
+  BEGIN
+    -- blocked: the special lines its box touched (spechit) get a try – for a
+    -- monster that's a door it can open – and if one answers, that counts as
+    -- a move (it waits there while the door opens; its heading is spent)
+    FOR SELECT l.id
+          FROM linedefs l
+         WHERE l.special = 1 AND l.back_sector IS NOT NULL AND BIN_AND(l.flags, 32) = 0
+           AND l.minx <= :tx + :rad AND l.maxx >= :tx - :rad AND l.miny <= :ty + :rad AND l.maxy >= :ty - :rad
+           AND MINVALUE(l.dx * (:ty - :rad - l.y1) - l.dy * (:tx - :rad - l.x1), l.dx * (:ty - :rad - l.y1) - l.dy * (:tx + :rad - l.x1),
+                        l.dx * (:ty + :rad - l.y1) - l.dy * (:tx - :rad - l.x1), l.dx * (:ty + :rad - l.y1) - l.dy * (:tx + :rad - l.x1)) < 0
+           AND MAXVALUE(l.dx * (:ty - :rad - l.y1) - l.dy * (:tx - :rad - l.x1), l.dx * (:ty - :rad - l.y1) - l.dy * (:tx + :rad - l.x1),
+                        l.dx * (:ty + :rad - l.y1) - l.dy * (:tx - :rad - l.x1), l.dx * (:ty + :rad - l.y1) - l.dy * (:tx + :rad - l.x1)) > 0
+         ORDER BY l.id
+          INTO lid
+    DO
+    BEGIN
+      EXECUTE PROCEDURE activate_line(lid, 'use', id);
+      bumped = 1;
+    END
+    IF (bumped = 1) THEN ok = 1;
+  END
+END^
+
+-- P_TryMove's P_CrossSpecialLine, for a monster's step from (OX, OY) to (X, Y):
+-- the special lines it crossed, in line order (a teleporter only from the
+-- front). If one teleported it, the rest are left alone.
+CREATE OR ALTER PROCEDURE monster_cross (
+  id INTEGER, ox DOUBLE PRECISION, oy DOUBLE PRECISION, x DOUBLE PRECISION, y DOUBLE PRECISION)
+RETURNS (teleported SMALLINT)
+AS
+DECLARE lid INTEGER;
+BEGIN
+  teleported = 0;
+  -- (straight to the few lines with those specials, by index: this runs for every step)
+  FOR SELECT l.id
+        FROM linedefs l
+       WHERE l.special IN (39, 97, 125, 126, 4, 10, 88)
+         AND l.minx <= MAXVALUE(:ox, :x) AND l.maxx >= MINVALUE(:ox, :x)
+         AND l.miny <= MAXVALUE(:oy, :y) AND l.maxy >= MINVALUE(:oy, :y)
+         AND SIGN(l.dx * (:oy - l.y1) - l.dy * (:ox - l.x1)) <> SIGN(l.dx * (:y - l.y1) - l.dy * (:x - l.x1))
+         AND SIGN((:x - :ox) * (l.y1 - :oy) - (:y - :oy) * (l.x1 - :ox))
+          <> SIGN((:x - :ox) * (l.y2 - :oy) - (:y - :oy) * (l.x2 - :ox))
+         AND (l.special NOT IN (39, 97, 125, 126) OR l.dx * (:oy - l.y1) - l.dy * (:ox - l.x1) < 0)
+       ORDER BY l.id
+        INTO lid
+  DO
+  BEGIN
+    IF (teleported = 0) THEN
+    BEGIN
+      EXECUTE PROCEDURE activate_line(lid, 'walk', id);
+      IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.id = :id AND t.x = :ox AND t.y = :oy)) THEN teleported = 1;
+    END
   END
 END^
 
@@ -2057,6 +2195,7 @@ DECLARE mx DOUBLE PRECISION;
 DECLARE my DOUBLE PRECISION;
 DECLARE mz DOUBLE PRECISION;
 DECLARE msec INTEGER;
+DECLARE bump SMALLINT;
 BEGIN
   moved = 0;
   movecount = 0;
@@ -2075,11 +2214,11 @@ BEGIN
     cand = CASE WHEN dy < 0 AND dx > 0 THEN 7 WHEN dy < 0 THEN 5 WHEN dx > 0 THEN 1 ELSE 3 END;
     IF (cand <> turnaround) THEN
     BEGIN
-      EXECUTE PROCEDURE p_move(id, x, y, z, rad, hgt, spd, fl, momz, cand) RETURNING_VALUES ok, mx, my, mz, msec;
+      EXECUTE PROCEDURE p_move(id, x, y, z, rad, hgt, spd, fl, momz, cand) RETURNING_VALUES ok, mx, my, mz, msec, bump;
       IF (ok = 1) THEN
       BEGIN
         moved = 1;
-        movedir = cand;
+        movedir = IIF(bump = 1, 8, cand);
       END
     END
   END
@@ -2109,11 +2248,11 @@ BEGIN
       ELSE cand = turnaround;
       IF (cand < 8) THEN
       BEGIN
-        EXECUTE PROCEDURE p_move(id, x, y, z, rad, hgt, spd, fl, momz, cand) RETURNING_VALUES ok, mx, my, mz, msec;
+        EXECUTE PROCEDURE p_move(id, x, y, z, rad, hgt, spd, fl, momz, cand) RETURNING_VALUES ok, mx, my, mz, msec, bump;
         IF (ok = 1) THEN
         BEGIN
           moved = 1;
-          movedir = cand;
+          movedir = IIF(bump = 1, 8, cand);
         END
       END
       stage = stage + 1;
@@ -2189,6 +2328,8 @@ DECLARE a45 DOUBLE PRECISION;
 DECLARE delta DOUBLE PRECISION;
 DECLARE behind SMALLINT;
 DECLARE heard SMALLINT;
+DECLARE bump SMALLINT;
+DECLARE tele SMALLINT;
 DECLARE see_snd VARCHAR(8);
 DECLARE active_snd VARCHAR(8);
 DECLARE atk_snd VARCHAR(8);
@@ -2835,12 +2976,18 @@ BEGIN
           just_attacked = 0;
           EXECUTE PROCEDURE new_chase_dir(id, x, y, z, rad, hgt, spd, fl, momz, movedir, px, py)
             RETURNING_VALUES movedir, movecount, nx, ny, fz, msec, moved;
-          IF (moved = 1) THEN
+          IF (moved = 1 AND (nx <> x OR ny <> y)) THEN
           BEGIN
-            x = nx;
-            y = ny;
-            z = fz;
-            sec = msec;
+            EXECUTE PROCEDURE monster_cross(id, x, y, nx, ny) RETURNING_VALUES tele;
+            IF (tele = 1) THEN
+              SELECT t.x, t.y, t.z, t.angle, t.sector_id FROM things t WHERE t.id = :id INTO x, y, z, ang, sec;
+            ELSE
+            BEGIN
+              x = nx;
+              y = ny;
+              z = fz;
+              sec = msec;
+            END
           END
         END
         ELSE IF (pdead = 0 AND reaction = 0 AND dist < 2048
@@ -2883,17 +3030,25 @@ BEGIN
           moved = 0;
           IF (movecount >= 0) THEN
           BEGIN
-            EXECUTE PROCEDURE p_move(id, x, y, z, rad, hgt, spd, fl, momz, movedir) RETURNING_VALUES moved, nx, ny, fz, msec;
+            EXECUTE PROCEDURE p_move(id, x, y, z, rad, hgt, spd, fl, momz, movedir) RETURNING_VALUES moved, nx, ny, fz, msec, bump;
+            IF (bump = 1) THEN movedir = 8;
           END
           IF (moved = 0) THEN
             EXECUTE PROCEDURE new_chase_dir(id, x, y, z, rad, hgt, spd, fl, momz, movedir, px, py)
               RETURNING_VALUES movedir, movecount, nx, ny, fz, msec, moved;
-          IF (moved = 1) THEN
+          IF (moved = 1 AND (nx <> x OR ny <> y)) THEN
           BEGIN
-            x = nx;
-            y = ny;
-            z = fz;
-            sec = msec;
+            -- P_TryMove: the special lines the step crossed
+            EXECUTE PROCEDURE monster_cross(id, x, y, nx, ny) RETURNING_VALUES tele;
+            IF (tele = 1) THEN
+              SELECT t.x, t.y, t.z, t.angle, t.sector_id FROM things t WHERE t.id = :id INTO x, y, z, ang, sec;
+            ELSE
+            BEGIN
+              x = nx;
+              y = ny;
+              z = fz;
+              sec = msec;
+            END
           END
           -- A_Chase, last: the activesound, 3 times in 256
           IF (active_snd IS NOT NULL AND p_random() * 256 < 3) THEN

@@ -292,6 +292,19 @@ Besides the common doors, lifts, floors, crushers, stairs, teleporters and exits
 - **scrolling walls (48):** the front side's texture moves one unit a tic (`P_UpdateSpecials`).
   It's a function of the tic, like animated textures, so the renderer works it out.
 
+Monsters set lines off too, as in `P_CrossSpecialLine` and `P_UseSpecialLine`. Walking over a
+line, a monster can only use teleporters (39, 97, and its own 125/126, which ignore the player),
+door 4 and lifts 10/88. Bumping into a closed door 1 (not one flagged secret), it opens it and
+waits while it rises, and it never closes a door. The keyed doors are the player's alone.
+`MONSTER_CROSS` checks the lines each step crossed, and `P_MOVE` tries the door lines a blocked
+step touched (vanilla's `spechit`).
+
+A teleport (`TELEPORT_THING`, `EV_Teleport`) only works from the front of the line and never
+takes missiles. It leaves teleport fog and a `DSTELEPT` at both ends, turns you the destination's
+way and stops you dead, and the player can't move for 18 tics (`reactiontime`). Arriving, the
+player telefrags any monster, barrel or Keen standing on the spot (10000 damage, `PIT_StompThing`).
+A monster can't teleport onto something; only on MAP30 do monsters telefrag too.
+
 Moving floors grind (`DSSTNMOV`) every 8 tics and stop with `DSPSTOP`, as in `T_MoveFloor`.
 `npm run test:physics` triggers each kind on a test sector and runs it to the end. The
 renderer test draws a scrolling wall at tic 37 and checks it against the same wall with its

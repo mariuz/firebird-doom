@@ -1049,6 +1049,126 @@ if (slimeMap) {
   await db.exec(`UPDATE linedefs SET special = 0, tag = 0 WHERE id = ${L.ID}`);
 }
 
+// ── monsters crossing lines, and telefrags ───────────────────────────────
+{
+  await loadMap(db, wad, res, maps[0], { skill: 3 });
+  await quiet();
+  await db.exec('UPDATE player SET health = 100, god = 0, invuln_tics = 0');
+  // a teleporter: a destination (thing 14) in an empty sector tagged 777, and a two-sided line given the special
+  const D = await one(`SELECT FIRST 1 s.id FROM sectors s WHERE s.tag = 0 AND s.ceil_h - s.floor_h >= 72
+      AND NOT EXISTS (SELECT 1 FROM things t WHERE t.sector_id = s.id) ORDER BY s.id DESC`);
+  await db.exec(`UPDATE sectors SET tag = 777 WHERE id = ${D.ID}`);
+  const dp = await inside(D.ID);
+  await spawn(14, dp.X, dp.Y);
+  const T = await one(`SELECT FIRST 1 l.id, l.x1, l.y1, l.dx, l.dy, l.len FROM linedefs l
+      WHERE l.back_sector IS NOT NULL AND l.special = 0 AND l.len >= 64
+        AND l.front_sector <> ${D.ID} AND l.back_sector <> ${D.ID} ORDER BY l.id`);
+  const mx = T.X1 + T.DX / 2;
+  const my = T.Y1 + T.DY / 2;
+  const nx = T.DY / T.LEN;
+  const ny = -T.DX / T.LEN;
+  const front = [mx + nx * 4, my + ny * 4];
+  const back = [mx - nx * 4, my - ny * 4];
+  const special = (sp) => db.exec(`UPDATE linedefs SET special = ${sp}, tag = 777 WHERE id = ${T.ID}`);
+  const cross = (id, [ax, ay], [bx, by]) => one(`EXECUTE BLOCK RETURNS (t SMALLINT) AS BEGIN
+      EXECUTE PROCEDURE monster_cross(${id}, ${ax}, ${ay}, ${bx}, ${by}) RETURNING_VALUES t; SUSPEND; END`).then((r) => r.T);
+  const at = (id) => one(`SELECT x, y, st, hp FROM things WHERE id = ${id}`);
+  const place = (id, [x, y]) => db.exec(`UPDATE things SET x = ${x}, y = ${y}, sector_id = sector_at(${x}, ${y}), st = 'chase' WHERE id = ${id}`);
+
+  await special(97);
+  const imp = await spawn(3001, ...front);
+  await db.exec('DELETE FROM sound_events');
+  const fogs0 = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9016')).N;
+  const went = await cross(imp, front, back);
+  const there = await at(imp);
+  const fogs = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9016')).N - fogs0;
+  const zaps = (await one(`SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSTELEPT'`)).N;
+  assert(went === 1 && Math.abs(there.X - dp.X) < 1e-6 && Math.abs(there.Y - dp.Y) < 1e-6 && fogs === 2 && zaps === 2,
+    `a monster walking over teleporter 97 lands on the destination, with fog and a zap at both ends (${fogs}, ${zaps})`);
+  const imp2 = await spawn(3001, ...back);
+  const fromBack = await cross(imp2, back, front);
+  await place(imp2, front);
+  const blocked = await cross(imp2, front, back);
+  assert(fromBack === 0 && blocked === 0 && (await at(imp)).ST !== 'dead',
+    'crossed from the back it stays put; and with a monster standing on the destination, another can\'t follow (not on MAP30)');
+
+  // the player telefrags whatever is there, and stands still for 18 tics
+  const p0 = await one(`SELECT t.id FROM things t WHERE t.kind = 'player'`);
+  await db.exec(`UPDATE things SET hp = 1000 WHERE id = ${imp}`);
+  await db.exec(`EXECUTE PROCEDURE activate_line(${T.ID}, 'walk')`);
+  const fragged = await at(imp);
+  const me = await one(`SELECT x, y, reaction FROM things WHERE id = ${p0.ID}`);
+  await db.query('SELECT * FROM doom_tic(1, 1, 0, 0.3, 0, 0, 0, 1)');
+  const still = await one(`SELECT x, y, angle, reaction FROM things WHERE id = ${p0.ID}`);
+  assert(['dying', 'dead'].includes(fragged.ST) && Math.abs(me.X - dp.X) < 1e-6 && me.REACTION === 18
+      && still.X === me.X && still.Y === me.Y && still.REACTION === 17,
+    `the player's teleport telefrags the monster on the destination (${fragged.ST}, from 1000 hp) and holds still for 18 tics`);
+
+  // 125 is the monsters' own (and a W1: spent once used)
+  await special(125);
+  await db.exec(`UPDATE things SET x = ${back[0]}, y = ${back[1]}, sector_id = sector_at(${back[0]}, ${back[1]}), reaction = 0 WHERE id = ${p0.ID}`);
+  await db.exec(`EXECUTE PROCEDURE activate_line(${T.ID}, 'walk')`);
+  const pStay = await one(`SELECT x FROM things WHERE id = ${p0.ID}`);
+  await db.exec(`DELETE FROM things WHERE id IN (${imp})`);
+  await place(imp2, front);
+  const m125 = await cross(imp2, front, back);
+  const spent = (await one(`SELECT special FROM linedefs WHERE id = ${T.ID}`)).SPECIAL;
+  // (a double sent as text can come back a bit off: compare with a tolerance)
+  assert(Math.abs(pStay.X - back[0]) < 1e-9 && m125 === 1 && spent === 0, 'teleporter 125 ignores the player, takes a monster, and is spent');
+
+  // a monster walking over a door the player would open (2) does nothing; over lift 10 it starts it
+  const lift = await one(`SELECT FIRST 1 s.id FROM sectors s WHERE s.tag = 0 AND s.id <> ${D.ID}
+      AND neighbor_h(s.id, 'min_floor') < s.floor_h ORDER BY s.id`);
+  if (lift) {
+    await db.exec(`UPDATE sectors SET tag = 778 WHERE id = ${lift.ID}`);
+    await db.exec(`UPDATE linedefs SET special = 2, tag = 778 WHERE id = ${T.ID}`);
+    await place(imp2, front);
+    await cross(imp2, front, back);
+    const no = (await one(`SELECT COUNT(*) n FROM movers WHERE sector_id = ${lift.ID}`)).N;
+    await db.exec(`UPDATE linedefs SET special = 10 WHERE id = ${T.ID}`);
+    await cross(imp2, front, back);
+    const yes = await one(`SELECT kind FROM movers WHERE sector_id = ${lift.ID}`);
+    assert(no === 0 && yes?.KIND === 'lift', 'walking over line 2 a monster opens nothing; over lift 10 it sets the lift off');
+    await db.exec(`DELETE FROM movers WHERE sector_id = ${lift.ID}`);
+    await db.exec(`UPDATE sectors SET tag = 0 WHERE id = ${lift.ID}`);
+  }
+  await db.exec(`UPDATE linedefs SET special = 0, tag = 0 WHERE id = ${T.ID}`);
+
+  // bumping into a closed door (1) opens it; it never closes one, and leaves secret doors alone
+  const door = await one(`SELECT FIRST 1 l.id, l.x1, l.y1, l.dx, l.dy, l.len, l.back_sector b, l.flags FROM linedefs l
+      JOIN sectors s ON s.id = l.back_sector WHERE l.special = 1 AND s.ceil_h <= s.floor_h AND l.len >= 48 ORDER BY l.id`);
+  if (door) {
+    const dmx = door.X1 + door.DX / 2;
+    const dmy = door.Y1 + door.DY / 2;
+    const ux = door.DY / door.LEN;
+    const uy = -door.DX / door.LEN;
+    const sx = dmx + ux * 24;
+    const sy = dmy + uy * 24;
+    // the eight-way heading most nearly into the door
+    const hd = ((Math.round(Math.atan2(-uy, -ux) / (Math.PI / 4)) % 8) + 8) % 8;
+    await place(imp2, [sx, sy]);
+    const bump = () => one(`EXECUTE BLOCK RETURNS (ok SMALLINT, b SMALLINT) AS
+        DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION; DECLARE sec INTEGER;
+        BEGIN EXECUTE PROCEDURE p_move(${imp2}, ${sx}, ${sy}, (SELECT floor_h FROM sectors WHERE id = sector_at(${sx}, ${sy})), 20, 56, 8, 0, 0, ${hd})
+          RETURNING_VALUES ok, nx, ny, nz, sec, b; SUSPEND; END`);
+    const first = await bump();
+    const opening = await one(`SELECT dir FROM movers WHERE sector_id = ${door.B}`);
+    await bump();
+    const again = await one(`SELECT dir FROM movers WHERE sector_id = ${door.B}`);
+    await db.exec(`DELETE FROM movers WHERE sector_id = ${door.B}`);
+    await db.exec(`UPDATE sectors SET ceil_h = floor_h WHERE id = ${door.B}`);
+    await db.exec(`UPDATE linedefs SET flags = BIN_OR(flags, 32) WHERE id = ${door.ID}`);
+    const secret = await bump();
+    const none = (await one(`SELECT COUNT(*) n FROM movers WHERE sector_id = ${door.B}`)).N;
+    await db.exec(`UPDATE linedefs SET flags = ${door.FLAGS} WHERE id = ${door.ID}`);
+    assert(first.OK === 1 && first.B === 1 && opening?.DIR === 1 && again?.DIR === 1 && secret.B === 0 && none === 0,
+      'a monster bumping a closed door (1) opens it and waits; bumping again doesn\'t close it; a secret door stays shut');
+  } else console.log('(no closed door 1 on this map)');
+  await db.exec(`UPDATE sectors SET tag = 0 WHERE id = ${D.ID}`);
+  await db.exec(`DELETE FROM things WHERE thing_type = 14 AND x = ${dp.X} AND y = ${dp.Y}`);
+  await db.exec(`DELETE FROM things WHERE id = ${imp2}`);
+}
+
 // ── a scrolling wall (48) in the renderer ───────────────────────────────
 {
   const { Renderer } = await import('../src/renderer.js');

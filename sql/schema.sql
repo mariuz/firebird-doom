@@ -161,6 +161,7 @@ CREATE TABLE linedefs (
   light_delta  INTEGER DEFAULT 0 NOT NULL  -- DOOM's "fake contrast"
 );
 CREATE INDEX linedefs_tag ON linedefs (tag);
+CREATE INDEX linedefs_special ON linedefs (special);   -- (the few lines a monster can set off)
 CREATE INDEX linedefs_minx ON linedefs (minx);
 CREATE INDEX linedefs_fsec ON linedefs (front_sector);
 CREATE INDEX linedefs_bsec ON linedefs (back_sector);
