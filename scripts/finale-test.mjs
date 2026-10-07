@@ -83,6 +83,19 @@ if (!fs.existsSync(wadPath)) {
   }
   assert(!Finale.available(wad, 'MAP07') && !Finale.available(wad, 'MAP15'), 'no text screen after other maps');
 
+  // the secret levels' screens: only on the secret exit, and then on into the secret level
+  const { nextMap } = await import('../src/progress.js');
+  const maps = wad.mapNames();
+  for (const [m, key, to] of [['MAP15', 'C5TEXT', 'MAP31'], ['MAP31', 'C6TEXT', 'MAP32']]) {
+    const fin = new Finale(null, quiet, wad, THING_TYPES, m, true);
+    for (let i = 0; i < 60; i++) fin.tick(false);
+    fin.tick(true);
+    const next = nextMap(m, fin.secret, maps);
+    assert(Finale.available(wad, m, true) && !Finale.available(wad, m, false) && fin.state.text === strings.get(key)
+      && fin.done && next === to,
+      `${m}'s secret exit: ${key} (${fin.state.text.length} characters), then ${next}; its normal exit shows nothing`);
+  }
+
   // after the hero, the cast starts over
   const loop = new FinaleState('', cast);
   loop.startCast();

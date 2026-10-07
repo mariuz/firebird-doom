@@ -49,7 +49,7 @@ const saveSettings = () => {
 };
 const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
 let showMap = false;
-let finale = null;                  // DOOM II's text screens (MAP06/11/20) and ending (MAP30)
+let finale = null;                  // DOOM II's text screens (MAP06/11/20, the secret levels) and ending (MAP30)
 let finaleKey = false;              // a key went down: F_CastResponder
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
 const iddt = makeCheatReader('iddt');
@@ -288,8 +288,9 @@ async function frame() {
       if (finaleKey) { finale.press(); finaleKey = false; }
       for (let i = 0; i < tics; i++) finale.tick(input[4] === 1 || input[5] === 1);
       if (finale.done) {
-        // G_WorldDone after MAP06/11/20's text: on to the next map, inventory kept
-        await startMap(nextMap(map.name, false, wad.mapNames()), false);
+        // G_WorldDone after a text screen: on to the next map (MAP31/32 after a
+        // secret exit's), inventory kept
+        await startMap(nextMap(map.name, finale.secret, wad.mapNames()), false);
         nextFrame();
         return;
       }
@@ -306,10 +307,11 @@ async function frame() {
       const kind = hud.EXIT_KIND;
       const stats = `Kills ${pct(hud.KILLS, hud.TOTAL_KILLS)}  Items ${pct(hud.ITEMS, hud.TOTAL_ITEMS)}  Secrets ${pct(hud.SECRETS, hud.TOTAL_SECRETS)}`;
       if (kind === 3) await startMap(map.name, true);
-      else if (kind === 1 && Finale.available(wad, map.name)) {
-        // F_StartFinale: the story so far after MAP06/11/20, the end after MAP30
+      else if (Finale.available(wad, map.name, kind === 2)) {
+        // F_StartFinale: the story so far after MAP06/11/20 and on the way to
+        // the secret levels, the end after MAP30
         await db.exec('UPDATE game SET exit_kind = 0 WHERE id = 1');
-        finale = new Finale(renderer, audio, wad, THING_TYPES, map.name);
+        finale = new Finale(renderer, audio, wad, THING_TYPES, map.name, kind === 2);
         finaleKey = false;
       } else {
         setStatus(`${map.name} finished — ${stats}`);

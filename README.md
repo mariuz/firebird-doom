@@ -233,8 +233,10 @@ game with the finale below. Only a WAD without the finale's pictures goes back t
 Finishing MAP06, MAP11 or MAP20 shows the story so far, as `G_WorldDone` does: `C1TEXT` over
 `SLIME16`, `C2TEXT` over `RROCK14` and `C3TEXT` over `RROCK07`, typed out like the ending's
 text below to `D_READ_M`. After 50 tics, fire or use goes on to the next map with your
-inventory intact. A WAD without the words (DOOM II keeps them in its executable, not its WAD)
-just goes straight on.
+inventory intact. The two secret levels get theirs on the way in: leaving MAP15 by its secret
+exit shows `C5TEXT` over `RROCK13` before MAP31, and leaving MAP31 by its secret exit shows
+`C6TEXT` over `RROCK19` before MAP32. Their normal exits show nothing. A WAD without the
+words (DOOM II keeps them in its executable, not its WAD) just goes straight on.
 
 
 Finishing MAP30 starts DOOM II's ending ([src/finale.js](src/finale.js), after `f_finale.c`). First

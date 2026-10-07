@@ -1,8 +1,9 @@
 // finale.js – DOOM II's text screens and its ending (f_finale.c).
 //
 // After MAP06, MAP11 and MAP20 (G_WorldDone) the story so far types itself
-// out over a tiled flat (F_TextWrite) to D_READ_M; once 50 tics have passed,
-// fire or use moves on to the next map (F_Ticker). After MAP30 the text is
+// out over a tiled flat (F_TextWrite) to D_READ_M, as it does when MAP15's or
+// MAP31's secret exit leads to a secret level; once 50 tics have passed, fire
+// or use moves on to the next map (F_Ticker). After MAP30 the text is
 // followed by the cast call (F_StartCast) to D_EVIL: each monster in turn walks on the
 // BOSSBACK backdrop under its name, attacks every twelve frames, and dies
 // when you press a key (F_CastResponder); after its last death frame the next
@@ -18,11 +19,14 @@ const DEATH_TICS = 5;    // …its death frames
 const LAST_TICS = 15;    // F_CastTicker: a state lasting forever holds 15 tics
 
 // F_StartFinale for DOOM II: which text, over which flat, after which map
+// (secret: only when it was left by the secret exit, into MAP31 or MAP32)
 const SCREENS = {
   MAP06: { text: 'C1TEXT', flat: 'SLIME16' },
   MAP11: { text: 'C2TEXT', flat: 'RROCK14' },
   MAP20: { text: 'C3TEXT', flat: 'RROCK07' },
   MAP30: { text: 'C4TEXT', flat: 'RROCK17', cast: true },
+  MAP15: { text: 'C5TEXT', flat: 'RROCK13', secret: true },
+  MAP31: { text: 'C6TEXT', flat: 'RROCK19', secret: true },
 };
 
 // castorder[], by thing type; the player is "type" 0
@@ -191,10 +195,11 @@ function wadStrings(wad) {
 }
 
 export class Finale {
-  constructor(renderer, audio, wad, thingTypes, mapName = 'MAP30') {
+  constructor(renderer, audio, wad, thingTypes, mapName = 'MAP30', secret = false) {
     this.renderer = renderer;
     this.audio = audio;
     this.wad = wad;
+    this.secret = secret;   // how the map was left: where the game goes next
     const screen = SCREENS[mapName];
     const strings = wadStrings(wad);
     this.state = new FinaleState(strings.get(screen.text) ?? '', buildCast(thingTypes, strings),
@@ -206,13 +211,14 @@ export class Finale {
   }
 
   /**
-   * Is there a screen after this map? DOOM II's MAP06/11/20/30, when the WAD
-   * has the flat, and the words (the text screens) or the backdrop (MAP30's
-   * cast call, which plays even without text).
+   * Is there a screen after this map? DOOM II's MAP06/11/20/30, and MAP15/31
+   * left by the secret exit, when the WAD has the flat, and the words (the
+   * text screens) or the backdrop (MAP30's cast call, which plays even
+   * without text).
    */
-  static available(wad, mapName) {
+  static available(wad, mapName, secret = false) {
     const screen = SCREENS[mapName];
-    if (!screen || !wad.lump(screen.flat)) return false;
+    if (!screen || (screen.secret && !secret) || !wad.lump(screen.flat)) return false;
     if (screen.cast) return !!wad.lump('BOSSBACK');
     return !!wadStrings(wad).get(screen.text);
   }
