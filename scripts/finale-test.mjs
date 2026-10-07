@@ -126,7 +126,33 @@ if (fs.existsSync(wad1Path)) {
   const { nextMap } = await import('../src/progress.js');
   assert(early === 'art' && fin.done && nextMap('E1M8', false, wad1.mapNames()) === 'E2M1',
     'the art holds a second, then fire carries on into E2M1');
+
+  // episodes 2–4: their own text, flat and art, then the next episode (after E4, E1M1)
+  for (const [m, key, art, next] of [['E2M8', 'E2TEXT', 'VICTORY2', 'E3M1'], ['E3M8', 'E3TEXT', 'bunny', 'E4M1'], ['E4M8', 'E4TEXT', 'ENDPIC', 'E1M1']]) {
+    const tunes = [];
+    const shots = [];
+    const f = new Finale(null, { playMusic: (t) => tunes.push(t), playEvents: (rows) => shots.push(rows[0][1]) }, wad1, THING_TYPES, m);
+    const n = f.state.text.length;
+    for (let i = 0; i < 10 + n * 3 + 251; i++) f.tick(false);
+    const atArt = f.state.stage;
+    for (let i = 0; i < 1300; i++) f.tick(false);   // (the bunny's whole show)
+    f.tick(true);
+    const pic = art === 'bunny' ? 'PFUB1' : art;
+    assert(Finale.available(wad1, m) && f.state.text === strings1.get(key) && f.art === art && !!wad1.lump(pic)
+      && atArt === 'art' && f.done && nextMap(m, false, wad1.mapNames()) === next
+      && (art !== 'bunny' || (tunes.join() === 'D_VICTOR,D_BUNNY' && shots.filter((s) => s === 'DSPISTOL').length === 6)),
+      `${m}: ${key} (${n} characters), then ${art}${art === 'bunny' ? ` to ${tunes[1]} with ${shots.filter((s) => s === 'DSPISTOL').length} pistol shots` : ''}, then ${next}`);
+  }
 } else console.log('(no freedoom1.wad)');
+
+// F_BunnyScroll's clock: the scroll, then THE END a letter every 5 tics
+{
+  const { bunnyFrame } = await import('../src/finale.js');
+  const at = (c) => { const b = bunnyFrame(c); return `${b.scrolled}/${b.end}`; };
+  const cases = [[0, '320/null'], [230, '320/null'], [430, '220/null'], [870, '0/null'], [1130, '0/END0'], [1180, '0/END0'], [1185, '0/END1'], [1210, '0/END6'], [5000, '0/END6']];
+  const bad = cases.filter(([c, want]) => at(c) !== want).map(([c, want]) => `${c}: ${at(c)} ≠ ${want}`);
+  assert(bad.length === 0, `the bunny scroll's timing (${cases.length} moments${bad.length ? `; ${bad.join(', ')}` : ''})`);
+}
 
 console.log(failures ? `${failures} failure(s)` : 'finale ok');
 process.exit(failures ? 1 : 0);

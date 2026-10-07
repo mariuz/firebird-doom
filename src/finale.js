@@ -1,4 +1,4 @@
-// finale.js – DOOM II's text screens and its ending (f_finale.c).
+// finale.js – DOOM's text screens and endings (f_finale.c).
 //
 // After MAP06, MAP11 and MAP20 (G_WorldDone) the story so far types itself
 // out over a tiled flat (F_TextWrite) to D_READ_M, as it does when MAP15's or
@@ -8,10 +8,12 @@
 // BOSSBACK backdrop under its name, attacks every twelve frames, and dies
 // when you press a key (F_CastResponder); after its last death frame the next
 // one comes on (F_CastTicker). The cast ends with the player and starts over,
-// as in DOOM. DOOM I's episode ends differently: after E1M8 its text plays to
-// D_VICTOR and can't be skipped; TEXTWAIT tics after the last character the
-// art screen follows (CREDIT on a four-episode WAD, else HELP2). DOOM ends
-// the game there; we let fire or use carry on into the next episode.
+// as in DOOM. DOOM I's episodes end differently: after E?M8 the episode's
+// text plays to D_VICTOR and can't be skipped; TEXTWAIT tics after the last
+// character the art screen follows (F_Drawer): CREDIT (or HELP2) after E1,
+// VICTORY2 after E2, the bunny scroll after E3 (F_BunnyScroll, to D_BUNNY),
+// ENDPIC after E4. DOOM ends the game there; we let fire or use carry on
+// into the next episode.
 // The words come from the WAD's DEHACKED lump (Freedoom ships its
 // own); the state machine is kept apart from the drawing so it can be tested.
 
@@ -33,9 +35,25 @@ const SCREENS = {
   MAP30: { text: 'C4TEXT', flat: 'RROCK17', cast: true },
   MAP15: { text: 'C5TEXT', flat: 'RROCK13', secret: true },
   MAP31: { text: 'C6TEXT', flat: 'RROCK19', secret: true },
-  // DOOM I: the end of an episode
-  E1M8: { text: 'E1TEXT', flat: 'FLOOR4_8', music: 'D_VICTOR', art: true },
+  // DOOM I: the end of each episode, and the art that follows its text
+  E1M8: { text: 'E1TEXT', flat: 'FLOOR4_8', music: 'D_VICTOR', art: 'credit' },
+  E2M8: { text: 'E2TEXT', flat: 'SFLR6_1', music: 'D_VICTOR', art: 'VICTORY2' },
+  E3M8: { text: 'E3TEXT', flat: 'MFLR8_4', music: 'D_VICTOR', art: 'bunny' },
+  E4M8: { text: 'E4TEXT', flat: 'MFLR8_3', music: 'D_VICTOR', art: 'ENDPIC' },
 };
+
+/**
+ * F_BunnyScroll at tic `count` of the art screen: PFUB2 slides off to the
+ * left revealing PFUB1 (`scrolled` pixels of PFUB2 gone), then "THE END"
+ * stamps in a letter at a time (END0…END6), each with a pistol shot.
+ */
+export function bunnyFrame(count) {
+  const scrolled = Math.max(0, Math.min(320, 320 - Math.floor((count - 230) / 2)));
+  if (count < 1130) return { scrolled, end: null, stage: -1 };
+  if (count < 1180) return { scrolled, end: 'END0', stage: 0 };
+  const stage = Math.min(6, Math.floor((count - 1180) / 5));
+  return { scrolled, end: `END${stage}`, stage };
+}
 
 // castorder[], by thing type; the player is "type" 0
 const CAST = [
@@ -224,8 +242,9 @@ export class Finale {
     this.state = new FinaleState(strings.get(screen.text) ?? '', buildCast(thingTypes, strings),
       (snd) => audio.playEvents([[0, snd, 0, null, null]], { x: 0, y: 0, angle: 0 }), !!screen.cast, !!screen.art);
     this.flat = wad.data(wad.lump(screen.flat));
-    // F_Drawer's art for episode 1: CREDIT on a four-episode ("retail") WAD, else HELP2
-    this.art = screen.art ? (wad.lump('E4M1') ? 'CREDIT' : 'HELP2') : null;
+    // F_Drawer's art: for episode 1, CREDIT on a four-episode ("retail") WAD, else HELP2
+    this.art = screen.art === 'credit' ? (wad.lump('E4M1') ? 'CREDIT' : 'HELP2') : screen.art ?? null;
+    this.lastEnd = -1;
     this.names = wad.lumps.map((l) => l.name);
     this.fronts = new Map();
     audio.playMusic(screen.music ?? 'D_READ_M');
@@ -233,7 +252,7 @@ export class Finale {
 
   /**
    * Is there a screen after this map? DOOM II's MAP06/11/20/30, MAP15/31
-   * left by the secret exit, and DOOM I's E1M8, when the WAD has the flat, and the words (the
+   * left by the secret exit, and DOOM I's E?M8, when the WAD has the flat, and the words (the
    * text screens) or the backdrop (MAP30's cast call, which plays even
    * without text).
    */
@@ -251,13 +270,24 @@ export class Finale {
     const was = this.state.stage;
     this.state.tick(buttons);
     if (was === 'text' && this.state.stage === 'cast') this.audio.playMusic('D_EVIL');
+    if (this.art === 'bunny' && this.state.stage === 'art') {
+      if (was === 'text') this.audio.playMusic('D_BUNNY');
+      // each new letter of THE END comes with a pistol shot
+      const { stage } = bunnyFrame(this.state.count);
+      if (stage > this.lastEnd) {
+        if (stage > 0) this.state.sound('DSPISTOL');
+        this.lastEnd = stage;
+      }
+    }
   }
 
   press() { this.state.press(); }
 
   draw() {
     const r = this.renderer;
-    if (this.state.stage === 'art') {
+    if (this.state.stage === 'art' && this.art === 'bunny') {
+      this.bunny(this.state.count);
+    } else if (this.state.stage === 'art') {
       r.patch(r.pictureByName(this.art), 0, 0);
     } else if (this.state.stage !== 'cast') {
       // F_TextWrite: the flat tiled over the whole screen, the text typed onto it
@@ -277,6 +307,23 @@ export class Finale {
       if (front) this.sprite(r.pictureByName(front.name), 160, 170, front.flip);
     }
     r.present();
+  }
+
+  /** F_BunnyScroll: two full-screen pictures side by side, scrolling, then THE END. */
+  bunny(count) {
+    const r = this.renderer;
+    const { scrolled, end } = bunnyFrame(count);
+    const p1 = r.pictureByName('PFUB2');
+    const p2 = r.pictureByName('PFUB1');
+    for (let x = 0; x < 320; x++) {
+      const src = x + scrolled;
+      const pic = src < 320 ? p1 : p2;
+      const col = (src < 320 ? src : src - 320) * pic.h;
+      for (let y = 0; y < Math.min(200, pic.h); y++) {
+        if (pic.alpha[col + y]) r.sfb[y * 320 + x] = pic.pix[col + y];
+      }
+    }
+    if (end) r.patch(r.pictureByName(end), (320 - 13 * 8) / 2, (200 - 8 * 8) / 2);
   }
 
   /** V_DrawPatch / V_DrawPatchFlipped: same origin, the columns mirrored when flipped. */

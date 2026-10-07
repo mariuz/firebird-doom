@@ -238,10 +238,19 @@ exit shows `C5TEXT` over `RROCK13` before MAP31, and leaving MAP31 by its secret
 `C6TEXT` over `RROCK19` before MAP32. Their normal exits show nothing. A WAD without the
 words (DOOM II keeps them in its executable, not its WAD) just goes straight on.
 
-DOOM I's first episode ends the way `F_StartFinale` ends it. After E1M8, `E1TEXT` types itself
-out over `FLOOR4_8` to `D_VICTOR`, and it can't be skipped. 250 tics after the last character
-(`TEXTWAIT`), the art screen follows: `CREDIT` on a four-episode WAD like Freedoom's, `HELP2`
-otherwise. DOOM ends the game there, but this port carries on, so fire or use takes you into E2M1.
+DOOM I's episodes end the way `F_StartFinale` ends them. After E?M8 the episode's text types
+itself out to `D_VICTOR`, and it can't be skipped. The flats are `FLOOR4_8`, `SFLR6_1`,
+`MFLR8_4` and `MFLR8_3` for the four episodes. 250 tics after the last character (`TEXTWAIT`),
+the episode's art screen follows (`F_Drawer`):
+
+- **E1:** `CREDIT` on a four-episode WAD like Freedoom's, `HELP2` otherwise.
+- **E2:** `VICTORY2`.
+- **E3:** the bunny scroll (`F_BunnyScroll`), to `D_BUNNY`. `PFUB2` slides off to reveal
+  `PFUB1`, then "THE END" stamps in letter by letter (`END0`–`END6`), each with a pistol shot.
+- **E4:** `ENDPIC`.
+
+DOOM ends the game there, but this port carries on: fire or use takes you into the next
+episode, and after E4 back to E1M1.
 
 
 Finishing MAP30 starts DOOM II's ending ([src/finale.js](src/finale.js), after `f_finale.c`). First
