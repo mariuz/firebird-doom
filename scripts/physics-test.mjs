@@ -834,6 +834,67 @@ if (slimeMap) {
   await db.exec('UPDATE player SET health = 100, armor = 0, armor_type = 0');
 }
 
+// ── timed doors (10, 14) and E1M8's exit floor (11) ──────────────────────
+{
+  await loadMap(db, wad, res, maps[0], { skill: 3 });
+  await quiet();
+  // two empty sectors with room for a door: one left open (10), one shut (14)
+  // (for 14, one whose lowest neighbouring ceiling leaves room to open, as a door's would)
+  const pick = (extra) => one(`SELECT FIRST 1 s.id, s.floor_h, s.ceil_h FROM sectors s
+      WHERE s.ceil_h - s.floor_h >= 64 AND s.special = 0 ${extra}
+        AND NOT EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = s.id)
+        AND NOT EXISTS (SELECT 1 FROM things t WHERE t.sector_id = s.id) ORDER BY s.id`);
+  const a = await pick('');
+  const b = await pick(`AND s.id <> ${a.ID} AND neighbor_h(s.id, 'min_ceil') - 4 >= s.floor_h + 32`);
+  await db.exec(`UPDATE sectors SET special = 10 WHERE id = ${a.ID}`);
+  await db.exec(`UPDATE sectors SET special = 14, ceil_h = floor_h WHERE id = ${b.ID}`);
+  await db.exec('EXECUTE PROCEDURE spawn_door_specials');
+  const mover = (id) => one(`SELECT m.dir, m.wait_left, m.top_h, s.ceil_h, s.floor_h, s.special
+      FROM sectors s LEFT JOIN movers m ON m.sector_id = s.id WHERE s.id = ${id}`);
+  const ma = await mover(a.ID);
+  const mb = await mover(b.ID);
+  assert(ma.DIR === 0 && ma.WAIT_LEFT === 30 * 35 && mb.DIR === 2 && mb.WAIT_LEFT === 5 * 60 * 35
+      && ma.SPECIAL === 0 && mb.SPECIAL === 0 && mb.TOP_H > mb.FLOOR_H,
+    `sector 10: a door waiting ${ma.WAIT_LEFT} tics to close; 14: one waiting ${mb.WAIT_LEFT} to open (to ${mb.TOP_H}); both specials spent`);
+  // (thirty seconds and five minutes are long: skip to the last tics of the wait)
+  await db.exec(`UPDATE movers SET wait_left = 3 WHERE sector_id IN (${a.ID}, ${b.ID})`);
+  await tic(3);
+  const held = [await mover(a.ID), await mover(b.ID)];
+  await tic(Math.ceil((a.CEIL_H - a.FLOOR_H) / 2) + 2);
+  const shut = await mover(a.ID);
+  const rising = await mover(b.ID);
+  assert(held[0].CEIL_H === a.CEIL_H && held[1].CEIL_H === b.FLOOR_H && shut.CEIL_H === shut.FLOOR_H && shut.DIR === null
+      && rising.CEIL_H > rising.FLOOR_H,
+    `when the wait is up, the open door closes for good (ceiling ${shut.CEIL_H} = floor) and the shut one starts up (${rising.CEIL_H})`);
+  await tic(Math.ceil((mb.TOP_H - mb.FLOOR_H) / 2) + 150 + Math.ceil((mb.TOP_H - mb.FLOOR_H) / 2) + 5);
+  const done = await mover(b.ID);
+  assert(done.CEIL_H === done.FLOOR_H && done.DIR === null, '…and that one goes on as a normal door: up, a wait, and down again');
+
+  // the hurting floor 4 strobes too, fast, like 2
+  await db.exec(`UPDATE sectors SET special = 4, min_light = 0, base_light = 200, light = 200 WHERE id = ${a.ID}`);
+  const lights = new Set();
+  for (let i = 0; i < 24; i++) { await tic(); lights.add((await one(`SELECT light FROM sectors WHERE id = ${a.ID}`)).LIGHT); }
+  await db.exec(`UPDATE sectors SET special = 0 WHERE id = ${a.ID}`);
+  assert(lights.has(0) && lights.has(200) && lights.size === 2, `sector 4 strobes between ${[...lights].join(' and ')}, like 2`);
+
+  // E1M8's floor: IDDQD off, 20 damage every 32 tics, and at 10 or less the level ends
+  const ps = await one(`SELECT t.sector_id s FROM things t WHERE t.kind = 'player'`);
+  await db.exec(`UPDATE sectors SET special = 11 WHERE id = ${ps.S}`);
+  await db.exec('UPDATE player SET health = 50, god = 1, invuln_tics = 0, iron_tics = 0');
+  await db.exec('UPDATE game SET exit_kind = 0');
+  const first = (await tic()).rows[0];
+  await tic(31);
+  const hurt = await one('SELECT p.health, p.god, g.exit_kind FROM player p CROSS JOIN game g');
+  await db.exec('UPDATE player SET health = 25');
+  await tic(32);
+  const out = await one('SELECT p.health, p.dead, g.exit_kind FROM player p CROSS JOIN game g');
+  assert(first.GOD === 0 && hurt.HEALTH === 30 && hurt.EXIT_KIND === 0 && out.HEALTH === 5 && out.EXIT_KIND === 1 && out.DEAD === 0,
+    `sector 11: god mode off at once, 50 → ${hurt.HEALTH} health and no exit; at 25 the next hit leaves ${out.HEALTH} and ends the level (exit ${out.EXIT_KIND})`);
+  await db.exec(`UPDATE sectors SET special = 0 WHERE id = ${ps.S}`);
+  await db.exec('UPDATE game SET exit_kind = 0');
+  await db.exec('UPDATE player SET health = 100');
+}
+
 // ── the computer area map ───────────────────────────────────────────────
 {
   const sp = await one(`SELECT t.x, t.y FROM things t WHERE t.kind = 'player'`);

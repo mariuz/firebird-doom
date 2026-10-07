@@ -737,6 +737,16 @@ BEGIN
           EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDCLS', 'DSDORCLS'), sid);
         END
       END
+      -- T_VerticalDoor, direction 2 (raiseIn5Mins): waiting to rise, then a normal door
+      ELSE IF (dir = 2) THEN
+      BEGIN
+        wait_left = wait_left - 1;
+        IF (wait_left <= 0) THEN
+        BEGIN
+          dir = 1;
+          EXECUTE PROCEDURE sector_sound('DSDOROPN', sid);
+        END
+      END
       ELSE
       BEGIN
         nh = MAXVALUE(ch - spd, fh);
@@ -1322,6 +1332,8 @@ BEGIN
   IF (view_z > cz - 4) THEN view_z = cz - 4;
 
   -- sector specials under the player
+  -- E1M8's exit floor (11): IDDQD off every tic you stand on it, before its damage
+  IF (sspec = 11 AND z <= fz) THEN UPDATE player SET god = 0 WHERE id = 1;
   IF (sspec = 9) THEN
   BEGIN
     UPDATE sectors SET special = 0 WHERE id = :sec;
@@ -1332,10 +1344,13 @@ BEGIN
     -- pw_ironfeet: the radiation suit keeps out nukage and slime; the worst
     -- floors (4, 16) still get through 5 times in 256, and E1M8's (11) always
     SELECT p.iron_tics FROM player p WHERE p.id = 1 INTO iron;
-    IF (sspec = 11) THEN UPDATE player SET god = 0 WHERE id = 1;   -- (E1M8's floor cancels IDDQD)
     IF (iron = 0 OR sspec = 11 OR (sspec IN (4, 16) AND p_random() * 256 < 5)) THEN
       EXECUTE PROCEDURE damage_player(CASE sspec WHEN 7 THEN 5 WHEN 5 THEN 10 ELSE 20 END);
   END
+  -- …and once its damage leaves you at 10 or less, G_ExitLevel (even if that
+  -- hit killed you: the check follows the damage)
+  IF (sspec = 11 AND z <= fz AND (SELECT p.health FROM player p WHERE p.id = 1) <= 10) THEN
+    UPDATE game SET exit_kind = 1 WHERE id = 1 AND exit_kind = 0;
 
   -- P_UseLines: the nearest line within 64 units straight ahead
   IF (use_key = 1 AND use_down = 0) THEN
@@ -2767,14 +2782,16 @@ BEGIN
   UPDATE sectors
      SET light = CASE special
                    WHEN 1  THEN IIF(MOD(:tic + id * 13, 71) < 7, min_light, base_light)
+                   -- 4 strobes like 2 as well as hurting (P_SpawnStrobeFlash(sector, FASTDARK, 0))
                    WHEN 2  THEN IIF(MOD(:tic + id * 7, 20) < 5, base_light, min_light)
+                   WHEN 4  THEN IIF(MOD(:tic + id * 7, 20) < 5, base_light, min_light)
                    WHEN 12 THEN IIF(MOD(:tic, 20) < 5, base_light, min_light)
                    WHEN 3  THEN IIF(MOD(:tic + id * 7, 40) < 5, base_light, min_light)
                    WHEN 13 THEN IIF(MOD(:tic, 40) < 5, base_light, min_light)
                    WHEN 8  THEN min_light + ABS(MOD(:tic * 8, 2 * (base_light - min_light) + 1) - (base_light - min_light))
                    ELSE light
                  END
-   WHERE special IN (1, 2, 3, 8, 12, 13);
+   WHERE special IN (1, 2, 3, 4, 8, 12, 13);
   -- T_FireFlicker draws P_RANDOM per sector, so one at a time, in sector order
   -- (a set-based UPDATE would draw in whatever order the rows happen to lie)
   IF (MOD(tic, 4) = 0) THEN
@@ -2928,6 +2945,25 @@ BEGIN
   SUSPEND;
 END^
 
+-- P_SpawnSpecials' timed doors. 10: P_SpawnDoorCloseIn30, the door (open in
+-- the map) waits 30 seconds and closes for good. 14: P_SpawnDoorRaiseIn5Mins,
+-- the door (closed in the map) waits five minutes, then opens to 4 below the
+-- lowest ceiling around and goes on as a normal door (VDOORWAIT, then down).
+-- Either way the sector's special is spent.
+CREATE OR ALTER PROCEDURE spawn_door_specials
+AS
+BEGIN
+  INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, wait_left, stay)
+  SELECT s.id, 'door', 0, 2, s.ceil_h, s.floor_h, 150, 30 * 35, 0
+    FROM sectors s
+   WHERE s.special = 10 AND NOT EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = s.id);
+  INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, wait_left, stay)
+  SELECT s.id, 'door', 2, 2, COALESCE(neighbor_h(s.id, 'min_ceil'), s.ceil_h + 64) - 4, s.floor_h, 150, 5 * 60 * 35, 0
+    FROM sectors s
+   WHERE s.special = 14 AND NOT EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = s.id);
+  UPDATE sectors SET special = 0 WHERE special IN (10, 14);
+END^
+
 -- ── level setup ───────────────────────────────────────────────────────────
 -- P_SetupLevel: derive everything the hot paths need from the raw lumps,
 -- then P_SpawnMapThing for the chosen skill.
@@ -3036,8 +3072,9 @@ BEGIN
                         JOIN sectors n ON n.id = IIF(l.front_sector = s.id, l.back_sector, l.front_sector)
                        WHERE (l.front_sector = s.id OR l.back_sector = s.id)
                          AND l.back_sector IS NOT NULL AND n.id <> s.id);
-  UPDATE sectors SET min_light = IIF(special IN (2, 3, 12, 13), 0, base_light)
+  UPDATE sectors SET min_light = IIF(special IN (2, 3, 4, 12, 13), 0, base_light)
    WHERE min_light IS NULL OR min_light >= base_light;
+  EXECUTE PROCEDURE spawn_door_specials;
 
   -- things for this skill level, minus multiplayer-only ones
   INSERT INTO things (id, thing_type, kind, x, y, angle, flags, hp, radius, height, solid, st, frame,

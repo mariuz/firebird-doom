@@ -343,7 +343,7 @@ CREATE TABLE sound_flood (
 CREATE TABLE movers (
   sector_id INTEGER NOT NULL PRIMARY KEY,
   kind      VARCHAR(8) NOT NULL,        -- door lift floor crush
-  dir       SMALLINT NOT NULL,          -- 1 up, -1 down, 0 waiting (or a stopped crusher)
+  dir       SMALLINT NOT NULL,          -- 1 up, -1 down, 0 waiting (or a stopped crusher), 2 a door waiting to rise
   speed     DOUBLE PRECISION NOT NULL,
   top_h     DOUBLE PRECISION NOT NULL,
   bottom_h  DOUBLE PRECISION NOT NULL,

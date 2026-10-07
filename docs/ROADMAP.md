@@ -40,10 +40,8 @@ you find missing.
   missile attacks, `A_Look`'s 180° field of view. Still missing: monsters opening doors as they walk
   into them (`P_Move`'s special lines), and floating monsters rising and sinking as they're
   blocked (`MF_FLOAT`). `A_Look` still ignores the player beyond 2400 units, to save sight checks.
-- **Sector specials.** Missing: 10 (door closes after 30 s), 14 (door opens after 5 minutes), and
-  11's exit: E1M8's floor ends the level when your health drops to 10 or below (only its damage and
-  its cancelling of god mode are done). Also check the lighting types against `P_SpawnSpecials`:
-  1, 2, 3, 8, 12, 13 and 17 are done.
+- ~~**Sector specials.**~~ Done: 10 and 14's timed doors, 11's exit at 10 health, and type 4's
+  strobe (it was only hurting). Every type `P_SpawnSpecials` knows is handled now.
 - **Linedef specials.** Missing: scrolling walls (48), and the less common door, lift and floor
   variants. `ACTIVATE_LINE` maps specials to actions in one `CASE`, so a missing number does
   nothing.

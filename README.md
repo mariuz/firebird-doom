@@ -246,6 +246,26 @@ in grey (`TSWALLCOLORS`). Twice also draws every thing in the level as a green t
 its way (`AM_drawThings`), read live from `THINGS`. A third time turns it off. Like DOOM, the cheat
 prints no message and isn't stored in the database.
 
+### Sector specials
+
+Every sector type DOOM uses is handled, as in `P_SpawnSpecials` and `P_PlayerInSpecialSector`:
+
+- **Lights** (`LIGHTS_THINK`): 1 flickers at random, 2 and 4 strobe fast, 3 slowly, 12 and 13 strobe
+  in sync, 8 glows, and 17 flickers like fire. A strobe dims to the darkest neighbour, or to black
+  if no neighbour is darker.
+- **Floors that hurt** (every 32 tics, while you stand on them): 7 does 5 damage, 5 does 10, and 4
+  and 16 do 20. The radiation suit keeps them out, except that 4 and 16 get through 5 times in 256.
+- **9**, a secret: counted, with "A secret is revealed!", the first time you step in.
+- **10** (`P_SpawnDoorCloseIn30`): the door, open when the level starts, closes for good after
+  30 seconds. **14** (`P_SpawnDoorRaiseIn5Mins`): the door, shut, opens after five minutes and
+  then works as a normal door. Both are `MOVERS` rows queued at map load, a waiting door being
+  `DIR` 0 and a door waiting to rise `DIR` 2, as in `T_VerticalDoor`.
+- **11**, E1M8's exit floor: it switches IDDQD off, does 20 damage every 32 tics whatever you
+  wear, and once that leaves you at 10 health or less it ends the level (`G_ExitLevel`), even if
+  the hit killed you, as in DOOM.
+
+`npm run test:physics` runs each kind of special.
+
 ### Level order
 
 When you leave a level, [src/progress.js](src/progress.js) picks the next one, as `G_DoCompleted`
