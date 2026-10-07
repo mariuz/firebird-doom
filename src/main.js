@@ -18,6 +18,7 @@ import { clevMap, idmusMap, makeCheatReader, makeParamCheatReader } from './chea
 import { nextMap } from './progress.js';
 import { Finale, parseDehStrings, setFallbackStrings } from './finale.js';
 import { Menu, TitleLoop } from './menu.js';
+import { captureGame, restoreGame, saveStore, SLOTS } from './savegame.js';
 import { Intermission, levelOf } from './intermission.js';
 import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
@@ -59,6 +60,9 @@ let title = null;                   // the title loop (before a game, after End 
 let menuBackdrop = null;            // the screen as it was when the menu opened over the game
 let menuOpenedAt = -1e9;
 let lastPalette = 0;
+const saves = saveStore();          // IndexedDB: six slots per WAD
+let wadKey = '';                    // which WAD the saves belong to
+let saveSlots = Array(SLOTS).fill(null);   // the slots' descriptions, for the menu
 let wiButtons = true;               // fire/use held last tic: only a new press accelerates
 const didSecret = new Set();        // DOOM I episodes whose secret level is done (wbs->didsecret)
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
@@ -187,6 +191,45 @@ function goTitle() {
   title = new TitleLoop(maps.some((m) => m.startsWith('MAP')), !!wad.lump('E4M1'), (m) => audio.playMusic(m));
 }
 
+/** The six slots of this WAD, as the menu lists them. */
+async function refreshSlots() {
+  const key = wadKey;
+  const found = await Promise.all(Array.from({ length: SLOTS }, (_, i) => saves.get(`${key}|${i}`).catch(() => null)));
+  if (key === wadKey) saveSlots = found.map((r) => (r ? { name: r.name, map: r.map } : null));
+}
+
+/** G_SaveGame: the live tables, plus the automap's seen lines and DOOM I's visited secret levels */
+async function saveToSlot(slot, name) {
+  const save = await captureGame(db, { seen: [...map.seen], didSecret: [...didSecret] });
+  await saves.put(`${wadKey}|${slot}`, { name, map: save.map, date: new Date().toISOString(), save });
+  await refreshSlots();
+  await db.exec("UPDATE player SET msg = 'Game saved.', msg_tics = 70 WHERE id = 1");
+}
+
+/** G_LoadGame: the map afresh, then the save written over it */
+async function loadFromSlot(slot) {
+  const rec = await saves.get(`${wadKey}|${slot}`);
+  if (!rec?.save) return;
+  const { save } = rec;
+  settings.skill = save.skill;
+  saveSettings();
+  $('skill').value = String(save.skill);
+  $('map').value = save.map;
+  await startMap(save.map, true);
+  running = false;                 // (nothing ticks until the save is back)
+  try {
+    await restoreGame(db, save);
+    map.seen = new Set(save.extra?.seen ?? []);
+    didSecret.clear();
+    for (const e of save.extra?.didSecret ?? []) didSecret.add(e);
+    await loadSides();
+  } catch (err) {
+    setStatus(`Couldn't load that save: ${err.message}`, true);
+  }
+  lastTic = performance.now();
+  running = true;
+}
+
 /** This WAD's menu, its options wired to the settings */
 function makeMenu() {
   const maps = wad.mapNames();
@@ -211,6 +254,11 @@ function makeMenu() {
         startMap(first, true).catch((err) => setStatus(err.message, true));
       },
       endGame: () => goTitle(),
+      get slots() { return saveSlots; },
+      // (only in a game: not on the title, the intermission or an ending)
+      get canSave() { return !!map && !title && !intermission && !finale; },
+      save: (slot, name) => saveToSlot(slot, name).catch((err) => setStatus(`Couldn't save: ${err.message}`, true)),
+      load: (slot) => loadFromSlot(slot).catch((err) => setStatus(`Couldn't load: ${err.message}`, true)),
       quit() {
         play(quitSounds[Math.floor(Math.random() * quitSounds.length)]);
         goTitle();
@@ -646,6 +694,9 @@ async function useWad(buffer, label) {
   renderer = new Renderer(wad, res);
   renderer.attach(presenter);
   audio.setWad(wad);
+  wadKey = `${label}|${maps.length}`;
+  saveSlots = Array(SLOTS).fill(null);
+  refreshSlots();
   makeMenu();
   renderer.setSize(viewWidth(), 168);
   const sel = $('map');

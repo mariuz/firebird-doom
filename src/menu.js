@@ -6,12 +6,15 @@
 // waits behind it. New Game → episode (DOOM I) → skill, Nightmare asking to
 // be sure; Options (end game, messages, detail, mouse sensitivity, sound
 // volume); Read This! (DOOM I); Quit, which here goes back to the title.
-// Load and Save aren't in yet and say so. Everything is drawn with the WAD's
+// Load and Save: six slots in DOOM's bordered boxes; saving asks for a
+// description (typed in, as M_SaveSelect does). Everything is drawn with the WAD's
 // own M_* graphics and HU font; the words in messages are Freedoom's where
 // its DEHACKED has them (NIGHTMARE, QUITMSG…), else our own, never id's.
 
 const LINEHEIGHT = 16;
 const SKULLXOFF = -32;
+const SAVESTRINGSIZE = 24;   // descriptions hold 23 characters
+const SLOTS = 6;
 
 /** The menus as m_menu.c lays them out: x, y, title patches, items. */
 function menus(doom2, episodes) {
@@ -40,7 +43,10 @@ function menus(doom2, episodes) {
     name: 'sound', x: 80, y: 64, titles: [['M_SVOL', 60, 38]], prev: 'options',
     items: [item('M_SFXVOL', 'sfx', { slider: true }), empty, item('M_MUSVOL', 'music', { slider: true }), empty],
   };
-  return { main, episode, skill, options, sound };
+  const slots = (act) => Array.from({ length: SLOTS }, (_, i) => item('slot', act, { slot: i }));
+  const load = { name: 'load', x: 80, y: 54, titles: [['M_LOADG', 72, 28]], prev: 'main', items: slots('loadslot') };
+  const save = { name: 'save', x: 80, y: 54, titles: [['M_SAVEG', 72, 28]], prev: 'main', items: slots('saveslot') };
+  return { main, episode, skill, options, sound, load, save };
 }
 
 export class Menu {
@@ -50,7 +56,9 @@ export class Menu {
    * @param o.retail    four episodes: Read This! ends on CREDIT, not HELP2
    * @param o.strings   the WAD's DEHACKED strings (Map)
    * @param o.sound     (lump) → play a menu sound
-   * @param o.actions   { newGame(episode, skill), endGame(), quit(), get/set: messages, detail, mouse (0–9), sfx and music (0–15) }
+   * @param o.actions   { newGame(episode, skill), endGame(), quit(), save(slot, name), load(slot),
+   *                      slots (six descriptions or null), canSave, get/set: messages, detail,
+   *                      mouse (0–9), sfx and music (0–15) }
    */
   constructor({ doom2 = false, episodes = 1, retail = false, strings = new Map(), sound = () => {}, actions = {} } = {}) {
     this.doom2 = doom2;
@@ -64,6 +72,7 @@ export class Menu {
     this.current = this.defs.main;
     this.on = 0;
     this.message = null;     // { text, yesno, onYes }
+    this.editing = null;     // typing a save's description: { slot, text, old }
     this.page = null;        // Read This!: the full-screen page showing
     this.chosenEpisode = 1;
     this.skullTics = 8;
@@ -84,6 +93,7 @@ export class Menu {
     this.active = false;
     this.message = null;
     this.page = null;
+    this.editing = null;
     if (!silent) this.sound('DSSWTCHX');
   }
 
@@ -118,6 +128,20 @@ export class Menu {
       this.message = null;
       this.sound('DSSWTCHX');
       if (yesno && k === 'y') onYes?.();
+      return true;
+    }
+    if (this.editing) {
+      // M_Responder's savegame string entry
+      const ed = this.editing;
+      if (k === 'Escape') { ed.text = ed.old; this.editing = null; }
+      else if (k === 'Backspace') ed.text = ed.text.slice(0, -1);
+      else if (k === 'Enter') {
+        if (ed.text) { this.close(true); this.actions.save?.(ed.slot, ed.text); }
+      } else if (key.length === 1) {
+        const ch = key.toUpperCase();
+        const c = ch.charCodeAt(0);
+        if (c >= 32 && c <= 95 && ed.text.length < SAVESTRINGSIZE - 1) ed.text += ch;
+      }
       return true;
     }
     if (this.page) {
@@ -189,9 +213,20 @@ export class Menu {
       case 'endgame':
         this.say('End this game and go back to the title?\n\n(press y or n)', true, () => { this.close(true); a.endGame?.(); });
         break;
-      case 'load': case 'save':
-        this.say('Saving and loading aren\'t in\nthis port yet.\n\n(press a key)');
+      case 'load': this.go('load'); break;
+      case 'save':
+        if (this.actions.canSave) this.go('save');
+        else this.say('You can only save\nduring a game.\n\n(press a key)');
         break;
+      case 'loadslot':
+        // (an empty slot can't be chosen)
+        if (this.actions.slots?.[it.slot]) { this.close(true); this.actions.load?.(it.slot); }
+        break;
+      case 'saveslot': {
+        const old = this.actions.slots?.[it.slot]?.name ?? '';
+        this.editing = { slot: it.slot, text: old, old };
+        break;
+      }
       case 'readthis': this.page = 'HELP1'; break;
       case 'quit': this.say(this.quitMessage(), true, () => { this.close(true); a.quit?.(); }); break;
       default: break;
@@ -218,7 +253,17 @@ export class Menu {
     if (this.message) { this.drawMessage(r, this.message.text); return; }
     const m = this.current;
     for (const [lump, x, y] of m.titles) r.patch(pic(lump), x, y);
-    m.items.forEach((it, i) => { if (it.lump) r.patch(pic(it.lump), m.x, m.y + i * LINEHEIGHT); });
+    if (m.name === 'load' || m.name === 'save') {
+      // M_DrawLoad / M_DrawSave: each slot's border and its description
+      m.items.forEach((it, i) => {
+        const y = m.y + i * LINEHEIGHT;
+        this.border(r, m.x, y);
+        const ed = this.editing?.slot === i ? this.editing : null;
+        const text = ed ? ed.text : this.actions.slots?.[i]?.name ?? 'empty slot';
+        const end = this.write(r, text, m.x, y);
+        if (ed) this.write(r, '_', end, y);
+      });
+    } else m.items.forEach((it, i) => { if (it.lump) r.patch(pic(it.lump), m.x, m.y + i * LINEHEIGHT); });
     const a = this.actions;
     if (m.name === 'options') {
       r.patch(pic(a.messages ? 'M_MSGON' : 'M_MSGOFF'), m.x + 120, m.y + LINEHEIGHT * 1);
@@ -229,6 +274,26 @@ export class Menu {
       this.thermo(r, m.x, m.y + LINEHEIGHT * 3, 16, a.music);
     }
     r.patch(pic(this.whichSkull ? 'M_SKULL2' : 'M_SKULL1'), m.x + SKULLXOFF, m.y - 5 + this.on * LINEHEIGHT);
+  }
+
+  /** M_DrawSaveLoadBorder */
+  border(r, x, y) {
+    let xx = x;
+    r.patch(r.pictureByName('M_LSLEFT'), xx - 8, y + 7);
+    for (let i = 0; i < SAVESTRINGSIZE; i++, xx += 8) r.patch(r.pictureByName('M_LSCNTR'), xx, y + 7);
+    r.patch(r.pictureByName('M_LSRGHT'), xx, y + 7);
+  }
+
+  /** M_WriteText: the HU font, upper case; returns where the text ends */
+  write(r, text, x, y) {
+    let cx = x;
+    for (const ch of text) {
+      const c = ch.toUpperCase().charCodeAt(0);
+      const g = c >= 33 && c <= 95 ? r.pictureByName(`STCFN${String(c).padStart(3, '0')}`) : null;
+      if (g) r.patch(g, cx, y);
+      cx += g?.w ?? 4;
+    }
+    return cx;
   }
 
   /** M_DrawThermo */

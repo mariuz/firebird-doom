@@ -34,6 +34,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `src/intermission.js` | `wi_stuff.c`: stats, time and par, "Entering", the episode maps and their animations. |
 | `src/finale.js` | `f_finale.c`: Doom I endings with their art and the bunny scroll, Doom II text screens, the cast call. DEHACKED string parsing and the Freedoom text fallback. |
 | `src/progress.js` | `G_DoCompleted`'s next-map rules, secret exits included. |
+| `src/savegame.js` | Save and load: `captureGame` (the live tables as JSON), `restoreGame` (written back over a freshly loaded map, `thing_seq` moved on), `saveStore` (IndexedDB, or memory). |
 | `src/menu.js` | The title loop (`D_DoAdvanceDemo`) and the menus (`m_menu.c`): `Menu` (menus, cursor, messages, sliders; actions are callbacks) and `TitleLoop`. |
 | `src/cheats.js` | `cht_CheckCheat`: readers for fixed cheats, IDCLEV/IDMUS digits, `clevMap`, `idmusMap`. |
 | `src/audio.js` / `src/music.js` | Sound effects from `SOUND_EVENTS`, positioned like `S_AdjustSoundParams`; MUS/MIDI music on an OPL2-style FM synthesiser with the WAD's `GENMIDI`. |
@@ -156,6 +157,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `physics-test.mjs` | Crushers, 3D aiming, sound propagation, infighting, vertical physics, lost souls, power-ups, the automap rules, cheat parsing, map order, IDCLIP. |
 | `finale-test.mjs` | Every text screen and ending, the cast call, the bunny scroll, the id-WAD layouts and the fallback text. |
 | `intermission-test.mjs` | Pars, counting and sounds, skipping, the after-stats flow, the episode-map animations, the secret routes. |
+| `savegame-test.mjs` | Plays, saves (through JSON), plays on, loads: every saved row comes back exactly; new ids don't collide; the game runs on; other versions are refused. |
 | `menu-test.mjs` | The title loop; menu navigation, remembered cursors, New Game → episode → skill, Nightmare's question, options and sliders, Load/Save, Quit, Read This!, coordinates, and every graphic present in both WADs. |
 | `compare-renderers.mjs` | BSP and brute-force renderers agree, column by column. |
 | `all-maps.mjs [wad]` | Loads, tics and renders every map, and checks a teleporter on each. |
@@ -184,6 +186,11 @@ GitHub Pages.
   the shorter one (`TRIM` it). `MINVALUE`/`MAXVALUE` return `NULL` if any argument is `NULL`.
 - **Evaluation order isn't guaranteed.** Guard divisions with `NULLIF` even when a `WHERE` "should"
   have filtered the zero.
+- **A fractional double doesn't survive a trip through text.** Firebird can parse
+  `216.47363339883418` back one bit off, as a literal or as a bound parameter, since
+  `firebird-wasm` sends parameters as text. Where exactness matters (save and load), send a
+  fraction as `m * POWER(2e0, e)`, with `m` a whole number of at most 53 bits. See
+  `mantissaExponent` in `src/savegame.js`.
 - **Procedure parameters can have defaults** (`src INTEGER = NULL`), which keeps old call sites
   working.
 

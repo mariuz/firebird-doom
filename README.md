@@ -334,13 +334,34 @@ cursor was.
 
   DOOM's Screen Size row is blank, because the view is always full width.
 - **Read This!** (DOOM I): `HELP1`, then `HELP2` (or `CREDIT` on a four-episode WAD).
-- **Load Game and Save Game** say they aren't in yet.
+- **Load Game and Save Game:** six slots per WAD, in DOOM's bordered boxes (see below).
 - **Quit** asks with one of the WAD's quit messages, then plays one of DOOM's quit sounds and goes
   back to the title. A browser tab can't quit.
 
 Menu sounds are DOOM's: a click on cursor moves, a pistol shot on choosing, and the switch sounds
 when it opens and closes. The settings under the view still work as before and stay in step
 with the menu. `npm run test:menu` drives all of it headless.
+
+### Save and load
+
+The whole game lives in Firebird, so a save is a snapshot of the rows that change while you play
+([src/savegame.js](src/savegame.js), after `G_SaveGame`/`G_LoadGame`):
+
+- `GAME`, `PLAYER`, `THINGS` and `MOVERS`, entire.
+- The map's moving parts: sector heights, lights, specials and the heard-gunfire flag; switch
+  textures on sidedefs; one-shot linedef specials.
+- Two things the page keeps itself: the automap's seen lines, and DOOM I's visited secret levels.
+
+Loading reloads the map with `loadMap`, which rebuilds the static tables and the blockmap. Then it
+writes the snapshot back and moves `thing_seq` past the restored ids. Fractions go back as
+`m × 2^e`, because a double written out as decimal can come back from Firebird one bit off, and a
+load must be exact. **Save Game** in the menu
+works only during a game. Pick a slot, type a description (up to 23 characters, Backspace to
+fix, Esc to cancel), and press Enter: "Game saved.". **Load Game** lists the six slots, and an
+empty one can't be chosen. Saves live in your browser's IndexedDB, six slots for each WAD,
+keyed by its file name and map count, and they survive reloads. An E1M1 save is about 70 KB.
+`npm run test:savegame` plays a map, saves, plays on, loads, and checks that every saved row
+comes back exactly.
 
 ### Skill levels
 

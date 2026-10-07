@@ -13,10 +13,10 @@ you find missing.
 - ~~**Main menu, new game and episode select.**~~ Done ([src/menu.js](../src/menu.js)): the
   title loop, the main menu, episode and skill select, Options, Read This!, Quit. Still missing:
   the demo loop between the title pages (needs demo playback), the Screen Size option, and
-  Load/Save (next item).
-- **Save and load.** The whole game is in Firebird tables, so a save is in principle a snapshot of
-  `game`, `player`, `things`, `movers`, `sectors` and `sidedefs`. Firebird WASM can persist a
-  database; nothing uses that yet.
+  Load/Save, since done.
+- ~~**Save and load.**~~ Done ([src/savegame.js](../src/savegame.js)): six IndexedDB slots per WAD
+  from the menu. A save is a JSON snapshot of the live tables. Still missing: quicksave and
+  quickload (F6/F9), and exporting or importing saves as files.
 - **Demos.** No `.lmp` playback or recording. Inputs are already a clean per-tic tuple (the
   `DOOM_TIC` arguments), which makes recording easy.
 - **The end of the game.** After Doom I's E?M8 ending the port carries on into the next episode,

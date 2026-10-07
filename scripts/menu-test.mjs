@@ -87,16 +87,55 @@ const keys = (m, ...ks) => ks.forEach((k) => m.key(k));
   assert(m.message?.yesno && m.current.name === 'options', 'End Game asks first');
 }
 
-// Load and Save say they're not here yet; Quit asks with the WAD's message; Read This! pages
+// Load and Save: six slots; saving asks for a description, loading takes only a filled slot
+{
+  const slots = [null, { name: 'BEFORE THE DOOR' }, null, null, null, null];
+  const done = { saved: [], loaded: [] };
+  const extra = { slots, canSave: false, save: (i, n) => done.saved.push([i, n]), load: (i) => done.loaded.push(i) };
+  const { m } = make();
+  Object.assign(m.actions, extra);
+  m.open();
+  keys(m, 'ArrowDown', 'ArrowDown', 'Enter');
+  const inLoad = m.current.name;
+  keys(m, 'Enter');
+  const stillHere = m.active && m.current.name === 'load' && done.loaded.length === 0;
+  keys(m, 'ArrowDown', 'Enter');
+  assert(inLoad === 'load' && stillHere && done.loaded.join() === '1' && !m.active,
+    "Load Game: six slots; an empty one can't be chosen, a filled one loads and closes the menu");
+  m.open();
+  keys(m, 'ArrowDown', 'Enter');
+  const refusal = m.message;
+  keys(m, 'Enter');
+  assert(refusal && !refusal.yesno && !m.message, 'Save Game outside a game: a message, any key dismisses it');
+  m.actions.canSave = true;
+  keys(m, 'Enter');
+  assert(m.current.name === 'save', '…in a game, the six save slots');
+  keys(m, 'Enter');                                   // slot 0
+  const started = m.editing?.text;
+  keys(m, 'Enter');
+  const emptyRefused = !!m.editing && done.saved.length === 0;
+  for (const ch of 'my save') keys(m, ch);
+  keys(m, 'Backspace', 'Enter');
+  assert(started === '' && emptyRefused && done.saved.at(-1)?.[1] === 'MY SAV' && !m.active,
+    `saving into an empty slot: type a description (upper case, Backspace works), Enter saves "${done.saved.at(-1)?.[1]}"`);
+  m.open();
+  keys(m, 'Enter');                                   // back to Save Game (remembered)
+  while (m.on !== 1) keys(m, 'ArrowDown');
+  keys(m, 'Enter');
+  const old = m.editing?.text;
+  for (let i = 0; i < 30; i++) keys(m, 'x');
+  const long = m.editing?.text.length;
+  keys(m, 'Escape');
+  assert(old === 'BEFORE THE DOOR' && long === 23 && !m.editing && m.current.name === 'save' && done.saved.length === 1,
+    'an existing save starts from its description; 23 characters at most; Esc cancels');
+}
+
+// Quit asks with the WAD's message; Read This! pages
 {
   const { m, log } = make({ strings: new Map([['QUITMSG', 'Leaving so soon?']]) });
   m.open();
-  keys(m, 'ArrowDown', 'ArrowDown', 'Enter');
-  const load = m.message;
-  keys(m, 'Enter');
-  assert(load && !load.yesno && !m.message && m.active, 'Load: a message, any key dismisses it');
-  keys(m, 'ArrowDown', 'ArrowDown', 'ArrowDown', 'Enter');
-  assert(m.message?.text === 'Leaving so soon?\n\n(press y to quit)', 'Quit: the WAD\'s quit message, with "press y" added');
+  keys(m, 'ArrowUp', 'Enter');
+  assert(m.message?.text === 'Leaving so soon?\n\n(press y to quit)', "Quit: the WAD's quit message, with \"press y\" added");
   keys(m, 'y');
   assert(log.quit === 1 && !m.active, '…Y quits (to the title, in a browser)');
   m.open();
@@ -165,7 +204,7 @@ for (const file of ['freedoom1.wad', 'freedoom2.wad']) {
   const t = new TitleLoop(doom2, !doom2);
   t.draw(real);
   m.open();
-  for (const route of [[], ['Enter'], ['Enter', 'Enter'], ['Escape'], ['ArrowDown', 'Enter'], ['ArrowDown', 'Enter', 'ArrowUp', 'Enter']]) {
+  for (const route of [[], ['Enter'], ['Enter', 'Enter'], ['Escape'], ['ArrowDown', 'Enter'], ['ArrowDown', 'Enter', 'ArrowUp', 'Enter'], ['ArrowDown', 'ArrowDown', 'Enter']]) {
     m.close(true);
     m.open();
     keys(m, ...route);

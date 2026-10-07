@@ -80,6 +80,14 @@ jobs:
       - name: Title screen and menus
         run: npm run test:menu
 
+      - name: Save and load, Phase 1
+        run: npm run test:savegame
+
+      - name: Save and load, Phase 2
+        run: npm run test:savegame
+        env:
+          WAD: public/wads/freedoom2.wad
+
       # BSP + solidsegs must find exactly the walls brute force finds
       - name: Renderer equivalence (BSP vs brute force)
         run: npm run test:renderers -- E1M1 E1M2 E1M3
