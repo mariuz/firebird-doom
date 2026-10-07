@@ -5,6 +5,8 @@ browser on [Firebird 6 compiled to WebAssembly](https://github.com/mariuz/electr
 
 **▶ Play: https://mariuz.github.io/firebird-doom/**
 
+The series went on to true 3D: [Firebird Quake](https://github.com/mariuz/firebird-quake), [Firebird Quake 2](https://github.com/mariuz/firebird-quake2) and [Firebird Quake III Arena](https://github.com/mariuz/firebird-quake3) ([play](https://mariuz.github.io/firebird-quake3/)), with Bézier patches, MD3 player models and deathmatch bots that think in SQL.
+
 Every game tic is a PSQL procedure call. Every frame is a `SELECT`. JavaScript only reads the
 keyboard and paints the rows Firebird returns.
 
