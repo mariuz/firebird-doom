@@ -1809,6 +1809,7 @@ DECLARE n INTEGER;
 DECLARE mid INTEGER;
 DECLARE melee_range DOUBLE PRECISION;
 DECLARE see_snd VARCHAR(8);
+DECLARE active_snd VARCHAR(8);
 DECLARE atk_snd VARCHAR(8);
 DECLARE death_snd VARCHAR(8);
 DECLARE ptid INTEGER;
@@ -1864,7 +1865,7 @@ BEGIN
   FOR SELECT t.id, t.kind, t.x, t.y, t.z, t.angle, t.st, t.st_tics, t.st_len, t.step, t.reaction,
              t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame, t.momz,
              tt.speed, tt.walk_fr, tt.atk_fr, tt.death_fr, tt.atk_kind, tt.missile_type,
-             tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id, tt.see_snd, tt.atk_snd, tt.death_snd, t.thing_type,
+             tt.dmg_lo, tt.dmg_hi, tt.shots, t.sector_id, tt.see_snd, tt.atk_snd, tt.death_snd, t.thing_type, tt.active_snd,
              tt.melee_fr, tt.melee_snd, tt.melee_hit_snd, tt.melee_dmg, tt.melee_rolls, t.target_id, t.threshold,
              tt.mass, tt.floats
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
@@ -1875,7 +1876,7 @@ BEGIN
         ORDER BY t.id                                  -- (P_RunThinkers: in spawn order, every time)
         INTO id, k, x, y, z, ang, st, st_tics, st_len, step, reaction, rad, hgt, momx, momy, owner_id, flags, frame, momz,
              spd, walk_fr, atk_fr, death_fr, atk_kind, missile_type, dmg_lo, dmg_hi, shots, sec,
-             see_snd, atk_snd, death_snd, ttype,
+             see_snd, atk_snd, death_snd, ttype, active_snd,
              melee_fr, melee_snd, melee_hit_snd, melee_dmg, melee_rolls, target_id, threshold,
              mass, fl
   DO
@@ -2448,33 +2449,39 @@ BEGIN
             IF (ttype = 67) THEN EXECUTE PROCEDURE play_sound('DSMANATK', id, x, y);
           END
         END
-        ELSE IF (dist > melee_range - 8) THEN
+        ELSE
         BEGIN
-          -- P_NewChaseDir, simplified: straight at the player, then 45° and
-          -- 90° either side, then a random heading.
-          a0 = ATAN2(py - y, px - x);
-          IF (pdead = 1) THEN a0 = ang;
-          n = 0;
-          ok = 0;
-          WHILE (n < 6 AND ok = 0) DO
+          IF (dist > melee_range - 8) THEN
           BEGIN
-            try_ang = CASE n WHEN 0 THEN a0 WHEN 1 THEN a0 + PI() / 4 WHEN 2 THEN a0 - PI() / 4
-                             WHEN 3 THEN a0 + PI() / 2 WHEN 4 THEN a0 - PI() / 2
-                             ELSE p_random() * 2 * PI() END;
-            nx = x + COS(try_ang) * spd;
-            ny = y + SIN(try_ang) * spd;
-            EXECUTE PROCEDURE check_position(id, nx, ny, z, rad, hgt, 1) RETURNING_VALUES ok, fz, cz, dz, sec;
-            n = n + 1;
+            -- P_NewChaseDir, simplified: straight at the player, then 45° and
+            -- 90° either side, then a random heading.
+            a0 = ATAN2(py - y, px - x);
+            IF (pdead = 1) THEN a0 = ang;
+            n = 0;
+            ok = 0;
+            WHILE (n < 6 AND ok = 0) DO
+            BEGIN
+              try_ang = CASE n WHEN 0 THEN a0 WHEN 1 THEN a0 + PI() / 4 WHEN 2 THEN a0 - PI() / 4
+                               WHEN 3 THEN a0 + PI() / 2 WHEN 4 THEN a0 - PI() / 2
+                               ELSE p_random() * 2 * PI() END;
+              nx = x + COS(try_ang) * spd;
+              ny = y + SIN(try_ang) * spd;
+              EXECUTE PROCEDURE check_position(id, nx, ny, z, rad, hgt, 1) RETURNING_VALUES ok, fz, cz, dz, sec;
+              n = n + 1;
+            END
+            IF (ok = 1) THEN
+            BEGIN
+              x = nx;
+              y = ny;
+              -- on the ground it steps up and down with the floor; tossed or
+              -- flying, it keeps its height
+              IF (momz = 0 AND fl = 0) THEN z = fz; ELSE z = MAXVALUE(z, fz);
+              ang = try_ang;
+            END
           END
-          IF (ok = 1) THEN
-          BEGIN
-            x = nx;
-            y = ny;
-            -- on the ground it steps up and down with the floor; tossed or
-            -- flying, it keeps its height
-            IF (momz = 0 AND fl = 0) THEN z = fz; ELSE z = MAXVALUE(z, fz);
-            ang = try_ang;
-          END
+          -- A_Chase, last: the activesound, 3 times in 256
+          IF (active_snd IS NOT NULL AND p_random() * 256 < 3) THEN
+            EXECUTE PROCEDURE play_sound(active_snd, id, x, y);
         END
       END
     END

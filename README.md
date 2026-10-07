@@ -473,7 +473,11 @@ The simulation decides what you hear. `PLAY_SOUND` inserts a row into `SOUND_EVE
 lump, origin, map position) for:
 
 - the player: gunfire, pain and death, a hard landing, "oof" against a wall, pickups
-- monsters: sighting, attacks, pain and death (per type, from `THING_TYPES`)
+- monsters: sighting, attacks, pain and death (per type, from `THING_TYPES`), and the growls
+  they make now and then while chasing you. That's `A_Chase`'s `activesound`, 3 times in 256 per
+  chase step: `DSPOSACT` for the former humans and the mancubus, `DSBGACT` for imps, `DSDMACT`
+  for the demons and the rest, `DSBSPACT`, `DSSKEACT` and `DSVILACT` for the arachnotron, the
+  revenant and the arch-vile
 - the world: doors, lifts, switches, teleports, exploding fireballs and barrels
 
 Each frame the browser reads the rows it hasn't seen, in the same pipelined batch as the

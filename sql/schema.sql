@@ -91,6 +91,7 @@ CREATE TABLE thing_types (
   label        VARCHAR(40),
   -- sfx lump names (DS*) for A_Look / attack / A_Pain / A_Scream
   see_snd      VARCHAR(8),
+  active_snd   VARCHAR(8),                     -- activesound: now and then while chasing
   atk_snd      VARCHAR(8),
   pain_snd     VARCHAR(8),
   death_snd    VARCHAR(8),

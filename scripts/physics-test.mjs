@@ -683,6 +683,40 @@ if (slimeMap) {
   await db.exec('UPDATE player SET health = 100, iron_tics = 0, infra_tics = 0');
 } else console.log('(no nukage or slime in this WAD)');
 
+// ── active sounds (A_Chase: activesound, P_Random() < 3) ──────────────────
+{
+  await loadMap(db, wad, res, maps[0], { skill: 3 });
+  await quiet();
+  const p = await one(`SELECT t.x, t.y FROM things t WHERE t.kind = 'player'`);
+  const imp = await spawn(3001, p.X + 256, p.Y);
+  await db.exec('DELETE FROM sound_events');
+  // chasing, but never ready to attack: every chase step ends in A_Chase's last lines
+  // (DOOM_TIC forgets sounds older than 70 tics: count after every 50)
+  let steps = 0;
+  let growls = 0;
+  let others = 0;
+  let seen = 0;
+  for (let k = 0; k < 80; k++) {
+    await db.exec(`UPDATE things SET st = 'chase', reaction = 99 WHERE id = ${imp}`);
+    const s0 = (await one(`SELECT step FROM things WHERE id = ${imp}`)).STEP;
+    await tic(50);
+    steps += (await one(`SELECT step FROM things WHERE id = ${imp}`)).STEP - s0;
+    const c = await one(`SELECT COALESCE(MAX(id), ${seen}) top,
+        COUNT(CASE WHEN sound = 'DSBGACT' AND origin = ${imp} THEN 1 END) mine,
+        COUNT(CASE WHEN sound LIKE 'DS%ACT' AND origin <> ${imp} THEN 1 END) theirs
+      FROM sound_events WHERE id > ${seen}`);
+    growls += c.MINE;
+    others += c.THEIRS;
+    seen = c.TOP;
+  }
+  const expect = (steps * 3) / 256;
+  assert(steps > 800 && growls >= expect / 3 && growls <= expect * 3 && others === 0,
+    `a chasing imp growls (DSBGACT) ${growls} times in ${steps} chase steps (3 in 256 expects ${expect.toFixed(1)}), from where it is`);
+  const quietTypes = (await one(`SELECT COUNT(*) n FROM thing_types WHERE kind = 'monster' AND active_snd IS NULL`)).N;
+  assert(quietTypes === 0, 'every monster has its activesound');
+  await db.exec(`DELETE FROM things WHERE id = ${imp}`);
+}
+
 // ── armour types (P_GiveArmor, P_DamageMobj) ────────────────────────────
 {
   await loadMap(db, wad, res, maps[0], { skill: 3 });

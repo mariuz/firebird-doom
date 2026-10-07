@@ -33,8 +33,8 @@ you find missing.
 - ~~**Weapon raise and lower.**~~ Done: `pendingweapon`, `A_Lower` and `A_Raise` at 6 units a tic
   (31 tics from one weapon to the next), `P_CheckAmmo` switching instead of firing, pickups and
   berserk bringing their weapon up, the weapon rising at each level start and dropping at death.
-- **Monster active sounds.** Monsters don't make their idle growls while chasing (`activesound`,
-  for example `DSPOSACT`, `DSDMACT`, `DSBGACT`, 3/256 per chase step).
+- ~~**Monster active sounds.**~~ Done: `A_Chase`'s `activesound` (`THING_TYPES.ACTIVE_SND`), 3 in
+  256 per chase step that doesn't attack.
 - **Monster chase details.** `P_NewChaseDir` is simplified: straight at the target, then 45° and
   90° either side, then random. DOOM's eight-direction choice with turnaround avoidance and
   `movecount` makes monsters wander more convincingly. `A_Look`'s 180° field of view (monsters
