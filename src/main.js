@@ -19,6 +19,7 @@ import { nextMap } from './progress.js';
 import { Finale, parseDehStrings, setFallbackStrings } from './finale.js';
 import { Menu, TitleLoop } from './menu.js';
 import { captureGame, restoreGame, saveStore, SLOTS } from './savegame.js';
+import { DemoPlayer, DemoRecorder, demoProblem } from './demo.js';
 import { Intermission, levelOf } from './intermission.js';
 import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
@@ -63,6 +64,10 @@ let lastPalette = 0;
 const saves = saveStore();          // IndexedDB: six slots per WAD
 let wadKey = '';                    // which WAD the saves belong to
 let saveSlots = Array(SLOTS).fill(null);   // the slots' descriptions, for the menu
+let recorder = null;                // a demo being recorded (demo.js)
+let demoPlayer = null;              // …or played back
+let lastDemo = null;                // the last one recorded or loaded, for Play and Download
+let lastSeed = null;                // the seed the current map started from
 let wiButtons = true;               // fire/use held last tic: only a new press accelerates
 const didSecret = new Set();        // DOOM I episodes whose secret level is done (wbs->didsecret)
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
@@ -112,6 +117,11 @@ window.addEventListener('keydown', (e) => {
     openMenu();
     return;
   }
+  if (e.key === 'Escape' && demoPlayer) {
+    e.preventDefault();
+    endPlayback('stopped');
+    return;
+  }
   if (e.key === 'Escape' && menu) {
     e.preventDefault();
     openMenu();
@@ -124,6 +134,7 @@ window.addEventListener('keydown', (e) => {
   // AM_Responder: the automap listens for IDDT while it's open
   if (showMap && iddt(e.key)) amCheating = (amCheating + 1) % 3;
   for (const [code, read] of CHEATS) {
+    if (recorder || demoPlayer) break;   // (a cheat isn't an input: it would desync the demo)
     if (read(e.key)) db.query(`EXECUTE PROCEDURE cheat('${code}')`).catch((err) => console.error(err));
   }
   const power = idbehold(e.key)?.toLowerCase();
@@ -143,7 +154,7 @@ window.addEventListener('keydown', (e) => {
   // IDCLEV xy: G_DeferedInitNew – a new game on that map, if this WAD has it
   const digits = idclev(e.key);
   const warp = digits && clevMap(digits, wad.mapNames());
-  if (warp) {
+  if (warp && !recorder && !demoPlayer) {
     $('map').value = warp;
     startMap(warp, true).catch((err) => setStatus(err.message, true));
   }
@@ -189,6 +200,54 @@ function goTitle() {
   menu?.close(true);
   const maps = wad.mapNames();
   title = new TitleLoop(maps.some((m) => m.startsWith('MAP')), !!wad.lump('E4M1'), (m) => audio.playMusic(m));
+}
+
+/** G_RecordDemo: a fresh start of this map, a new seed, and every tic from now */
+async function startRecording() {
+  if (!map || !db) return;
+  await startMap(map.name, true);
+  recorder = new DemoRecorder({ wad: wadKey, map: map.name, skill: settings.skill, seed: lastSeed });
+  setStatus(`● Recording a demo of ${map.name}`);
+  updateDemoButtons();
+}
+
+/** G_CheckDemoStatus, recording: keep it (and in this WAD's slot store) */
+function finishRecording() {
+  if (!recorder) return;
+  const { demo } = recorder;
+  recorder = null;
+  if (demo.calls.length) {
+    lastDemo = demo;
+    saves.put(`${wadKey}|demo`, demo).catch(() => {});
+    setStatus(`Demo recorded: ${demo.map}, ${demo.calls.reduce((n, c) => n + c[0], 0)} tics. Play or Download it below.`);
+  } else setStatus('');
+  updateDemoButtons();
+}
+
+/** G_DoPlayDemo: the demo's map, skill and seed, then its inputs */
+async function playDemo(demo) {
+  const problem = demoProblem(demo);
+  if (problem) { setStatus(`Can't play that: ${problem}`, true); return; }
+  if (demo.wad !== wadKey) { setStatus(`That demo was recorded with ${demo.wad.split('|')[0]}; load that WAD first`, true); return; }
+  if (!wad.mapNames().includes(demo.map)) { setStatus(`This WAD has no ${demo.map}`, true); return; }
+  $('map').value = demo.map;
+  await startMap(demo.map, true, { skill: demo.skill, seed: demo.seed });
+  demoPlayer = new DemoPlayer(demo);
+  setStatus(`▶ Playing a demo of ${demo.map} (Esc stops it)`);
+  updateDemoButtons();
+}
+
+function endPlayback(why) {
+  demoPlayer = null;
+  setStatus(`Demo ended: ${why}.`);
+  updateDemoButtons();
+}
+
+function updateDemoButtons() {
+  $('demo-record').disabled = !!recorder || !!demoPlayer;
+  $('demo-stop').disabled = !recorder && !demoPlayer;
+  $('demo-play').disabled = !lastDemo || !!recorder;
+  $('demo-download').disabled = !lastDemo;
 }
 
 /** The six slots of this WAD, as the menu lists them. */
@@ -373,16 +432,22 @@ async function loadSides() {
   map.sides = new Map(rows.map((r) => [r[0], { xoff: r[1], yoff: r[2], upper: r[3], lower: r[4], mid: r[5], sector: r[6] }]));
 }
 
-async function startMap(name, newGame) {
+async function startMap(name, newGame, { skill = settings.skill, seed = null } = {}) {
   running = false;
   finale = null;
   intermission = null;
   title = null;
   menu?.close(true);
+  if (recorder) finishRecording();   // (a new map ends the demo; demo starts set theirs afterwards)
+  demoPlayer = null;
   if (newGame) didSecret.clear();
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
-  await loadMap(db, wad, res, name, { skill: settings.skill, newGame });
+  await loadMap(db, wad, res, name, { skill, newGame });
+  // P_RANDOM's seed: a demo's own, or a fresh one for a new game (a new level carries on)
+  const s = seed ?? (newGame ? 1 + Math.floor(Math.random() * 2147483646) : null);
+  if (s != null) await db.exec(`UPDATE game SET rng = ${s} WHERE id = 1`);
+  lastSeed = s;
   map = { name, skyTex: skyFor(name) };
   const { rows } = await db.query(
     'SELECT id, front_side, back_side, flags, light_delta, x1, y1, x2, y2, front_sector, back_sector, special FROM linedefs',
@@ -479,12 +544,24 @@ async function frame() {
     }
 
     let t = performance.now();
-    hud = (await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', readInput(tics), { rowMode: 'object' })).rows[0];
+    // G_ReadDemoTiccmd / G_WriteDemoTiccmd
+    let args;
+    if (demoPlayer) {
+      args = demoPlayer.next();
+      if (!args) { endPlayback('the demo is over'); nextFrame(); return; }
+      readInput(tics);              // (drained, so it doesn't pile up for later)
+    } else args = readInput(tics);
+    recorder?.push(args);
+    if (recorder && recorder.demo.calls.length % 35 === 0) setStatus(`● Recording a demo of ${map.name}: ${recorder.tics} tics`);
+    hud = (await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', args, { rowMode: 'object' })).rows[0];
     lastFrame.tic = performance.now() - t;
 
     if (hud.EXIT_KIND) {
       const kind = hud.EXIT_KIND;
       const secret = kind === 2;
+      // a demo covers one level: it ends with the level (or the death that restarts it)
+      if (recorder) finishRecording();
+      if (demoPlayer) { endPlayback(kind === 3 ? 'the player died' : 'the level was finished'); nextFrame(); return; }
       if (kind === 3) await startMap(map.name, true);
       else {
         await db.exec('UPDATE game SET exit_kind = 0 WHERE id = 1');
@@ -697,6 +774,8 @@ async function useWad(buffer, label) {
   wadKey = `${label}|${maps.length}`;
   saveSlots = Array(SLOTS).fill(null);
   refreshSlots();
+  lastDemo = null;
+  saves.get(`${wadKey}|demo`).then((d) => { if (d && !demoProblem(d)) lastDemo = d; updateDemoButtons(); }).catch(() => {});
   makeMenu();
   renderer.setSize(viewWidth(), 168);
   const sel = $('map');
@@ -728,6 +807,8 @@ async function boot() {
       // doom.wad: doom.finale('E3M8') is the bunny); afterwards the game goes on
       // to the map after the one named, as if you'd just finished it
       get menu() { return menu; },
+      get demo() { return { recording: !!recorder, playing: !!demoPlayer, last: lastDemo }; },
+      record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },
       finale(name, secret = false) {
         if (!Finale.available(wad, name, secret)) return `no screen after ${name}${secret ? "'s secret exit" : ''} in this WAD`;
@@ -817,6 +898,31 @@ $('skill').addEventListener('change', (e) => {
   saveSettings();
   if (db && map) startMap(map.name, true).catch((err) => setStatus(err.message, true));
 });
+// demos: record, stop, play, download, load
+$('demo-record').addEventListener('click', () => startRecording().catch((err) => setStatus(err.message, true)));
+$('demo-stop').addEventListener('click', () => { if (recorder) finishRecording(); else if (demoPlayer) endPlayback('stopped'); });
+$('demo-play').addEventListener('click', () => lastDemo && playDemo(lastDemo).catch((err) => setStatus(err.message, true)));
+$('demo-download').addEventListener('click', () => {
+  if (!lastDemo) return;
+  const blob = new Blob([JSON.stringify(lastDemo)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `firebird-doom-${lastDemo.map}-${lastDemo.date.slice(0, 19).replace(/[:T]/g, '-')}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$('demo-file').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    const demo = JSON.parse(await f.text());
+    lastDemo = demo;
+    updateDemoButtons();
+    await playDemo(demo);
+  } catch (err) { setStatus(`Can't read that demo: ${err.message}`, true); }
+  e.target.value = '';
+});
+updateDemoButtons();
 $('display').value = settings.display;
 $('smooth').checked = settings.smooth;
 $('display').addEventListener('change', (e) => {

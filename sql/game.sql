@@ -34,6 +34,19 @@ BEGIN
 END^
 
 -- Lowest/highest heights and light among a sector's neighbours.
+-- P_Random: the game's one source of chance, seeded and repeatable, so the
+-- same inputs from the same start always play out the same (demos; a save
+-- restores the state too). DOOM steps through a 256-entry table; this is a
+-- linear congruential generator in BIGINT arithmetic (no overflow below 2^62),
+-- returning the upper 15 bits of its 31 as a number in [0, 1).
+CREATE OR ALTER FUNCTION p_random RETURNS DOUBLE PRECISION
+AS
+DECLARE s BIGINT;
+BEGIN
+  UPDATE game g SET rng = MOD(g.rng * 1103515245 + 12345, 2147483648) WHERE g.id = 1 RETURNING g.rng INTO s;
+  RETURN (s / 65536) / 32768e0;
+END^
+
 CREATE OR ALTER FUNCTION neighbor_h (sec INTEGER, what VARCHAR(12))
 RETURNS DOUBLE PRECISION
 AS
@@ -363,7 +376,7 @@ BEGIN
       ELSE IF (skind = 'monster' AND satk IS DISTINCT FROM 'vile' AND (thr = 0 OR vatk = 'vile')) THEN
         UPDATE things t SET target_id = :src, threshold = 100, st = IIF(t.st = 'idle', 'chase', t.st) WHERE t.id = :tid;
     END
-    IF (pain_fr IS NOT NULL AND RAND() * 256 < pain_chance) THEN
+    IF (pain_fr IS NOT NULL AND p_random() * 256 < pain_chance) THEN
     BEGIN
       UPDATE things SET st = 'pain', st_tics = 6, st_len = 6, frame = SUBSTRING(:pain_fr FROM 1 FOR 1)
        WHERE id = :tid;
@@ -659,7 +672,7 @@ BEGIN
       BEGIN
         IF (k = 'player') THEN EXECUTE PROCEDURE damage_player(10);
         ELSE EXECUTE PROCEDURE damage_thing(tid, 10);
-        EXECUTE PROCEDURE spawn_thing(9011, tx + (RAND() - 0.5e0) * 16, ty + (RAND() - 0.5e0) * 16, tz + th / 2, 0)
+        EXECUTE PROCEDURE spawn_thing(9011, tx + (p_random() - 0.5e0) * 16, ty + (p_random() - 0.5e0) * 16, tz + th / 2, 0)
           RETURNING_VALUES dummy;
       END
     END
@@ -1031,7 +1044,7 @@ BEGIN
       j = 0;
       WHILE (j < 15) DO
       BEGIN
-        dmg = dmg + 1 + CAST(FLOOR(RAND() * 8) AS INTEGER);
+        dmg = dmg + 1 + CAST(FLOOR(p_random() * 8) AS INTEGER);
         j = j + 1;
       END
       EXECUTE PROCEDURE damage_thing(tgt, dmg, src);
@@ -1294,7 +1307,7 @@ BEGIN
     -- floors (4, 16) still get through 5 times in 256, and E1M8's (11) always
     SELECT p.iron_tics FROM player p WHERE p.id = 1 INTO iron;
     IF (sspec = 11) THEN UPDATE player SET god = 0 WHERE id = 1;   -- (E1M8's floor cancels IDDQD)
-    IF (iron = 0 OR sspec = 11 OR (sspec IN (4, 16) AND RAND() * 256 < 5)) THEN
+    IF (iron = 0 OR sspec = 11 OR (sspec IN (4, 16) AND p_random() * 256 < 5)) THEN
       EXECUTE PROCEDURE damage_player(CASE sspec WHEN 7 THEN 5 WHEN 5 THEN 10 ELSE 20 END);
   END
 
@@ -1384,7 +1397,7 @@ BEGIN
       -- A_Punch: (P_Random() % 10 + 1) × 2, ten times that when berserk
       attack_len = 18;
       EXECUTE PROCEDURE hitscan(x, y, z + 32, ang, 64,
-        2 * (1 + CAST(FLOOR(RAND() * 10) AS INTEGER))
+        2 * (1 + CAST(FLOOR(p_random() * 10) AS INTEGER))
           * IIF((SELECT p.strength_tics FROM player p WHERE p.id = 1) > 0, 10, 1), tid, bslope)
         RETURNING_VALUES shot_hit;
     END
@@ -1392,8 +1405,8 @@ BEGIN
     BEGIN
       -- A_Saw: 2d10 × 2 at MELEERANGE + 1, every 4 tics
       attack_len = 4;
-      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang + (RAND() - RAND()) * 0.04, 65,
-                                2 * (1 + CAST(FLOOR(RAND() * 10) AS INTEGER)), tid, bslope)
+      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang + (p_random() - p_random()) * 0.04, 65,
+                                2 * (1 + CAST(FLOOR(p_random() * 10) AS INTEGER)), tid, bslope)
         RETURNING_VALUES shot_hit;
     END
     ELSE IF (weapon = 9) THEN
@@ -1433,8 +1446,8 @@ BEGIN
     i = 0;
     WHILE (i < pellets) DO
     BEGIN
-      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang + (RAND() - RAND()) * spread, 2048,
-                                5 * (1 + CAST(FLOOR(RAND() * 3) AS INTEGER)), tid, bslope)
+      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang + (p_random() - p_random()) * spread, 2048,
+                                5 * (1 + CAST(FLOOR(p_random() * 3) AS INTEGER)), tid, bslope)
         RETURNING_VALUES shot_hit;
       i = i + 1;
     END
@@ -1855,7 +1868,7 @@ BEGIN
         BEGIN
           st_tics = 150;
           spot = NULL;
-          SELECT FIRST 1 t.id, t.x, t.y FROM things t WHERE t.thing_type = 87 ORDER BY RAND() INTO spot, sx, sy;
+          SELECT FIRST 1 t.id, t.x, t.y FROM things t WHERE t.thing_type = 87 ORDER BY p_random() INTO spot, sx, sy;
           IF (spot IS NOT NULL) THEN
           BEGIN
             ang = ATAN2(sy - y, sx - x);
@@ -1876,7 +1889,7 @@ BEGIN
       BEGIN
         del = 1;
         EXECUTE PROCEDURE spawn_thing(9014, sx, sy, NULL, 0) RETURNING_VALUES mid;
-        r = RAND() * 256;
+        r = p_random() * 256;
         EXECUTE PROCEDURE spawn_thing(
           CASE WHEN r < 50 THEN 3001 WHEN r < 90 THEN 3002 WHEN r < 120 THEN 58 WHEN r < 130 THEN 71
                WHEN r < 160 THEN 3005 WHEN r < 162 THEN 64 WHEN r < 172 THEN 66 WHEN r < 192 THEN 68
@@ -1898,7 +1911,7 @@ BEGIN
       st_tics = st_tics - 1;
       IF (MOD(st_tics, 5) = 0) THEN
       BEGIN
-        EXECUTE PROCEDURE spawn_thing(9013, x - 320 + RAND() * 640, y - 320, z + 128 + RAND() * 384, 0) RETURNING_VALUES mid;
+        EXECUTE PROCEDURE spawn_thing(9013, x - 320 + p_random() * 640, y - 320, z + 128 + p_random() * 384, 0) RETURNING_VALUES mid;
         IF (MOD(st_tics, 15) = 0) THEN EXECUTE PROCEDURE play_sound('DSBAREXP', 0, NULL, NULL);
       END
       IF (st_tics <= 0) THEN
@@ -1977,9 +1990,9 @@ BEGIN
           INTO hit;
       ok = 0;
       IF (hit = ptid) THEN
-        EXECUTE PROCEDURE damage_player(dmg_lo * (1 + CAST(FLOOR(RAND() * 8) AS INTEGER)));
+        EXECUTE PROCEDURE damage_player(dmg_lo * (1 + CAST(FLOOR(p_random() * 8) AS INTEGER)));
       ELSE IF (hit IS NOT NULL) THEN
-        EXECUTE PROCEDURE damage_thing(hit, dmg_lo * (1 + CAST(FLOOR(RAND() * 8) AS INTEGER)), id);
+        EXECUTE PROCEDURE damage_thing(hit, dmg_lo * (1 + CAST(FLOOR(p_random() * 8) AS INTEGER)), id);
       ELSE
       BEGIN
         -- (a flier: ledges don't stop it, only walls, steps and low ceilings)
@@ -2011,7 +2024,7 @@ BEGIN
       IF (st_len - st_tics = 8) THEN EXECUTE PROCEDURE play_sound(melee_snd, id, x, y);
       IF (st_len - st_tics = 16 AND pdead = 0 AND dist < 60 + rad / 2 + 16) THEN
       BEGIN
-        EXECUTE PROCEDURE hurt_target(tgt, melee_dmg * (1 + CAST(FLOOR(RAND() * melee_rolls) AS INTEGER)), id);
+        EXECUTE PROCEDURE hurt_target(tgt, melee_dmg * (1 + CAST(FLOOR(p_random() * melee_rolls) AS INTEGER)), id);
         EXECUTE PROCEDURE play_sound(melee_hit_snd, id, x, y);
       END
       IF (st_tics <= 0) THEN
@@ -2059,7 +2072,7 @@ BEGIN
         frame = SUBSTRING(walk_fr FROM 1 + MOD(tic / 4, CHAR_LENGTH(walk_fr)) FOR 1);
         SELECT se.floor_h, se.ceil_h, se.sky FROM sectors se WHERE se.id = sector_at(:nx, :ny) INTO mfz, mcz, msky;
         -- P_CheckMissileSpawn / PIT_CheckThing: what does it hit this tic?
-        mdmg = dmg_lo * (1 + CAST(FLOOR(RAND() * 8) AS INTEGER));
+        mdmg = dmg_lo * (1 + CAST(FLOOR(p_random() * 8) AS INTEGER));
         hit = NULL;
         IF (owner_id = ptid) THEN
           SELECT FIRST 1 t.id FROM things t
@@ -2193,9 +2206,9 @@ BEGIN
         n = (st_len - st_tics - 8) / 24;                        -- volley 0, 1, 2
         EXECUTE PROCEDURE play_sound('DSFIRSHT', id, x, y);
         EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad,
-          ang + IIF(shadowed = 1, (RAND() - RAND()) * PI() / 8, 0) + CASE n WHEN 2 THEN -0.09817e0 ELSE 0 END, px, py, pz);
+          ang + IIF(shadowed = 1, (p_random() - p_random()) * PI() / 8, 0) + CASE n WHEN 2 THEN -0.09817e0 ELSE 0 END, px, py, pz);
         EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad,
-          ang + IIF(shadowed = 1, (RAND() - RAND()) * PI() / 8, 0)
+          ang + IIF(shadowed = 1, (p_random() - p_random()) * PI() / 8, 0)
               + CASE n WHEN 0 THEN 0.19635e0 WHEN 1 THEN -0.39270e0 ELSE 0.09817e0 END, px, py, pz);
       END
       -- A_VileTarget (frame H): conjure the flame on the player.
@@ -2229,7 +2242,7 @@ BEGIN
       BEGIN
         st = 'charge';
         EXECUTE PROCEDURE play_sound(atk_snd, id, x, y);
-        ang = ang + IIF(shadowed = 1, (RAND() - RAND()) * PI() / 4, 0);   -- (A_FaceTarget at a shadow)
+        ang = ang + IIF(shadowed = 1, (p_random() - p_random()) * PI() / 4, 0);   -- (A_FaceTarget at a shadow)
         momx = COS(ang) * 20;
         momy = SIN(ang) * 20;
         momz = (pz + 28 - z) / MAXVALUE(1e0, dist / 20);
@@ -2244,7 +2257,7 @@ BEGIN
           -- A_FaceTarget turns up to 45° wide of a shadow: then the volley
           -- only lands if that still points at the target's body
           IF (check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1
-              AND (shadowed = 0 OR ABS((RAND() - RAND()) * PI() / 4) < ATAN2(20, dist))) THEN
+              AND (shadowed = 0 OR ABS((p_random() - p_random()) * PI() / 4) < ATAN2(20, dist))) THEN
           BEGIN
             -- P_LineAttack: the first other monster (or barrel) on the line of
             -- fire takes the bullets instead
@@ -2262,12 +2275,12 @@ BEGIN
             n = 0;
             WHILE (n < shots) DO
             BEGIN
-              IF (RAND() < MAXVALUE(0.15e0, 0.85e0 - dist / 1500)) THEN
+              IF (p_random() < MAXVALUE(0.15e0, 0.85e0 - dist / 1500)) THEN
               BEGIN
                 IF (victim IS NOT NULL) THEN
-                  EXECUTE PROCEDURE damage_thing(victim, 3 * (1 + CAST(FLOOR(RAND() * 5) AS INTEGER)), id);
+                  EXECUTE PROCEDURE damage_thing(victim, 3 * (1 + CAST(FLOOR(p_random() * 5) AS INTEGER)), id);
                 ELSE
-                  EXECUTE PROCEDURE hurt_target(tgt, 3 * (1 + CAST(FLOOR(RAND() * 5) AS INTEGER)), id);
+                  EXECUTE PROCEDURE hurt_target(tgt, 3 * (1 + CAST(FLOOR(p_random() * 5) AS INTEGER)), id);
               END
               n = n + 1;
             END
@@ -2276,7 +2289,7 @@ BEGIN
         ELSE IF (atk_kind = 'melee' OR (atk_kind = 'missile' AND dist < melee_range)) THEN
         BEGIN
           IF (dist < melee_range + 16) THEN
-            EXECUTE PROCEDURE hurt_target(tgt, dmg_lo + CAST(FLOOR(RAND() * (dmg_hi - dmg_lo + 1)) AS INTEGER), id);
+            EXECUTE PROCEDURE hurt_target(tgt, dmg_lo + CAST(FLOOR(p_random() * (dmg_hi - dmg_lo + 1)) AS INTEGER), id);
         END
         ELSE IF (atk_kind = 'missile' AND missile_type = 3006) THEN
           EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang);
@@ -2284,7 +2297,7 @@ BEGIN
           -- P_SpawnMissile: at a shadow (you, partially invisible; a spectre)
           -- the shot goes up to 22.5° astray
           EXECUTE PROCEDURE monster_missile(id, missile_type, x, y, z, rad,
-            ang + IIF(shadowed = 1, (RAND() - RAND()) * PI() / 8, 0), px, py, pz);
+            ang + IIF(shadowed = 1, (p_random() - p_random()) * PI() / 8, 0), px, py, pz);
       END
       IF (st_tics <= 0 AND st = 'attack') THEN
       BEGIN
@@ -2340,12 +2353,12 @@ BEGIN
         ELSE IF (pdead = 0 AND reaction = 0 AND dist < 2048
             AND ((atk_kind = 'melee' AND dist < melee_range)
                  OR (atk_kind IN ('hitscan', 'missile')
-                     AND (dist < melee_range OR RAND() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2)))
+                     AND (dist < melee_range OR p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2)))
                  -- P_CheckMissileRange: the arch-vile only reaches 14 × 64 units
                  OR (atk_kind = 'vile' AND dist < 896
-                     AND RAND() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2))
+                     AND p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2))
                  -- the lost soul's range check counts half the distance
-                 OR (atk_kind = 'skull' AND RAND() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 4)))
+                 OR (atk_kind = 'skull' AND p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 4)))
             AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
         BEGIN
           ang = ATAN2(py - y, px - x);
@@ -2377,7 +2390,7 @@ BEGIN
           BEGIN
             try_ang = CASE n WHEN 0 THEN a0 WHEN 1 THEN a0 + PI() / 4 WHEN 2 THEN a0 - PI() / 4
                              WHEN 3 THEN a0 + PI() / 2 WHEN 4 THEN a0 - PI() / 2
-                             ELSE RAND() * 2 * PI() END;
+                             ELSE p_random() * 2 * PI() END;
             nx = x + COS(try_ang) * spd;
             ny = y + SIN(try_ang) * spd;
             EXECUTE PROCEDURE check_position(id, nx, ny, z, rad, hgt, 1) RETURNING_VALUES ok, fz, cz, dz, sec;
@@ -2470,7 +2483,7 @@ BEGIN
         INTO id, x, y, sx, sy, sa, rad, hgt
   DO
   BEGIN
-    IF (RAND() * 256 > 4) THEN CONTINUE;
+    IF (p_random() * 256 > 4) THEN CONTINUE;
     EXECUTE PROCEDURE check_position(id, sx, sy, (SELECT se.floor_h FROM sectors se WHERE se.id = sector_at(:sx, :sy)),
                                      rad, hgt, 1)
       RETURNING_VALUES ok, fz, cz, dz, sec;
@@ -2501,7 +2514,7 @@ BEGIN
                    WHEN 3  THEN IIF(MOD(:tic + id * 7, 40) < 5, base_light, min_light)
                    WHEN 13 THEN IIF(MOD(:tic, 40) < 5, base_light, min_light)
                    WHEN 8  THEN min_light + ABS(MOD(:tic * 8, 2 * (base_light - min_light) + 1) - (base_light - min_light))
-                   WHEN 17 THEN IIF(MOD(:tic, 4) = 0, base_light - 16 * CAST(FLOOR(RAND() * 4) AS INTEGER), light)
+                   WHEN 17 THEN IIF(MOD(:tic, 4) = 0, base_light - 16 * CAST(FLOOR(p_random() * 4) AS INTEGER), light)
                    ELSE light
                  END
    WHERE special IN (1, 2, 3, 8, 12, 13, 17);

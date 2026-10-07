@@ -18,7 +18,8 @@
     "test:finale": "node scripts/finale-test.mjs",
     "test:intermission": "node scripts/intermission-test.mjs",
     "test:menu": "node scripts/menu-test.mjs",
-    "test:savegame": "node scripts/savegame-test.mjs"
+    "test:savegame": "node scripts/savegame-test.mjs",
+    "test:demo": "node scripts/demo-test.mjs"
   },
   "license": "MIT",
   "dependencies": {

@@ -149,6 +149,8 @@ export async function loadMap(db, wad, res, name, { skill = 3, newGame = true } 
     m.things.map((t) => [t.id, t.x, t.y, t.angle, t.type, t.flags]));
 
   const skillBit = skill <= 2 ? 1 : skill === 3 ? 2 : 4;
+  // the same thing ids on every load, so a level always starts identical (demos)
+  await db.exec('ALTER SEQUENCE thing_seq RESTART WITH 1');   // (from 1: origin 0 means the player's own sounds)
   await db.exec(`EXECUTE PROCEDURE init_map('${name}', ${skillBit}, ${newGame ? 1 : 0}, ${skill})`);
   return m;
 }

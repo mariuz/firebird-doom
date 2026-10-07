@@ -17,8 +17,12 @@ you find missing.
 - ~~**Save and load.**~~ Done ([src/savegame.js](../src/savegame.js)): six IndexedDB slots per WAD
   from the menu. A save is a JSON snapshot of the live tables. Still missing: quicksave and
   quickload (F6/F9), and exporting or importing saves as files.
-- **Demos.** No `.lmp` playback or recording. Inputs are already a clean per-tic tuple (the
-  `DOOM_TIC` arguments), which makes recording easy.
+- ~~**Demos.**~~ Done ([src/demo.js](../src/demo.js)): record a level, play it back, download it
+  or load it as a JSON file. The simulation is deterministic: `P_RANDOM` is seeded from
+  `GAME.RNG`, and thing ids restart on every load. Not possible: DOOM's own `.lmp` demos. They
+  need a bit-identical simulation (fixed point, the 256-entry random table consumed in the same
+  order), and this is a re-implementation. That also means the title loop has no attract demos.
+  Still missing: demos that span several levels, and multiplayer.
 - **The end of the game.** After Doom I's E?M8 ending the port carries on into the next episode,
   and after E4 into E1M1. After Doom II's cast call it loops, as in vanilla. Vanilla ends the game
   after each episode. An option for vanilla behaviour may be wanted.

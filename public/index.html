@@ -54,6 +54,12 @@
         <label title="Sound effects and music on or off (M)"><input id="audio" type="checkbox"> Audio</label>
         <label title="Sound effects volume">Sound <input id="sfxvol" type="range" min="0" max="100" step="5"></label>
         <label title="Music volume (GENMIDI OPL synthesis)">Music <input id="musicvol" type="range" min="0" max="100" step="5"></label>
+        <span title="A demo records one level: every tic's input from a fresh start and seed. The same inputs replay the same game.">Demo
+          <button id="demo-record" type="button">● Record</button>
+          <button id="demo-stop" type="button">■ Stop</button>
+          <button id="demo-play" type="button">▶ Play</button>
+          <button id="demo-download" type="button">Download</button>
+          <label class="file-pick">Load… <input id="demo-file" type="file" accept=".json,application/json"></label></span>
         <span id="engine" class="pill">Firebird</span>
         <span id="mapname" class="pill"></span>
       </div>

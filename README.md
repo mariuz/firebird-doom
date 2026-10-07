@@ -317,9 +317,9 @@ Afterwards the game goes on to the next map, as if you'd just finished the one n
 
 The game opens on the title loop (`D_DoAdvanceDemo`, [src/menu.js](src/menu.js)): `TITLEPIC` to
 the title music (`D_INTRO`, `D_DM2TTL` on DOOM II), then the credits page, round and round.
-DOOM plays demos in between, and there are none here yet. Any key brings up the main menu
-(`m_menu.c`), drawn with the WAD's own `M_*` graphics and the blinking skull. In play, Esc opens
-it, and so does letting go of the mouse. The game waits behind it, as DOOM's single player does.
+DOOM plays its `.lmp` demos in between, which this port can't (see Demos below). Any key
+brings up the main menu (`m_menu.c`), drawn with the WAD's own `M_*` graphics and the blinking
+skull. In play, Esc opens it, and so does letting go of the mouse. The game waits behind it, as DOOM's single player does.
 Arrows move, Enter chooses, Backspace goes back, Esc closes, and each menu remembers where its
 cursor was.
 
@@ -362,6 +362,24 @@ empty one can't be chosen. Saves live in your browser's IndexedDB, six slots for
 keyed by its file name and map count, and they survive reloads. An E1M1 save is about 70 KB.
 `npm run test:savegame` plays a map, saves, plays on, loads, and checks that every saved row
 comes back exactly.
+
+### Demos
+
+A demo is the input of one level (after `G_RecordDemo`/`G_DoPlayDemo`, in this port's own format,
+[src/demo.js](src/demo.js)). **● Record** under the view restarts the current map with a fresh
+random seed and records every `DOOM_TIC` call: `[tics, fwd, side, turn, fire, use, weapon, run]`.
+Recording stops at the level's exit, at a death, or with **■ Stop**. **▶ Play** loads the same map
+at the same skill with the same seed and makes the same calls, and the same game unfolds. Esc stops
+it. **Download** saves the demo as JSON, and **Load…** plays one from a file. The last demo of each
+WAD is kept in the browser.
+
+That works because the game is deterministic. Every chance in `sql/game.sql` goes through
+`P_RANDOM()`, a linear congruential generator whose state is the `GAME.RNG` column (so a save
+keeps it too), and every load numbers the things from 1. Cheats are switched off while recording
+or playing, because they aren't inputs and would desync the demo. DOOM's own `.lmp` demos can't be
+played: they need DOOM's exact fixed-point simulation and random table, and this is a
+re-implementation in SQL. `npm run test:demo` replays a busy 531-tic recording and compares every
+row of the resulting game, on both WADs.
 
 ### Skill levels
 

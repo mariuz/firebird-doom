@@ -18,6 +18,7 @@ CREATE TABLE game (
   total_kills   INTEGER DEFAULT 0 NOT NULL,
   total_items   INTEGER DEFAULT 0 NOT NULL,
   total_secrets INTEGER DEFAULT 0 NOT NULL,
+  rng           BIGINT DEFAULT 1 NOT NULL,      -- P_RANDOM's state: the same seed, the same game
   skill         SMALLINT DEFAULT 3 NOT NULL     -- 1 (easiest) … 5 (nightmare: fast, respawning)
 );
 

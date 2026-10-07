@@ -35,6 +35,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `src/finale.js` | `f_finale.c`: Doom I endings with their art and the bunny scroll, Doom II text screens, the cast call. DEHACKED string parsing and the Freedoom text fallback. |
 | `src/progress.js` | `G_DoCompleted`'s next-map rules, secret exits included. |
 | `src/savegame.js` | Save and load: `captureGame` (the live tables as JSON), `restoreGame` (written back over a freshly loaded map, `thing_seq` moved on), `saveStore` (IndexedDB, or memory). |
+| `src/demo.js` | Demos: `DemoRecorder` (start + every `DOOM_TIC` call), `DemoPlayer`, `demoProblem`. Recording, playback and the buttons are wired in `main.js`. |
 | `src/menu.js` | The title loop (`D_DoAdvanceDemo`) and the menus (`m_menu.c`): `Menu` (menus, cursor, messages, sliders; actions are callbacks) and `TitleLoop`. |
 | `src/cheats.js` | `cht_CheckCheat`: readers for fixed cheats, IDCLEV/IDMUS digits, `clevMap`, `idmusMap`. |
 | `src/audio.js` / `src/music.js` | Sound effects from `SOUND_EVENTS`, positioned like `S_AdjustSoundParams`; MUS/MIDI music on an OPL2-style FM synthesiser with the WAD's `GENMIDI`. |
@@ -71,6 +72,11 @@ Per tic, `DOOM_TIC` runs:
   physics (`Z_RANGE`).
 - `LIGHTS_THINK` every other tic.
 - The countdowns: damage and bonus flashes, messages, power-ups.
+
+**Determinism.** Every chance goes through `P_RANDOM()`, a linear congruential generator over
+`GAME.RNG`. `loadMap` restarts `thing_seq` at 1. So the same map, skill, seed and `DOOM_TIC`
+calls always give the same game, which is what demos rely on. Never call `RAND()` in the game
+SQL, and never let a tic depend on wall-clock time or on the frame rate except through `tics`.
 
 Sounds are rows: `PLAY_SOUND` inserts into `SOUND_EVENTS`, and the page plays whatever is newer
 than the last id it saw. Exits set `game.exit_kind` (1 normal, 2 secret, 3 restart after death).
@@ -158,6 +164,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `finale-test.mjs` | Every text screen and ending, the cast call, the bunny scroll, the id-WAD layouts and the fallback text. |
 | `intermission-test.mjs` | Pars, counting and sounds, skipping, the after-stats flow, the episode-map animations, the secret routes. |
 | `savegame-test.mjs` | Plays, saves (through JSON), plays on, loads: every saved row comes back exactly; new ids don't collide; the game runs on; other versions are refused. |
+| `demo-test.mjs` | A recorded demo (through JSON) replays into the same game, row for row; a third run too; another seed diverges; `P_RANDOM` is repeatable and even; thing ids repeat across loads. |
 | `menu-test.mjs` | The title loop; menu navigation, remembered cursors, New Game → episode → skill, Nightmare's question, options and sliders, Load/Save, Quit, Read This!, coordinates, and every graphic present in both WADs. |
 | `compare-renderers.mjs` | BSP and brute-force renderers agree, column by column. |
 | `all-maps.mjs [wad]` | Loads, tics and renders every map, and checks a teleporter on each. |
