@@ -290,8 +290,10 @@ export class Intermission {
       if (this.didSecret) this.onNode(8, ['WISPLAT']);
       if (this.state.pointer && to.episode === from.episode) this.onNode(to.map, ['WIURH0', 'WIURH1']);
     }
-    // WI_drawEL: "Entering" over "<level>" (not after MAP30: the ending comes next)
-    if (!from.doom2 || from.map !== 29) {
+    // WI_drawEL: "Entering" over "<level>" – except where DOOM II's wbs->next is
+    // 30: after MAP30 (the ending comes next) and on the way into MAP31, whose
+    // name stays a surprise
+    if (!from.doom2 || (from.map !== 29 && to.map !== 30)) {
       const entering = this.pic('WIENTER');
       this.centred(entering, 2);
       this.centred(this.levelName(to), 2 + Math.floor(((this.levelName(to)?.h ?? 0) * 5) / 4));

@@ -245,7 +245,9 @@ animations, three frames 11 tics apart from a random start. On episode 2, the pa
 you're entering lights up and stays lit, restarting when "Entering" comes up. Freedoom's episode
 pictures aren't maps, so it ships the splat, pointer and animation patches as empty 1×1
 placeholders, and only "Entering" shows. Load id's `doom.wad` and they all appear. DOOM II says "Entering" for ten tics
-and moves on, except after MAP30. Then comes any text screen, then the next level. As in vanilla,
+and moves on. It skips this after MAP30, and on the way into MAP31, whose name stays a surprise, both
+where vanilla's `wbs->next` is 30. The secret levels get their own names (`CWILV30`, `CWILV31`)
+and pars (2:00 and 0:30), and their exits back to MAP16 announce it. Then comes any text screen, then the next level. As in vanilla,
 E?M8 skips the stats and goes straight to the episode's ending. `npm run test:intermission`
 checks the counting, the sounds, the skipping and the par table.
 

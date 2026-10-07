@@ -102,6 +102,32 @@ assert(s3.done, '…for ten tics, then on');
     `drawn on the map, under the stats: ${calls.slice(0, 3).join(' ')} … ${calls[10]}`);
 }
 
+// DOOM II's secret levels: their names, pars and "Entering" (none on the way into MAP31)
+{
+  const shown = (from, to) => {
+    const calls = [];
+    const stub = { pictureByName: (n) => ({ name: n, w: 10, h: 10, left: 0, top: 0 }), patch: (p) => calls.push(p?.name), present() {}, sfb: new Uint8Array(64000) };
+    const wi = new Intermission(stub, { playMusic() {}, playEvents() {} }, { lump: () => null }, from, to, stats);
+    wi.draw();
+    const title = calls.find((n) => n?.startsWith('CWILV'));
+    wi.tick(true);
+    wi.tick(true);   // (DOOM II: straight from the stats to "Entering")
+    calls.length = 0;
+    wi.draw();
+    const entering = calls.includes('WIENTER') ? calls.find((n) => n?.startsWith('CWILV')) : null;
+    return `${title} par ${wi.state.final.par} → ${entering ?? 'no Entering'}`;
+  };
+  const routes = [
+    ['MAP15', 'MAP31', 'CWILV14 par 210 → no Entering'],
+    ['MAP31', 'MAP32', 'CWILV30 par 120 → CWILV31'],
+    ['MAP31', 'MAP16', 'CWILV30 par 120 → CWILV15'],
+    ['MAP32', 'MAP16', 'CWILV31 par 30 → CWILV15'],
+    ['MAP30', 'MAP01', 'CWILV29 par 180 → no Entering'],
+  ];
+  const wrong = routes.filter(([f, t, want]) => shown(f, t) !== want).map(([f, t, want]) => `${f}→${t}: ${shown(f, t)} ≠ ${want}`);
+  assert(wrong.length === 0, `the secret levels' intermissions (${routes.length} routes${wrong.length ? `; ${wrong.join('; ')}` : ''})`);
+}
+
 // the screens draw from each WAD's own graphics
 for (const [file, from, to] of [['freedoom1.wad', 'E1M3', 'E1M4'], ['freedoom2.wad', 'MAP07', 'MAP08']]) {
   const p = path.join(root, 'public/wads', file);
