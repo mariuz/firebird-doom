@@ -3,8 +3,13 @@
 // Firebird decides *what* is visible: which wall slice lands in which screen
 // column, at what depth, through which clip window (FRAME_WALLS), and which
 // sprite frame faces the camera at what screen rectangle (FRAME_SPRITES).
-// This file only does what a GPU would: texture lookups, colormap lighting,
-// and writing RGBA into a canvas.
+// This file only does what a GPU would: texture lookups and colormap
+// lighting. Like DOOM, it works in palette indices: the view and the 320×200
+// screen hold one byte per pixel, already lit through COLORMAP, and the
+// palette (PLAYPAL, with its pain/pickup/radiation tints) is applied when the
+// screen is presented (present.js).
+
+import { paletteTables } from './present.js';
 
 // DOOM's animated flats and wall textures (p_spec.c animdefs), 8 tics/frame.
 const ANIMS = [
@@ -59,16 +64,15 @@ class Visplanes {
   }
 }
 
-
 // r_draw.c's fuzzoffset[]: one row up (-1) or down (+1), 50 pixels long
 const FUZZ_OFFSETS = [
   1, -1, 1, -1, 1, 1, -1, 1, 1, -1, 1, 1, 1, -1, 1, 1, 1, -1, -1, -1, -1, 1, -1, -1, 1,
   1, 1, 1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, -1, -1, -1, 1, 1, 1, 1, -1, 1, 1, -1, 1,
 ];
+const FUZZ_MAP = 6 * 256;   // COLORMAP 6: what fuzz darkens through
+
 export class Renderer {
-  constructor(canvas, wad, res) {
-    this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false });
+  constructor(wad, res) {
     this.wad = wad;
     this.res = res;
     this.textures = new Map();
@@ -76,46 +80,26 @@ export class Renderer {
     this.pictures = new Map();
     this.texAnim = buildAnim(res.texDefs.map((d) => d.name));
     this.flatAnim = buildAnim(res.flats.map((l) => l.name));
-
-    // RGBA for every (palette, colormap, index): 14 × 34 × 256 entries.
-    const pal = wad.data(wad.lump('PLAYPAL'));
-    const cmap = wad.colormap();
-    const npal = Math.min(14, Math.floor(pal.length / 768));
-    this.lut = new Uint32Array(npal * 34 * 256);
-    for (let p = 0; p < npal; p++) {
-      for (let c = 0; c < 34; c++) {
-        for (let i = 0; i < 256; i++) {
-          const ci = cmap[c * 256 + i];
-          const o = p * 768 + ci * 3;
-          this.lut[(p * 34 + c) * 256 + i] = 0xff000000 | (pal[o + 2] << 16) | (pal[o + 1] << 8) | pal[o];
-        }
-      }
-    }
-    // …and back: which palette index is this framebuffer colour? (fuzz
-    // darkens what's already on screen through COLORMAP 6)
-    this.unlut = [];
-    for (let p = 0; p < npal; p++) {
-      const m = new Map();
-      for (let i = 0; i < 256; i++) {
-        const o = p * 768 + i * 3;
-        const rgba = (0xff000000 | (pal[o + 2] << 16) | (pal[o + 1] << 8) | pal[o]) >>> 0;
-        if (!m.has(rgba)) m.set(rgba, i);
-      }
-      this.unlut.push(m);
-    }
+    // COLORMAP: 34 rows of 256 – light levels 0–31, 32 the invulnerability greys
+    this.cmap = wad.colormap();
+    this.palettes = paletteTables(wad.data(wad.lump('PLAYPAL')));
+    this.presenter = null;
     this.fuzzPos = 0;
+    this.screen = new Uint8Array(320 * 200);
     this.setSize(320, 168);
+  }
+
+  /** Where present() sends the screen; it gets this WAD's palettes. */
+  attach(presenter) {
+    this.presenter = presenter;
+    presenter?.setPalettes(this.palettes);
   }
 
   setSize(w, h) {
     this.w = w;
     this.h = h;
-    this.canvas.width = 320;
-    this.canvas.height = 200;
-    this.view = new ImageData(w, h);
-    this.fb = new Uint32Array(this.view.data.buffer);
-    this.screen = new ImageData(320, 200);
-    this.sfb = new Uint32Array(this.screen.data.buffer);
+    this.fb = new Uint8Array(w * h);
+    this.sfb = this.screen;
     this.proj = w / 2; // 90° horizontal field of view
     this.spanStart = new Int32Array(h);
     this.projy = 160; // vertical scale of a 320-wide screen, whatever the detail
@@ -165,7 +149,7 @@ export class Renderer {
 
   /**
    * Draw one frame.
-   *   view:    { x, y, z, angle, tic, palette }
+   *   view:    { x, y, z, angle, tic, fixedColormap }
    *   walls:   FRAME_WALLS rows [col, depth, u, line, backView, openTop, openBot, clipTop, clipBot,
    *                               fsec, cTop, cBot, fTop, fBot]  (the last four: visplane rows)
    *   sprites: FRAME_SPRITES rows [id, depth, lump, flip, x1, x2, y1, y2, light, fuzz]
@@ -179,10 +163,9 @@ export class Renderer {
     const hh = h / 2;
     const hw = w / 2;
     const vz = view.z;
-    const palBase = view.palette * 34 * 256;
     const tic = view.tic;
     const sky = this.texture(map.skyTex);
-    fb.fill(0xff000000);
+    fb.fill(0);
 
     const masked = [];
     const planes = new Visplanes(w);
@@ -223,7 +206,7 @@ export class Renderer {
         const tex = this.texture(this.anim(S.mid, this.texAnim, tic));
         if (tex) {
           const top = L.flags & 16 ? fs.floor + tex.h : fs.ceil;
-          this.wallColumn(col, cEnd, fStart, tex, tu, top + S.yoff, depth, scale, vz, light, palBase);
+          this.wallColumn(col, cEnd, fStart, tex, tu, top + S.yoff, depth, scale, vz, light);
         }
       } else {
         const bc = fs.sky && bs.sky ? fs.ceil : bs.ceil;
@@ -234,7 +217,7 @@ export class Renderer {
           if (tex) {
             const top = L.flags & 8 ? fs.ceil : bc + tex.h;
             const end = Math.min(fStart, Math.max(cEnd, Math.ceil(ybc)));
-            this.wallColumn(col, cEnd, end, tex, tu, top + S.yoff, depth, scale, vz, light, palBase);
+            this.wallColumn(col, cEnd, end, tex, tu, top + S.yoff, depth, scale, vz, light);
           }
         }
         if (bs.floor > fs.floor && S.lower) {
@@ -242,7 +225,7 @@ export class Renderer {
           if (tex) {
             const top = L.flags & 16 ? fs.ceil : bs.floor;
             const start = Math.max(cEnd, Math.min(fStart, Math.ceil(ybf)));
-            this.wallColumn(col, start, fStart, tex, tu, top + S.yoff, depth, scale, vz, light, palBase);
+            this.wallColumn(col, start, fStart, tex, tu, top + S.yoff, depth, scale, vz, light);
           }
         }
         if (S.mid) {
@@ -266,12 +249,12 @@ export class Renderer {
       if (p.sky) {
         for (let x = p.minx; x <= p.maxx; x++) {
           if (p.top[x] <= p.bottom[x]) {
-            this.skyColumn(x, p.top[x], p.bottom[x] + 1, view.angle - Math.atan((x + 0.5 - hw) / proj), sky, palBase);
+            this.skyColumn(x, p.top[x], p.bottom[x] + 1, view.angle - Math.atan((x + 0.5 - hw) / proj), sky);
           }
         }
       } else {
         const flat = this.flat(this.anim(p.flat, this.flatAnim, tic));
-        if (flat) this.makeSpans(p, flat, view, palBase);
+        if (flat) this.makeSpans(p, flat, view);
       }
     }
 
@@ -281,9 +264,9 @@ export class Renderer {
     items.sort((a, b) => b.depth - a.depth);
     for (const it of items) {
       if (it.kind === 0) {
-        this.wallColumn(it.col, it.y0, it.y1, it.tex, it.tu, it.top, it.depth, it.scale, vz, it.light, palBase, true);
+        this.wallColumn(it.col, it.y0, it.y1, it.tex, it.tu, it.top, it.depth, it.scale, vz, it.light, true);
       } else {
-        this.spriteDraw(it, walls, colStart, palBase);
+        this.spriteDraw(it, walls, colStart);
       }
     }
   }
@@ -296,11 +279,11 @@ export class Renderer {
     return Math.max(0, Math.min(31, start - Math.min(24, Math.floor(1280 / depth))));
   }
 
-  wallColumn(col, y0, y1, tex, u, top, depth, scale, vz, light, palBase, masked = false) {
+  wallColumn(col, y0, y1, tex, u, top, depth, scale, vz, light, masked = false) {
     if (y0 >= y1) return;
-    const { fb, w, h } = this;
+    const { fb, w, h, cmap } = this;
     const hh = h / 2;
-    const cm = palBase + this.lightIndex(light, depth) * 256;
+    const cm = this.lightIndex(light, depth) * 256;
     let tx = Math.floor(u) % tex.w;
     if (tx < 0) tx += tex.w;
     const colOff = tx * tex.h;
@@ -314,7 +297,7 @@ export class Renderer {
         ty %= tex.h;
         if (ty < 0) ty += tex.h;
       }
-      fb[y * w + col] = this.lut[cm + tex.pix[colOff + ty]];
+      fb[y * w + col] = cmap[cm + tex.pix[colOff + ty]];
     }
   }
 
@@ -322,7 +305,7 @@ export class Renderer {
    * R_MakeSpans: sweep the plane's columns left to right. Rows whose span
    * ends at this column are drawn; rows that begin here are remembered.
    */
-  makeSpans(p, flat, view, palBase) {
+  makeSpans(p, flat, view) {
     const { top, bottom, minx, maxx } = p;
     const start = this.spanStart;
     const T = (x) => (x < minx || x > maxx ? 0x7fff : top[x]);
@@ -332,8 +315,8 @@ export class Renderer {
       let b1 = B(x - 1);
       let t2 = T(x);
       let b2 = B(x);
-      while (t1 < t2 && t1 <= b1) { this.mapPlane(p, flat, t1, start[t1], x - 1, view, palBase); t1++; }
-      while (b1 > b2 && b1 >= t1) { this.mapPlane(p, flat, b1, start[b1], x - 1, view, palBase); b1--; }
+      while (t1 < t2 && t1 <= b1) { this.mapPlane(p, flat, t1, start[t1], x - 1, view); t1++; }
+      while (b1 > b2 && b1 >= t1) { this.mapPlane(p, flat, b1, start[b1], x - 1, view); b1--; }
       while (t2 < t1 && t2 <= b2) { start[t2] = x; t2++; }
       while (b2 > b1 && b2 >= t2) { start[b2] = x; b2--; }
     }
@@ -344,8 +327,8 @@ export class Renderer {
    * at the same distance, so distance and light are computed once per span
    * and the texture coordinates just step along the row.
    */
-  mapPlane(p, flat, y, x1, x2, view, palBase) {
-    const { fb, w, h, proj, projy } = this;
+  mapPlane(p, flat, y, x1, x2, view) {
+    const { fb, w, h, proj, projy, cmap } = this;
     const hh = h / 2;
     const dy = p.floor ? y + 0.5 - hh : hh - y - 0.5;
     const height = p.floor ? view.z - p.height : p.height - view.z;
@@ -359,39 +342,37 @@ export class Renderer {
     const sx = (dist * sa) / proj;
     const sy = (-dist * ca) / proj;
     const start = (15 - Math.min(15, Math.max(0, p.light >> 4))) * 4;
-    const cm = palBase + (this.fixedCm ?? Math.max(0, Math.min(31, start - Math.floor(1280 / (dist + 16))))) * 256;
-    const lut = this.lut;
+    const cm = (this.fixedCm ?? Math.max(0, Math.min(31, start - Math.floor(1280 / (dist + 16))))) * 256;
     let o = y * w + x1;
     for (let x = x1; x <= x2; x++) {
-      fb[o++] = lut[cm + flat[((Math.floor(-wy) & 63) << 6) | (Math.floor(wx) & 63)]];
+      fb[o++] = cmap[cm + flat[((Math.floor(-wy) & 63) << 6) | (Math.floor(wx) & 63)]];
       wx += sx;
       wy += sy;
     }
   }
 
-  skyColumn(col, y0, y1, angle, sky, palBase) {
+  skyColumn(col, y0, y1, angle, sky) {
     if (!sky || y0 >= y1) return;
-    const { fb, w, h } = this;
+    const { fb, w, h, cmap } = this;
     let tx = Math.floor((angle * 1024) / (2 * Math.PI)) % sky.w;
     if (tx < 0) tx += sky.w;
     const off = tx * sky.h;
-    // R_DrawSky: texturemid 100 at the view's centre line, one texel per row
+    // R_DrawSky: texturemid 100 at the view's centre line, one texel per row,
+    // always COLORMAP 0 (full bright, untouched by invulnerability)
     for (let y = y0; y < y1; y++) {
       let ty = Math.floor(100 + y + 0.5 - h / 2) % sky.h;
       if (ty < 0) ty += sky.h;
-      fb[y * w + col] = this.lut[palBase + sky.pix[off + ty]];
+      fb[y * w + col] = cmap[sky.pix[off + ty]];
     }
   }
 
-  spriteDraw(s, walls, colStart, palBase) {
+  spriteDraw(s, walls, colStart) {
     const pic = this.picture(s.lump);
-    const { fb, w, h } = this;
+    const { fb, w, h, cmap } = this;
     // R_DrawFuzzColumn: a shadow's pixels aren't its own – each one takes the
     // pixel just above or below it (FUZZTABLE) and darkens it (COLORMAP 6)
     const fuzz = s.fuzz === 1;
-    const unlut = this.unlut[palBase / (34 * 256)];
-    const dark = palBase + 6 * 256;
-    const cm = palBase + (s.light >= 255 ? (this.fixedCm ?? 0) : this.lightIndex(s.light, s.depth)) * 256;
+    const cm = (s.light >= 255 ? (this.fixedCm ?? 0) : this.lightIndex(s.light, s.depth)) * 256;
     const xa = Math.max(0, Math.ceil(s.x1 - 0.5));
     const xb = Math.min(w - 1, Math.ceil(s.x2 - 0.5) - 1);
     const sx = pic.w / (s.x2 - s.x1);
@@ -416,21 +397,21 @@ export class Renderer {
         const py = Math.floor((y + 0.5 - s.y1) * sy);
         if (py < 0 || py >= pic.h || !pic.alpha[off + py]) continue;
         if (fuzz) {
-          const sy = Math.min(h - 1, Math.max(0, y + FUZZ_OFFSETS[this.fuzzPos]));
+          const fy = Math.min(h - 1, Math.max(0, y + FUZZ_OFFSETS[this.fuzzPos]));
           this.fuzzPos = (this.fuzzPos + 1) % FUZZ_OFFSETS.length;
-          fb[y * w + x] = this.lut[dark + (unlut.get(fb[sy * w + x]) ?? 0)];
-        } else fb[y * w + x] = this.lut[cm + pic.pix[off + py]];
+          fb[y * w + x] = cmap[FUZZ_MAP + fb[fy * w + x]];
+        } else fb[y * w + x] = cmap[cm + pic.pix[off + py]];
       }
     }
   }
 
-  /** Draw a patch onto the 320×200 screen buffer (status bar, weapon, text). */
-  patch(pic, x, y, palBase = 0, cmap = 0, scaleW = 1) {
+  /** Draw a patch onto the 320×200 screen (status bar, weapon, text), through colormap `light`. */
+  patch(pic, x, y, light = 0) {
     if (!pic) return;
-    const { sfb } = this;
+    const { sfb, cmap } = this;
     const x0 = x - pic.left;
     const y0 = y - pic.top;
-    const base = palBase + cmap * 256;
+    const base = light * 256;
     for (let px = 0; px < pic.w; px++) {
       const sx = x0 + px;
       if (sx < 0 || sx >= 320) continue;
@@ -438,19 +419,17 @@ export class Renderer {
       for (let py = 0; py < pic.h; py++) {
         const sy = y0 + py;
         if (sy < 0 || sy >= 200 || !pic.alpha[off + py]) continue;
-        sfb[sy * 320 + sx] = this.lut[base + pic.pix[off + py]];
+        sfb[sy * 320 + sx] = cmap[base + pic.pix[off + py]];
       }
     }
   }
 
   /** A patch drawn as fuzz (R_DrawFuzzColumn) over the 3D view: the weapon while invisible. */
-  patchFuzz(pic, x, y, palBase = 0) {
+  patchFuzz(pic, x, y) {
     if (!pic) return;
-    const { sfb } = this;
+    const { sfb, cmap } = this;
     const x0 = x - pic.left;
     const y0 = y - pic.top;
-    const unlut = this.unlut[palBase / (34 * 256)];
-    const dark = palBase + 6 * 256;
     for (let px = 0; px < pic.w; px++) {
       const sx = x0 + px;
       if (sx < 0 || sx >= 320) continue;
@@ -460,7 +439,7 @@ export class Renderer {
         if (sy < 0 || sy >= 168 || !pic.alpha[off + py]) continue;
         const fy = Math.min(167, Math.max(0, sy + FUZZ_OFFSETS[this.fuzzPos]));
         this.fuzzPos = (this.fuzzPos + 1) % FUZZ_OFFSETS.length;
-        sfb[sy * 320 + sx] = this.lut[dark + (unlut.get(sfb[fy * 320 + sx]) ?? 0)];
+        sfb[sy * 320 + sx] = cmap[FUZZ_MAP + sfb[fy * 320 + sx]];
       }
     }
   }
@@ -475,7 +454,49 @@ export class Renderer {
     }
   }
 
-  present() {
-    this.ctx.putImageData(this.screen, 0, 0);
+  /** Darken the view area through a COLORMAP row (the automap's backdrop). */
+  dim(level) {
+    const { sfb, cmap } = this;
+    const base = level * 256;
+    for (let i = 0; i < 320 * 168; i++) sfb[i] = cmap[base + sfb[i]];
+  }
+
+  /** A line in palette colour `color` across the view area (AM_drawMline), clipped to it. */
+  line(x0, y0, x1, y1, color) {
+    const { sfb } = this;
+    // Liang–Barsky against 0..319 × 0..167, then a DDA
+    let t0 = 0;
+    let t1 = 1;
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    for (const [p, q] of [[-dx, x0], [dx, 319 - x0], [-dy, y0], [dy, 167 - y0]]) {
+      if (p === 0) { if (q < 0) return; continue; }
+      const r = q / p;
+      if (p < 0) { if (r > t1) return; if (r > t0) t0 = r; } else { if (r < t0) return; if (r < t1) t1 = r; }
+    }
+    const ax = x0 + t0 * dx;
+    const ay = y0 + t0 * dy;
+    const bx = x0 + t1 * dx;
+    const by = y0 + t1 * dy;
+    const n = Math.max(1, Math.ceil(Math.max(Math.abs(bx - ax), Math.abs(by - ay))));
+    for (let i = 0; i <= n; i++) {
+      const x = Math.round(ax + ((bx - ax) * i) / n);
+      const y = Math.round(ay + ((by - ay) * i) / n);
+      if (x >= 0 && x < 320 && y >= 0 && y < 168) sfb[y * 320 + x] = color;
+    }
+  }
+
+  /** I_SetPalette + I_FinishUpdate: the presenter turns the screen into colours. */
+  present(palette = 0) {
+    this.presenter?.present(this.sfb, palette);
+  }
+
+  /** The screen as RGBA words through one palette (screenshots, tests). */
+  toRGBA(palette = 0) {
+    const { words, npal } = this.palettes;
+    const base = Math.min(palette, npal - 1) * 256;
+    const out = new Uint32Array(320 * 200);
+    for (let i = 0; i < out.length; i++) out[i] = words[base + this.sfb[i]];
+    return out;
   }
 }

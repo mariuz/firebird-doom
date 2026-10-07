@@ -4,8 +4,8 @@
 //   node scripts/screenshot.mjs            → docs/screenshot-*.png
 //
 // Same code path as the browser: DOOM_TIC, FRAME_WALLS, FRAME_SPRITES,
-// FRAME_SECTORS, then src/renderer.js and src/hud.js into a 320×200 buffer,
-// scaled to 640×480 (DOOM's 4:3 aspect).
+// FRAME_SECTORS, then src/renderer.js and src/hud.js into a 320×200 buffer of
+// palette indices, coloured through PLAYPAL and scaled to 640×480 (DOOM's 4:3).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,16 +19,6 @@ import { drawStatusBar, drawWeapon } from '../src/hud.js';
 import { Finale } from '../src/finale.js';
 import { THING_TYPES } from '../src/thinginfo.js';
 
-// the two browser APIs the renderer touches
-globalThis.ImageData ??= class {
-  constructor(w, h) {
-    this.width = w;
-    this.height = h;
-    this.data = new Uint8ClampedArray(w * h * 4);
-  }
-};
-const canvas = { width: 320, height: 200, getContext: () => ({ putImageData() {} }) };
-
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = path.join(root, 'docs');
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -36,7 +26,7 @@ const db = new FirebirdBrowser('memory://shot', { transport: new DirectTransport
 await createSchema(db, sql);
 const wad = new Wad(fs.readFileSync(process.env.WAD ?? path.join(root, 'public/wads/freedoom1.wad')));
 const res = await loadResources(db, wad);
-const renderer = new Renderer(canvas, wad, res);
+let renderer = new Renderer(wad, res);   // (no presenter: the PNGs come from toRGBA)
 const arr = { rowMode: 'array' };
 
 async function mapState(name) {
@@ -62,7 +52,7 @@ async function shoot(map, file) {
   drawWeapon(renderer, hud, 0);
   drawStatusBar(renderer, hud, 0);
   fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(path.join(outDir, file), png(renderer.sfb, 320, 200, 640, 480));
+  fs.writeFileSync(path.join(outDir, file), png(renderer.toRGBA(0), 320, 200, 640, 480));
   console.log(`docs/${file}  (${walls.length} wall slices, ${sprites.length} sprites)`);
 }
 
@@ -183,9 +173,7 @@ const wad2Path = path.join(root, 'public/wads/freedoom2.wad');
 if (!process.env.WAD && fs.existsSync(wad2Path)) {
   const wad2 = new Wad(fs.readFileSync(wad2Path));
   const res2 = await loadResources(db, wad2);
-  const r2 = new Renderer(canvas, wad2, res2);
-  Object.assign(renderer, { wad: wad2, res: res2, textures: r2.textures, flats: r2.flats, pictures: r2.pictures,
-    texAnim: r2.texAnim, flatAnim: r2.flatAnim, lut: r2.lut, unlut: r2.unlut });
+  renderer = new Renderer(wad2, res2);
   const mapState2 = async (name) => {
     const m = await mapState(name);
     m.skyTex = res2.texId.get(Number(name.slice(3)) < 12 ? 'SKY1' : Number(name.slice(3)) < 21 ? 'SKY2' : 'SKY3') ?? 0;
@@ -205,7 +193,7 @@ if (!process.env.WAD && fs.existsSync(wad2Path)) {
   const fin = new Finale(renderer, { playMusic() {}, playEvents() {} }, wad2, THING_TYPES);
   const save = (file) => {
     fin.draw();
-    fs.writeFileSync(path.join(outDir, file), png(renderer.sfb, 320, 200, 640, 480));
+    fs.writeFileSync(path.join(outDir, file), png(renderer.toRGBA(0), 320, 200, 640, 480));
     console.log(`docs/${file}`);
   };
   for (let i = 0; i < 10 + fin.state.text.length * 3; i++) fin.tick(false);

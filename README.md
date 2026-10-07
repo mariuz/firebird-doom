@@ -62,6 +62,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `R_RenderBSPNode`, `R_CheckBBox`, `R_ClipSolidWallSegment` (solidsegs) | `RENDER_SLICES_BSP` ([sql/render.sql](sql/render.sql)) |
 | `r_segs.c` clip arrays, `markceiling` / `markfloor` | `RENDER_WALLS` / `FRAME_WALLS` (or `FRAME_WALLS_WINDOWED`) |
 | `r_plane.c` visplanes: `R_FindPlane`, `R_CheckPlane`, `R_MakeSpans`, `R_MapPlane` | `c_top`/`c_bot`/`f_top`/`f_bot` per slice, `FRAME_VISPLANES`; spans in [src/renderer.js](src/renderer.js) |
+| `I_SetPalette` / `I_FinishUpdate`: palette indices to colours | [src/present.js](src/present.js): WebGL palette shader, Canvas 2D fallback |
 | `r_things.c`, `R_DrawFuzzColumn` (`MF_SHADOW`) | `RENDER_SPRITES` / `FRAME_SPRITES` (its `fuzz` column); fuzz in [src/renderer.js](src/renderer.js) |
 | `S_StartSound` (+ `sfxinfo` sounds per monster) | `PLAY_SOUND` / `SECTOR_SOUND` → `SOUND_EVENTS`; played by [src/audio.js](src/audio.js) |
 | `I_PlaySong` with the OPL `GENMIDI` bank | [src/music.js](src/music.js): MUS + MIDI parser, FM synthesiser |
@@ -133,15 +134,38 @@ linearly. `SELECT * FROM frame_visplanes` shows the current frame's planes in th
 and the stats line under the view counts them. Across Freedoom's maps the busiest frame
 needs 42, comfortably under vanilla DOOM's `MAXVISPLANES` of 128.
 
+### Presenting: palette indices, a WebGL shader, or Canvas 2D
+
+Like DOOM, the rasteriser works in palette indices. The 3D view and the 320×200 screen hold one
+byte per pixel, already lit through `COLORMAP`: light levels, the invulnerability greys and
+spectre fuzz. Which of the 14 `PLAYPAL` palettes colours them (normal, pain red, pickup gold,
+radiation-suit green) is decided once per frame, when the screen is presented (`I_SetPalette`,
+[src/present.js](src/present.js)):
+
+- **WebGL (palette shader):** the screen is uploaded as a 320×200 `LUMINANCE` texture. A
+  fragment shader looks each index up in a 256×14 texture holding every palette, drawing at
+  the canvas's real display size.
+- **Canvas 2D:** a palette loop into an `ImageData` and `putImageData`. It's used when chosen,
+  or when WebGL can't be had.
+
+**Display** in the settings picks one. A canvas keeps the kind of context it first gave out,
+so switching swaps in a fresh canvas element. **Smooth upscaling** blends neighbouring pixels.
+With WebGL that's bilinear filtering inside the shader on the colours, never on the indices,
+since blending palette numbers would give nonsense colours. With Canvas 2D it's the browser's
+own image smoothing. Off, every pixel stays a crisp 4:3 block. The automap draws into the
+screen in DOOM's own palette colours (`am_map.c`'s `REDS`, `BROWNS`, `YELLOWS`, `GRAYS`,
+`GREENS`, `WHITE`), over the view darkened through `COLORMAP` 24. Screenshots and tests read
+the screen through `toRGBA`.
+
 ### Spectres: fuzz
 
 The spectre (`MF_SHADOW`, the `shadow` flag in `THING_TYPES`) comes out of `FRAME_SPRITES` with
 `fuzz = 1`, and the rasteriser draws it with `R_DrawFuzzColumn`. None of the sprite's own colours
 reach the screen. Each opaque pixel copies the pixel one row above or below it, chosen by DOOM's
 50-entry `fuzzoffset` table, and darkens it through `COLORMAP` 6. The table position carries
-from pixel to pixel and from frame to frame, so the outline ripples as you watch. The
-framebuffer holds RGBA, so a reverse palette lookup turns each pixel back into its palette index
-before darkening. In a dim room a spectre is as hard to see as in DOOM.
+from pixel to pixel and from frame to frame, so the outline ripples as you watch. The screen
+holds palette indices, as DOOM's did, so darkening is a single `COLORMAP` lookup. In a dim room a
+spectre is as hard to see as in DOOM.
 
 The partial invisibility sphere uses the same fuzz. Picking it up gives 60 seconds
 (`INVISTICS`, 2100 tics in `PLAYER.INVIS_TICS`, cleared at the end of a level). Your weapon is
@@ -351,9 +375,9 @@ arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd>
 <kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>7</kbd> pick weapons (fist, pistol, shotgun, chaingun, rocket
 launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggles the chainsaw and
 <kbd>3</kbd> again the super shotgun. <kbd>Tab</kbd> shows the
-automap (type IDDT on it to reveal everything), and <kbd>P</kbd> pauses. Under the view you can set **Detail** (320 or 160 columns) and
-**Renderer** (BSP + solidsegs, or brute force), plus **Audio** on/off (<kbd>M</kbd>) and **Sound**
-and **Music** volume. These settings
+automap (type IDDT on it to reveal everything), and <kbd>P</kbd> pauses. Under the view you can set **Detail** (320 or 160 columns),
+**Renderer** (BSP + solidsegs, or brute force), **Display** (WebGL palette shader or Canvas 2D),
+**Smooth upscaling**, **Audio** on/off (<kbd>M</kbd>), and **Sound** and **Music** volume. These settings
 are remembered in your browser. The SQL console under the game queries the live game
 database. Try the `IDKFA` button.
 

@@ -8,14 +8,16 @@
 // IDDT (am_cheating 1 or 2) shows every line, ML_DONTDRAW ones included,
 // with flat two-sided openings in grey; level 2 also draws the things.
 
+// palette indices, as am_map.c defines them
 export const AM_COLORS = {
-  wall: '#fc0000',      // WALLCOLORS: one-sided, or secret
-  teleport: '#a40000',  // WALLCOLORS + WALLRANGE/2: a teleporter line (39)
-  floor: '#bc7844',     // FDWALLCOLORS: a floor height change
-  ceil: '#fcfc00',      // CDWALLCOLORS: a ceiling height change
-  unseen: '#8b8b8b',    // GRAYS + 3: not seen yet, shown by the computer map
-  twoSided: '#6f6f6f',  // TSWALLCOLORS: a flat opening, only with IDDT
-  thing: '#74fc6c',     // THINGCOLORS: things, with IDDT twice
+  wall: 176,        // WALLCOLORS (REDS): one-sided, or secret
+  teleport: 184,    // WALLCOLORS + WALLRANGE/2: a teleporter line (39)
+  floor: 64,        // FDWALLCOLORS (BROWNS): a floor height change
+  ceil: 231,        // CDWALLCOLORS (YELLOWS): a ceiling height change
+  unseen: 99,       // GRAYS + 3: not seen yet, shown by the computer map
+  twoSided: 96,     // TSWALLCOLORS (GRAYS): a flat opening, only with IDDT
+  thing: 112,       // THINGCOLORS (GREENS): things, with IDDT twice
+  player: 209,      // YOURCOLORS (WHITE): your arrow
 };
 
 const ML_SECRET = 32;
@@ -29,7 +31,7 @@ const ML_MAPPED = 256;
  * @param seen   the renderer has drawn this line
  * @param allmap the player carries the computer area map
  * @param cheating IDDT level: 0 off, 1 all lines, 2 all lines and things
- * @returns a CSS colour, or null to leave the line out
+ * @returns a palette index, or null to leave the line out
  */
 export function automapColor(line, front, back, seen, allmap, cheating = 0) {
   if (cheating || seen || line.flags & ML_MAPPED) {

@@ -19,9 +19,10 @@ import { nextMap } from './progress.js';
 import { Finale } from './finale.js';
 import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
+import { createPresenter } from './present.js';
 
 const $ = (id) => document.getElementById(id);
-const canvas = $('screen');
+let canvas = $('screen');   // replaced by a fresh element when the display kind changes
 const statusEl = $('status');
 const statsEl = $('stats');
 
@@ -31,6 +32,7 @@ let db;
 let wad;
 let res;
 let renderer;
+let presenter = null; // WebGL (palette shader) or Canvas 2D: present.js
 let map = null;      // { name, lines, sides, sectors, skyTex, linedefs }
 let hud = null;      // last DOOM_TIC row
 let sidesRev = -1;
@@ -38,7 +40,7 @@ let running = false;
 let paused = false;
 let lastTic = 0;
 // settings, remembered per browser
-const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50 };
+const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, display: 'webgl', smooth: false };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('firebird-doom:settings') || '{}'));
 } catch { /* storage unavailable: defaults */ }
@@ -120,13 +122,18 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 window.addEventListener('blur', () => keys.clear());
-canvas.addEventListener('click', () => {
-  // (some embedded browsers refuse pointer lock; the keyboard still works)
-  if (running && document.pointerLockElement !== canvas) canvas.requestPointerLock?.()?.catch?.(() => {});
-});
-canvas.addEventListener('mousedown', (e) => {
-  if (document.pointerLockElement === canvas && e.button === 0) fireClick = true;
-});
+function bindCanvas(c) {
+  c.addEventListener('click', () => {
+    // (some embedded browsers refuse pointer lock; the keyboard still works)
+    if (running && document.pointerLockElement !== c) c.requestPointerLock?.()?.catch?.(() => {});
+  });
+  c.addEventListener('mousedown', (e) => {
+    if (document.pointerLockElement === c && e.button === 0) fireClick = true;
+  });
+  c.addEventListener('touchstart', touchStart, { passive: false });
+  c.addEventListener('touchmove', touchMove, { passive: false });
+  c.addEventListener('touchend', touchEnd, { passive: false });
+}
 window.addEventListener('mouseup', () => { fireClick = false; });
 window.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement === canvas) mouseTurn -= e.movementX * 0.0035;
@@ -134,7 +141,7 @@ window.addEventListener('mousemove', (e) => {
 
 // Touch: left half moves, right half turns, tap on the right fires.
 const touch = { move: null, look: null };
-canvas.addEventListener('touchstart', (e) => {
+function touchStart(e) {
   for (const t of e.changedTouches) {
     const r = canvas.getBoundingClientRect();
     const left = t.clientX - r.left < r.width / 2;
@@ -142,8 +149,8 @@ canvas.addEventListener('touchstart', (e) => {
     if (left) touch.move = rec; else touch.look = rec;
   }
   e.preventDefault();
-}, { passive: false });
-canvas.addEventListener('touchmove', (e) => {
+}
+function touchMove(e) {
   for (const t of e.changedTouches) {
     for (const k of ['move', 'look']) {
       const rec = touch[k];
@@ -155,8 +162,8 @@ canvas.addEventListener('touchmove', (e) => {
     }
   }
   e.preventDefault();
-}, { passive: false });
-canvas.addEventListener('touchend', (e) => {
+}
+function touchEnd(e) {
   for (const t of e.changedTouches) {
     for (const k of ['move', 'look']) {
       const rec = touch[k];
@@ -167,7 +174,27 @@ canvas.addEventListener('touchend', (e) => {
       }
     }
   }
-}, { passive: false });
+}
+bindCanvas(canvas);
+
+/**
+ * Put the chosen presenter on a fresh canvas (a canvas keeps whichever kind of
+ * context it gave out first). WebGL that can't be had falls back to 2D.
+ */
+function applyDisplay() {
+  const fresh = () => {
+    const c = canvas.cloneNode(false);
+    canvas.replaceWith(c);
+    canvas = c;
+    bindCanvas(c);
+    return c;
+  };
+  presenter = createPresenter(fresh(), settings.display);
+  if (!presenter && settings.display !== '2d') presenter = createPresenter(fresh(), '2d');
+  presenter?.setSmooth(settings.smooth);
+  renderer?.attach(presenter);
+  $('display-kind').textContent = presenter?.kind === 'webgl' ? 'WebGL' : presenter ? 'Canvas 2D' : 'none';
+}
 
 function readInput(tics) {
   const k = (c) => keys.has(c);
@@ -331,12 +358,12 @@ async function frame() {
     renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette, fixedColormap },
       walls, sprites, map);
     renderer.composeView();
-    if (!hud.DEAD) drawWeapon(renderer, hud, palette);
-    drawStatusBar(renderer, hud, palette);
-    if (hud.MSG) drawText(renderer, hud.MSG, 2, 2, palette);
-    if (paused) drawText(renderer, 'PAUSED', 136, 80, palette);
-    renderer.present();
+    if (!hud.DEAD) drawWeapon(renderer, hud);
     if (showMap) drawAutomap();
+    drawStatusBar(renderer, hud);
+    if (hud.MSG) drawText(renderer, hud.MSG, 2, 2);
+    if (paused) drawText(renderer, 'PAUSED', 136, 80);
+    renderer.present(palette);
     lastFrame.draw = performance.now() - t;
     updateStats();
   } catch (err) {
@@ -363,21 +390,17 @@ function updateStats() {
   }
   statsEl.textContent =
     `${fps.toFixed(1)} fps · ${settings.renderer === 'bsp' ? 'BSP' : 'brute'} · doom_tic ${lastFrame.tic.toFixed(0)} ms · frame_walls ${lastFrame.walls.toFixed(0)} ms ` +
-    `(${lastFrame.rows} slices, ${renderer.visplaneCount ?? 0} visplanes) · frame_sprites ${lastFrame.sprites.toFixed(0)} ms · raster ${lastFrame.draw.toFixed(0)} ms`;
+    `(${lastFrame.rows} slices, ${renderer.visplaneCount ?? 0} visplanes) · frame_sprites ${lastFrame.sprites.toFixed(0)} ms · raster ${lastFrame.draw.toFixed(0)} ms` +
+    ` · ${presenter?.kind === 'webgl' ? 'WebGL' : '2D'}${settings.smooth ? ' smooth' : ''}`;
 }
 
 function drawAutomap() {
-  const ctx = renderer.ctx;
+  // AM_Drawer, into the 320×200 screen in palette colours; the view behind
+  // stays faintly visible, darkened through COLORMAP 24
   const sc = 0.12;
   const cx = 160;
   const cy = 84;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, 0, 320, 168);
-  ctx.clip();
-  ctx.fillStyle = 'rgba(0,0,0,0.75)';
-  ctx.fillRect(0, 0, 320, 168);
-  ctx.lineWidth = 1;
+  renderer.dim(24);
   const tx = (x) => cx + (x - hud.PX) * sc;
   const ty = (y) => cy - (y - hud.PY) * sc;
   for (const r of map.linedefs) {
@@ -385,37 +408,25 @@ function drawAutomap() {
     const f = map.sectors.get(fsec);
     const b = bs == null || bsec == null ? null : map.sectors.get(bsec);
     const color = automapColor({ flags, special }, f, b, map.seen.has(id), hud.ALLMAP === 1, amCheating);
-    if (!color) continue;
-    ctx.strokeStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(tx(x1), ty(y1));
-    ctx.lineTo(tx(x2), ty(y2));
-    ctx.stroke();
+    if (color == null) continue;
+    renderer.line(tx(x1), ty(y1), tx(x2), ty(y2), color);
   }
+  // a little triangle: the arrow for you, thintriangle_guy for things
+  const tri = (px, py, ang, tip, back, color) => {
+    const p = [[ang, tip], [ang + 2.5, back], [ang - 2.5, back]].map(([d, r]) => [px + Math.cos(d) * r, py - Math.sin(d) * r]);
+    renderer.line(p[0][0], p[0][1], p[1][0], p[1][1], color);
+    renderer.line(p[1][0], p[1][1], p[2][0], p[2][1], color);
+    renderer.line(p[2][0], p[2][1], p[0][0], p[0][1], color);
+  };
   if (map.amThings) {
-    // thintriangle_guy, pointing the way each thing faces
-    ctx.strokeStyle = AM_COLORS.thing;
     for (const [x, y, ang] of map.amThings) {
       const px = tx(x);
       const py = ty(y);
       if (px < -4 || px > 324 || py < -4 || py > 172) continue;
-      ctx.beginPath();
-      ctx.moveTo(px + Math.cos(ang) * 3, py - Math.sin(ang) * 3);
-      ctx.lineTo(px + Math.cos(ang + 2.5) * 2.5, py - Math.sin(ang + 2.5) * 2.5);
-      ctx.lineTo(px + Math.cos(ang - 2.5) * 2.5, py - Math.sin(ang - 2.5) * 2.5);
-      ctx.closePath();
-      ctx.stroke();
+      tri(px, py, ang, 3, 2.5, AM_COLORS.thing);
     }
   }
-  ctx.strokeStyle = '#fff';
-  ctx.beginPath();
-  const a = hud.PANGLE;
-  ctx.moveTo(cx + Math.cos(a) * 6, cy - Math.sin(a) * 6);
-  ctx.lineTo(cx + Math.cos(a + 2.5) * 5, cy - Math.sin(a + 2.5) * 5);
-  ctx.lineTo(cx + Math.cos(a - 2.5) * 5, cy - Math.sin(a - 2.5) * 5);
-  ctx.closePath();
-  ctx.stroke();
-  ctx.restore();
+  tri(cx, cy, hud.PANGLE, 6, 5, AM_COLORS.player);
 }
 
 // ── SQL console ─────────────────────────────────────────────────────────
@@ -486,7 +497,8 @@ async function useWad(buffer, label) {
   setStatus(`Copying ${label} resources into Firebird…`);
   res = await loadResources(db, wad, { width: viewWidth(), height: 168 });
   await setRenderer(db, settings.renderer === 'bsp');
-  renderer = new Renderer(canvas, wad, res);
+  renderer = new Renderer(wad, res);
+  renderer.attach(presenter);
   audio.setWad(wad);
   renderer.setSize(viewWidth(), 168);
   const sel = $('map');
@@ -508,7 +520,7 @@ async function boot() {
   try {
     db = await openDatabase();
     // for the devtools console: await doom.sql('SELECT * FROM player')
-    window.doom = { db, audio, sql: (q, p) => db.query(q, p).then((r) => r.rows) };
+    window.doom = { db, audio, sql: (q, p) => db.query(q, p).then((r) => r.rows), get renderer() { return renderer; }, get presenter() { return presenter; } };
     await loadGame(settings.game);
     nextFrame();
   } catch (err) {
@@ -568,6 +580,19 @@ $('renderer').addEventListener('change', async (e) => {
   saveSettings();
   if (db) await setRenderer(db, settings.renderer === 'bsp');
 });
+$('display').value = settings.display;
+$('smooth').checked = settings.smooth;
+$('display').addEventListener('change', (e) => {
+  settings.display = e.target.value;
+  saveSettings();
+  applyDisplay();
+});
+$('smooth').addEventListener('change', (e) => {
+  settings.smooth = e.target.checked;
+  saveSettings();
+  presenter?.setSmooth(settings.smooth);
+});
+applyDisplay();
 $('detail').addEventListener('change', async (e) => {
   settings.detail = e.target.value;
   saveSettings();

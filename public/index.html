@@ -39,6 +39,11 @@
           <option value="bsp">BSP front-to-back + solidsegs</option>
           <option value="brute">Brute force (every linedef)</option>
         </select></label>
+        <label title="How the palette-index screen becomes colours: a WebGL palette shader, or Canvas 2D">Display <select id="display">
+          <option value="webgl">WebGL (palette shader)</option>
+          <option value="2d">Canvas 2D</option>
+        </select> <small id="display-kind"></small></label>
+        <label title="Bilinear upscaling instead of sharp pixels"><input id="smooth" type="checkbox"> Smooth upscaling</label>
         <label title="Sound effects and music on or off (M)"><input id="audio" type="checkbox"> Audio</label>
         <label title="Sound effects volume">Sound <input id="sfxvol" type="range" min="0" max="100" step="5"></label>
         <label title="Music volume (GENMIDI OPL synthesis)">Music <input id="musicvol" type="range" min="0" max="100" step="5"></label>

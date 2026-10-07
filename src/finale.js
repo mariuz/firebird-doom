@@ -201,7 +201,7 @@ export class Finale {
     if (this.state.stage === 'text') {
       // F_TextWrite: the flat tiled over the whole screen, the text typed onto it
       for (let y = 0; y < 200; y++) {
-        for (let x = 0; x < 320; x++) r.sfb[y * 320 + x] = r.lut[this.flat[((y & 63) << 6) | (x & 63)]];
+        for (let x = 0; x < 320; x++) r.sfb[y * 320 + x] = this.flat[((y & 63) << 6) | (x & 63)];
       }
       this.write(this.state.text.slice(0, this.state.shown), 10, 10);
     } else {
@@ -231,7 +231,7 @@ export class Finale {
       for (let py = 0; py < pic.h; py++) {
         const sy = y0 + py;
         if (sy < 0 || sy >= 200 || !pic.alpha[off + py]) continue;
-        r.sfb[sy * 320 + sx] = r.lut[pic.pix[off + py]];
+        r.sfb[sy * 320 + sx] = pic.pix[off + py];
       }
     }
   }
