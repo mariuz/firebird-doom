@@ -282,6 +282,9 @@ CREATE TABLE player (
   keycards     INTEGER DEFAULT 0 NOT NULL,       -- 1 blue 2 yellow 4 red
   attack_tics  INTEGER DEFAULT 0 NOT NULL,
   attack_len   INTEGER DEFAULT 0 NOT NULL,
+  pending_weapon SMALLINT DEFAULT 0 NOT NULL,   -- pendingweapon: 0 none, else the weapon to switch to
+  weapon_y     INTEGER DEFAULT 0 NOT NULL,      -- the weapon sprite below WEAPONTOP: 0 up, 96 out of sight
+  weapon_down  SMALLINT DEFAULT 0 NOT NULL,     -- 1 while it's being lowered (A_Lower)
   damage_count INTEGER DEFAULT 0 NOT NULL,
   bonus_count  INTEGER DEFAULT 0 NOT NULL,
   kills        INTEGER DEFAULT 0 NOT NULL,

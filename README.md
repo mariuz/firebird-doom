@@ -189,6 +189,20 @@ bonuses on top of blue armour stay blue. When a hit uses up the last points, the
 them (`P_DamageMobj`). The type is `PLAYER.ARMOR_TYPE`, and saves keep it. A save from before
 it existed gets type 2 above 100 points and type 1 below. `npm run test:physics` checks each rule.
 
+### Changing weapons
+
+A weapon key only picks the next weapon (`pendingweapon`), as in `p_pspr.c`. The one in your hands
+finishes its attack, then goes down 6 units a tic (`A_Lower`) until it's out of sight. The new one
+comes up just as fast (`A_Raise`), and it can't fire until it's up: 31 tics, nearly a second, from
+one to the other. With the trigger empty, `P_CheckAmmo` makes the best weapon that has ammo the
+next one, and nothing is fired. That happens when you pull the trigger or when an attack ends.
+Its order is plasma gun, super shotgun, chaingun, shotgun, pistol, chainsaw, rocket launcher, BFG.
+Picking up a new weapon brings it up the same way, and so does the berserk pack with the fist.
+Every level starts with the weapon rising (`P_SetupPsprites`), and when you die it drops out of
+sight. The state lives in `PLAYER` (`PENDING_WEAPON`, `WEAPON_Y`, `WEAPON_DOWN`), and
+`DOOM_TIC` returns `WEAPON_Y` for the HUD to draw the sprite that much lower. `npm run
+test:weapons` times it against vanilla's numbers.
+
 ### Invulnerability
 
 The invulnerability sphere gives 30 seconds (`INVULNTICS`, 1050 tics in `PLAYER.INVULN_TICS`).
@@ -550,7 +564,7 @@ Click the view to capture the mouse. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D<
 arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd> uses,
 <kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>7</kbd> pick weapons (fist, pistol, shotgun, chaingun, rocket
 launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggles the chainsaw and
-<kbd>3</kbd> again the super shotgun. <kbd>Tab</kbd> shows the
+<kbd>3</kbd> again the super shotgun. A change takes the old weapon down and the new one up. <kbd>Tab</kbd> shows the
 automap (type IDDT on it to reveal everything), <kbd>P</kbd> pauses, and <kbd>Esc</kbd> opens the menu. Under the view you can set **Detail** (320 or 160 columns),
 **Renderer** (BSP + solidsegs, or brute force), **Skill** (1–5), **Display** (WebGL palette shader or Canvas 2D),
 **Smooth upscaling**, **Audio** on/off (<kbd>M</kbd>), and **Sound** and **Music** volume. These settings

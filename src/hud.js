@@ -65,7 +65,9 @@ export function drawWeapon(renderer, hud) {
   const w = hud.WEAPON;
   const len = Math.max(1, hud.ATTACK_LEN);
   const p = hud.ATTACK_TICS > 0 ? 1 - hud.ATTACK_TICS / len : -1;
-  const bob = Math.sin(hud.TIC * 0.2) * 2;
+  // A_WeaponReady bobs it; lowered or raised (A_Lower/A_Raise) it just slides
+  const lowered = hud.WEAPON_Y ?? 0;
+  const bob = lowered ? 0 : Math.sin(hud.TIC * 0.2) * 2;
   let gun;
   let flash = null;
   if (w === 1) {
@@ -110,6 +112,7 @@ export function drawWeapon(renderer, hud) {
   const draw = inv > 4 * 32 || (inv & 8)
     ? (pic, x, y) => renderer.patchFuzz(pic, x, y)
     : (pic, x, y) => renderer.patch(pic, x, y, cmap);
-  if (flash) draw(renderer.pictureByName(flash), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)));
-  draw(renderer.pictureByName(gun), 1 + Math.round(bob), 32 + Math.abs(Math.round(bob)));
+  const sy = 32 + lowered + Math.abs(Math.round(bob));
+  if (flash) draw(renderer.pictureByName(flash), 1 + Math.round(bob), sy);
+  draw(renderer.pictureByName(gun), 1 + Math.round(bob), sy);
 }

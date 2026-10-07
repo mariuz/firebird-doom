@@ -30,8 +30,9 @@ you find missing.
 
 - ~~**Armour types.**~~ Done: green armour (type 1) absorbs ⅓, and blue armour, the megasphere
   and IDKFA (type 2) absorb ½. Bonuses keep the type, and used-up armour loses it.
-- **Weapon raise and lower.** Switching weapons is instant. DOOM lowers one and raises the other
-  (`A_Lower`/`A_Raise`, about half a second), and you can't fire meanwhile.
+- ~~**Weapon raise and lower.**~~ Done: `pendingweapon`, `A_Lower` and `A_Raise` at 6 units a tic
+  (31 tics from one weapon to the next), `P_CheckAmmo` switching instead of firing, pickups and
+  berserk bringing their weapon up, the weapon rising at each level start and dropping at death.
 - **Monster active sounds.** Monsters don't make their idle growls while chasing (`activesound`,
   for example `DSPOSACT`, `DSDMACT`, `DSBGACT`, 3/256 per chase step).
 - **Monster chase details.** `P_NewChaseDir` is simplified: straight at the target, then 45° and

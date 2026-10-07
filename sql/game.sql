@@ -1179,6 +1179,11 @@ DECLARE has_saw SMALLINT;
 DECLARE has_ssg SMALLINT;
 DECLARE shot_hit SMALLINT;
 DECLARE old_weapon SMALLINT;
+DECLARE pending SMALLINT;
+DECLARE weapon_y INTEGER;
+DECLARE weapon_down SMALLINT;
+DECLARE was_attacking INTEGER;
+DECLARE neww SMALLINT;
 DECLARE bslope DOUBLE PRECISION;
 DECLARE mult INTEGER;
 DECLARE tries INTEGER;
@@ -1186,19 +1191,24 @@ DECLARE noclip SMALLINT;
 BEGIN
   SELECT p.thing_id, t.x, t.y, t.z, t.angle, t.momx, t.momy, t.momz, p.dead, p.weapon, p.attack_tics, p.attack_len,
          p.bullets, p.shells, p.has_shotgun, p.has_chaingun, p.use_down, p.view_h,
-         p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg, p.has_chainsaw, p.has_ssg, p.noclip
+         p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg, p.has_chainsaw, p.has_ssg, p.noclip,
+         p.pending_weapon, p.weapon_y, p.weapon_down
     FROM player p JOIN things t ON t.id = p.thing_id
    WHERE p.id = 1
     INTO tid, x, y, z, ang, momx, momy, momz, is_dead, weapon, attack_tics, attack_len,
          bullets, shells, has_sg, has_cg, use_down, view_h,
-         rockets, cells, has_rl, has_pl, has_bfg, has_saw, has_ssg, noclip;
+         rockets, cells, has_rl, has_pl, has_bfg, has_saw, has_ssg, noclip,
+         pending, weapon_y, weapon_down;
 
   IF (is_dead = 1) THEN
   BEGIN
     -- P_DeathThink: sink to the floor, wait for USE
     view_h = MAXVALUE(6, view_h - 1);
     IF (use_key = 1 AND use_down = 0) THEN UPDATE game SET exit_kind = 3 WHERE id = 1;
-    UPDATE player SET view_h = :view_h, view_z = :z + :view_h, use_down = :use_key, attack_tics = 0 WHERE id = 1;
+    -- A_WeaponReady/A_Lower: a dead player's weapon goes down, and stays
+    UPDATE player SET view_h = :view_h, view_z = :z + :view_h, use_down = :use_key, attack_tics = 0,
+                      weapon_y = MINVALUE(96, weapon_y + 6), weapon_down = 1
+     WHERE id = 1;
     EXIT;
   END
 
@@ -1356,19 +1366,22 @@ BEGIN
     ELSE IF (lid IS NOT NULL) THEN EXECUTE PROCEDURE play_sound('DSNOWAY', 0, NULL, NULL);
   END
 
-  -- weapon selection (only weapons we own)
-  -- (1 cycles fist/chainsaw and 3 shotgun/super shotgun, as in DOOM II)
+  -- P_PlayerThink: a weapon key only picks the pending weapon, any time (only
+  -- weapons we own; 1 cycles fist/chainsaw and 3 shotgun/super shotgun, as in
+  -- DOOM II). The one in hand changes when it has been lowered.
   old_weapon = weapon;
+  neww = 0;
   IF (weapon_sel = 1) THEN
-    weapon = IIF(has_saw = 1 AND weapon <> 8, 8, 1);
+    neww = IIF(has_saw = 1 AND weapon <> 8, 8, 1);
   ELSE IF (weapon_sel = 3 AND (has_sg = 1 OR has_ssg = 1)) THEN
-    weapon = IIF(has_ssg = 1 AND weapon <> 9 AND shells >= 2, 9, IIF(has_sg = 1, 3, 9));
+    neww = IIF(has_ssg = 1 AND weapon <> 9 AND shells >= 2, 9, IIF(has_sg = 1, 3, 9));
   ELSE IF (weapon_sel = 2 OR (weapon_sel = 4 AND has_cg = 1)
       OR (weapon_sel = 5 AND has_rl = 1) OR (weapon_sel = 6 AND has_pl = 1) OR (weapon_sel = 7 AND has_bfg = 1)) THEN
-    weapon = weapon_sel;
-  IF (weapon = 8 AND old_weapon <> 8) THEN EXECUTE PROCEDURE play_sound('DSSAWUP', 0, NULL, NULL);
+    neww = weapon_sel;
+  IF (neww > 0 AND neww <> weapon) THEN pending = neww;
 
   -- A_FirePistol / A_FireShotgun / A_FireCGun / A_Punch
+  was_attacking = attack_tics;
   IF (attack_tics > 0) THEN attack_tics = attack_tics - 1;
   -- A_FireBFG: the ball leaves 20 tics after the trigger, once the gun has charged
   IF (weapon = 7 AND attack_len = 60 AND attack_tics = 40) THEN
@@ -1378,22 +1391,45 @@ BEGIN
     EXECUTE PROCEDURE play_sound(CASE attack_tics WHEN 42 THEN 'DSDBOPN' WHEN 30 THEN 'DSDBLOAD'
                                                   WHEN 18 THEN 'DSDBCLS' END, 0, NULL, NULL);
   -- A_WeaponReady: the chainsaw idles noisily
-  IF (weapon = 8 AND fire = 0 AND attack_tics = 0 AND MOD(tic, 8) = 0) THEN
+  IF (weapon = 8 AND fire = 0 AND attack_tics = 0 AND weapon_y = 0 AND weapon_down = 0 AND MOD(tic, 8) = 0) THEN
     EXECUTE PROCEDURE play_sound('DSSAWIDL', 0, NULL, NULL);
-  IF (fire = 1 AND attack_tics = 0) THEN
+  -- P_CheckAmmo, when the trigger is pulled (A_WeaponReady) or an attack ends
+  -- (A_ReFire): not enough for the weapon in hand, the best one that has some
+  -- becomes the pending weapon, and nothing is fired
+  IF (attack_tics = 0 AND weapon_y = 0 AND weapon_down = 0 AND pending = 0 AND (fire = 1 OR was_attacking = 1)
+      AND ((weapon IN (2, 4) AND bullets = 0) OR (weapon = 3 AND shells = 0) OR (weapon = 5 AND rockets = 0)
+        OR (weapon = 6 AND cells = 0) OR (weapon = 7 AND cells < 40) OR (weapon = 9 AND shells < 2))) THEN
   BEGIN
-    -- P_CheckAmmo: out of ammo, switch to the best weapon that has some
-    IF ((weapon IN (2, 4) AND bullets = 0) OR (weapon = 3 AND shells = 0) OR (weapon = 5 AND rockets = 0)
-        OR (weapon = 6 AND cells = 0) OR (weapon = 7 AND cells < 40) OR (weapon = 9 AND shells < 2)) THEN
-      weapon = CASE WHEN has_pl = 1 AND cells > 0 THEN 6
-                    WHEN has_ssg = 1 AND shells >= 2 THEN 9
-                    WHEN has_cg = 1 AND bullets > 0 THEN 4
-                    WHEN has_sg = 1 AND shells > 0 THEN 3
-                    WHEN bullets > 0 THEN 2
-                    WHEN has_saw = 1 THEN 8
-                    WHEN has_rl = 1 AND rockets > 0 THEN 5
-                    WHEN has_bfg = 1 AND cells >= 40 THEN 7
-                    ELSE 1 END;
+    pending = CASE WHEN has_pl = 1 AND cells > 0 THEN 6
+                   WHEN has_ssg = 1 AND shells >= 2 THEN 9
+                   WHEN has_cg = 1 AND bullets > 0 THEN 4
+                   WHEN has_sg = 1 AND shells > 0 THEN 3
+                   WHEN bullets > 0 THEN 2
+                   WHEN has_saw = 1 THEN 8
+                   WHEN has_rl = 1 AND rockets > 0 THEN 5
+                   WHEN has_bfg = 1 AND cells >= 40 THEN 7
+                   ELSE 1 END;
+    IF (pending = weapon) THEN pending = 0;
+  END
+  -- A_WeaponReady with a pending weapon starts A_Lower: down LOWERSPEED (6) a
+  -- tic from WEAPONTOP to WEAPONBOTTOM (96 lower); there the new weapon comes
+  -- up (P_BringUpWeapon, A_Raise: RAISESPEED 6 a tic). Nothing fires meanwhile.
+  IF (attack_tics = 0 AND weapon_y = 0 AND weapon_down = 0 AND pending > 0) THEN weapon_down = 1;
+  IF (weapon_down = 1) THEN
+  BEGIN
+    weapon_y = weapon_y + 6;
+    IF (weapon_y >= 96) THEN
+    BEGIN
+      IF (pending > 0) THEN weapon = pending;
+      pending = 0;
+      weapon_down = 0;
+      weapon_y = 90;                            -- (A_Raise runs at once)
+      IF (weapon = 8) THEN EXECUTE PROCEDURE play_sound('DSSAWUP', 0, NULL, NULL);
+    END
+  END
+  ELSE IF (weapon_y > 0) THEN weapon_y = MAXVALUE(0, weapon_y - 6);
+  ELSE IF (fire = 1 AND attack_tics = 0 AND pending = 0) THEN
+  BEGIN
     pellets = 0;
     -- P_BulletSlope: the vertical slope to a monster straight ahead, else
     -- 5.625° either side, else level; bullets keep their own heading.
@@ -1474,6 +1510,7 @@ BEGIN
                     sector_id = :sec
    WHERE id = :tid;
   UPDATE player SET weapon = :weapon, attack_tics = :attack_tics, attack_len = :attack_len,
+                    pending_weapon = :pending, weapon_y = :weapon_y, weapon_down = :weapon_down,
                     bullets = :bullets, shells = :shells, rockets = :rockets, cells = :cells, use_down = :use_key,
                     view_h = :view_h, view_z = :view_z
    WHERE id = 1;
@@ -1524,13 +1561,13 @@ BEGIN
       IF (shells >= maxs) THEN took = 0; ELSE shells = MINVALUE(maxs, shells + amt);
     ELSE IF (pk = 'shotgun') THEN
     BEGIN
-      IF (has_sg = 0) THEN weapon = 3;
+      IF (has_sg = 0) THEN pending = 3;
       has_sg = 1;
       shells = MINVALUE(maxs, shells + amt);
     END
     ELSE IF (pk = 'chaingun') THEN
     BEGIN
-      IF (has_cg = 0) THEN weapon = 4;
+      IF (has_cg = 0) THEN pending = 4;
       has_cg = 1;
       bullets = MINVALUE(maxb, bullets + amt);
     END
@@ -1540,30 +1577,30 @@ BEGIN
       IF (cells >= maxc) THEN took = 0; ELSE cells = MINVALUE(maxc, cells + amt);
     ELSE IF (pk = 'launcher') THEN
     BEGIN
-      IF (has_rl = 0) THEN weapon = 5;
+      IF (has_rl = 0) THEN pending = 5;
       has_rl = 1;
       rockets = MINVALUE(maxr, rockets + amt);
     END
     ELSE IF (pk = 'plasma') THEN
     BEGIN
-      IF (has_pl = 0) THEN weapon = 6;
+      IF (has_pl = 0) THEN pending = 6;
       has_pl = 1;
       cells = MINVALUE(maxc, cells + amt);
     END
     ELSE IF (pk = 'bfg') THEN
     BEGIN
-      IF (has_bfg = 0) THEN weapon = 7;
+      IF (has_bfg = 0) THEN pending = 7;
       has_bfg = 1;
       cells = MINVALUE(maxc, cells + amt);
     END
     ELSE IF (pk = 'chainsaw') THEN
     BEGIN
-      IF (has_saw = 0) THEN weapon = 8;
+      IF (has_saw = 0) THEN pending = 8;
       has_saw = 1;
     END
     ELSE IF (pk = 'ssg') THEN
     BEGIN
-      IF (has_ssg = 0) THEN weapon = 9;
+      IF (has_ssg = 0) THEN pending = 9;
       has_ssg = 1;
       shells = MINVALUE(maxs, shells + amt);
     END
@@ -1575,7 +1612,7 @@ BEGIN
     ELSE IF (pk = 'berserk') THEN
     BEGIN
       health = MAXVALUE(health, amt);      -- P_GiveBody: up to 100, always taken
-      weapon = 1;
+      IF (weapon <> 1) THEN pending = 1;   -- and the fist comes up
     END
     ELSE IF (pk = 'mega') THEN
     BEGIN
@@ -1603,7 +1640,7 @@ BEGIN
              rockets = :rockets, cells = :cells, max_rockets = :maxr, max_cells = :maxc,
              has_launcher = :has_rl, has_plasma = :has_pl, has_bfg = :has_bfg,
              has_chainsaw = :has_saw, has_ssg = :has_ssg,
-             weapon = :weapon, items = items + 1, bonus_count = 6,
+             pending_weapon = :pending, items = items + 1, bonus_count = 6,
              keycards = IIF(:pk = 'key', BIN_OR(keycards, :amt), keycards),
              invis_tics = IIF(:pk = 'invis', :amt, invis_tics),
              invuln_tics = IIF(:pk = 'invuln', :amt, invuln_tics),
@@ -2660,7 +2697,7 @@ RETURNS (
   secrets INTEGER, total_secrets INTEGER,
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
   sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER,
-  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT)
+  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, weapon_y INTEGER)
 AS
 DECLARE i INTEGER = 0;
 BEGIN
@@ -2693,7 +2730,7 @@ BEGIN
          p.max_bullets, p.max_shells, p.max_rockets, p.max_cells,
          p.attack_tics, p.attack_len, p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
          p.dead, g.exit_kind, p.kills, g.total_kills, p.items, g.total_items, p.secrets, g.total_secrets,
-         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics, p.iron_tics, p.infra_tics, p.strength_tics, p.allmap, p.god
+         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics, p.iron_tics, p.infra_tics, p.strength_tics, p.allmap, p.god, p.weapon_y
     FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g
    WHERE p.id = 1 AND g.id = 1
     INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards,
@@ -2701,7 +2738,7 @@ BEGIN
          max_bullets, max_shells, max_rockets, max_cells,
          attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind,
          kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z,
-         sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god;
+         sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y;
   SUSPEND;
 END^
 
@@ -2860,6 +2897,8 @@ BEGIN
          total_secrets = (SELECT COUNT(*) FROM sectors WHERE special = 9)
    WHERE id = 1;
 
+  -- P_SetupPsprites: every level starts with the weapon coming up
+  UPDATE player SET pending_weapon = 0, weapon_y = 90, weapon_down = 0, attack_tics = 0 WHERE id = 1;
   IF (new_game = 1) THEN
     UPDATE player
        SET health = 100, armor = 0, armor_type = 0, bullets = 50, shells = 0, max_bullets = 200, max_shells = 50,
