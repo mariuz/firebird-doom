@@ -291,19 +291,30 @@ AS
 DECLARE god SMALLINT;
 DECLARE invuln INTEGER;
 DECLARE arm INTEGER;
-DECLARE saved INTEGER;
+DECLARE arm_type SMALLINT;
+DECLARE saved INTEGER = 0;
 DECLARE is_dead SMALLINT;
 BEGIN
-  SELECT armor, dead, invuln_tics, god FROM player WHERE id = 1 INTO arm, is_dead, invuln, god;
+  SELECT armor, armor_type, dead, invuln_tics, god FROM player WHERE id = 1 INTO arm, arm_type, is_dead, invuln, god;
   IF (is_dead = 1 OR COALESCE(dmg, 0) <= 0) THEN EXIT;
   -- P_DamageMobj: on the easiest skill you take half
   IF ((SELECT g.skill FROM game g WHERE g.id = 1) = 1) THEN dmg = dmg / 2;
   -- P_DamageMobj: invulnerable (pw_invulnerability) or in god mode
   -- (CF_GODMODE), nothing under 1000 gets through – a telefrag (10000) does
   IF ((invuln > 0 OR god = 1) AND dmg < 1000) THEN EXIT;
-  saved = IIF(arm > 0, MINVALUE(arm, dmg / 3), 0);
+  -- P_DamageMobj: green armour (type 1) takes a third, blue (type 2) half;
+  -- when it's used up, the type goes too
+  IF (arm_type > 0) THEN
+  BEGIN
+    saved = IIF(arm_type = 1, dmg / 3, dmg / 2);
+    IF (arm <= saved) THEN
+    BEGIN
+      saved = arm;
+      arm_type = 0;
+    END
+  END
   UPDATE player
-     SET armor = armor - :saved,
+     SET armor = armor - :saved, armor_type = :arm_type,
          health = health - (:dmg - :saved),
          damage_count = MINVALUE(damage_count + :dmg, 100)
    WHERE id = 1;
@@ -1154,6 +1165,7 @@ DECLARE lbl VARCHAR(40);
 DECLARE took SMALLINT;
 DECLARE health INTEGER;
 DECLARE armor INTEGER;
+DECLARE armor_type SMALLINT;
 DECLARE maxb INTEGER;
 DECLARE maxs INTEGER;
 DECLARE rockets INTEGER;
@@ -1477,10 +1489,10 @@ BEGIN
         INTO iid, pk, amt, lbl
   DO
   BEGIN
-    SELECT p.health, p.armor, p.bullets, p.shells, p.max_bullets, p.max_shells, p.has_shotgun, p.has_chaingun,
+    SELECT p.health, p.armor, p.armor_type, p.bullets, p.shells, p.max_bullets, p.max_shells, p.has_shotgun, p.has_chaingun,
            p.rockets, p.cells, p.max_rockets, p.max_cells, p.has_launcher, p.has_plasma, p.has_bfg
       FROM player p WHERE p.id = 1
-      INTO health, armor, bullets, shells, maxb, maxs, has_sg, has_cg,
+      INTO health, armor, armor_type, bullets, shells, maxb, maxs, has_sg, has_cg,
            rockets, cells, maxr, maxc, has_rl, has_pl, has_bfg;
     SELECT p.has_chainsaw, p.has_ssg FROM player p WHERE p.id = 1 INTO has_saw, has_ssg;
     took = 1;
@@ -1489,9 +1501,23 @@ BEGIN
     IF (pk = 'health') THEN
       IF (health >= 100) THEN took = 0; ELSE health = MINVALUE(100, health + amt);
     ELSE IF (pk = 'health+') THEN health = MINVALUE(200, health + amt);
+    -- P_GiveArmor: the green armour is type 1 (100 points), the blue type 2
+    -- (200); taken only if it's more than you have
     ELSE IF (pk = 'armor') THEN
-      IF (armor >= amt) THEN took = 0; ELSE armor = amt;
-    ELSE IF (pk = 'armor+') THEN armor = MINVALUE(200, armor + amt);
+    BEGIN
+      IF (armor >= amt) THEN took = 0;
+      ELSE
+      BEGIN
+        armor = amt;
+        armor_type = amt / 100;
+      END
+    END
+    -- an armour bonus: a point, and green armour's type if you had none
+    ELSE IF (pk = 'armor+') THEN
+    BEGIN
+      armor = MINVALUE(200, armor + amt);
+      IF (armor_type = 0) THEN armor_type = 1;
+    END
     ELSE IF (pk = 'bullets') THEN
       IF (bullets >= maxb) THEN took = 0; ELSE bullets = MINVALUE(maxb, bullets + amt);
     ELSE IF (pk = 'shells') THEN
@@ -1554,7 +1580,8 @@ BEGIN
     ELSE IF (pk = 'mega') THEN
     BEGIN
       health = 200;
-      armor = 200;
+      armor = 200;                          -- P_GiveArmor(player, 2)
+      armor_type = 2;
     END
     ELSE IF (pk = 'backpack') THEN
     BEGIN
@@ -1571,7 +1598,7 @@ BEGIN
     BEGIN
       DELETE FROM things WHERE id = :iid;
       UPDATE player
-         SET health = :health, armor = :armor, bullets = :bullets, shells = :shells,
+         SET health = :health, armor = :armor, armor_type = :armor_type, bullets = :bullets, shells = :shells,
              max_bullets = :maxb, max_shells = :maxs, has_shotgun = :has_sg, has_chaingun = :has_cg,
              rockets = :rockets, cells = :cells, max_rockets = :maxr, max_cells = :maxc,
              has_launcher = :has_rl, has_plasma = :has_pl, has_bfg = :has_bfg,
@@ -2613,7 +2640,7 @@ BEGIN
        SET has_shotgun = 1, has_chaingun = 1, has_launcher = 1, has_plasma = 1, has_bfg = 1, has_chainsaw = 1,
            has_ssg = IIF((SELECT g.map_name FROM game g WHERE g.id = 1) STARTING WITH 'MAP', 1, p.has_ssg),
            bullets = p.max_bullets, shells = p.max_shells, rockets = p.max_rockets, cells = p.max_cells,
-           armor = 200, keycards = IIF(:code = 'idkfa', 7, p.keycards),
+           armor = 200, armor_type = 2, keycards = IIF(:code = 'idkfa', 7, p.keycards),
            msg = TRIM(IIF(:code = 'idkfa', 'Very Happy Ammo Added', 'Ammo (no keys) Added')), msg_tics = 70
      WHERE p.id = 1 AND p.dead = 0;
 END^
@@ -2835,7 +2862,7 @@ BEGIN
 
   IF (new_game = 1) THEN
     UPDATE player
-       SET health = 100, armor = 0, bullets = 50, shells = 0, max_bullets = 200, max_shells = 50,
+       SET health = 100, armor = 0, armor_type = 0, bullets = 50, shells = 0, max_bullets = 200, max_shells = 50,
            weapon = 2, has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0,
            has_chainsaw = 0, has_ssg = 0,
            rockets = 0, cells = 0, max_rockets = 50, max_cells = 300, god = 0, noclip = 0

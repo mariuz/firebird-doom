@@ -681,6 +681,47 @@ if (slimeMap) {
   await db.exec('UPDATE player SET health = 100, iron_tics = 0, infra_tics = 0');
 } else console.log('(no nukage or slime in this WAD)');
 
+// ── armour types (P_GiveArmor, P_DamageMobj) ────────────────────────────
+{
+  await loadMap(db, wad, res, maps[0], { skill: 3 });
+  await quiet();
+  const p = await one(`SELECT t.x, t.y FROM things t WHERE t.kind = 'player'`);
+  const pick = async (type) => { await spawn(type, p.X, p.Y); await tic(); return one('SELECT health, armor, armor_type FROM player'); };
+  const hit = async (dmg) => { await db.exec(`EXECUTE PROCEDURE damage_player(${dmg})`); return one('SELECT health, armor, armor_type FROM player'); };
+  await db.exec('UPDATE player SET health = 100, armor = 0, armor_type = 0');
+  const green = await pick(2018);
+  const g1 = await hit(30);
+  assert(green.ARMOR === 100 && green.ARMOR_TYPE === 1 && g1.HEALTH === 80 && g1.ARMOR === 90,
+    `green armour: ${green.ARMOR} points, type ${green.ARMOR_TYPE}; a hit for 30 costs 20 health and 10 armour (a third)`);
+  const blue = await pick(2019);
+  await db.exec('UPDATE player SET health = 100');
+  const b1 = await hit(30);
+  assert(blue.ARMOR === 200 && blue.ARMOR_TYPE === 2 && b1.HEALTH === 85 && b1.ARMOR === 185,
+    `blue armour: ${blue.ARMOR} points, type ${blue.ARMOR_TYPE}; a hit for 30 costs 15 and 15 (half)`);
+  // green armour isn't taken over more blue points; a bonus keeps the type
+  await db.exec(`DELETE FROM things WHERE thing_type = 2018`);
+  await spawn(2018, p.X, p.Y);
+  await tic();
+  const kept = await one('SELECT armor, armor_type, (SELECT COUNT(*) FROM things WHERE thing_type = 2018) left_ FROM player');
+  await db.exec(`DELETE FROM things WHERE thing_type = 2018`);
+  const bonus = await pick(2015);
+  assert(kept.ARMOR_TYPE === 2 && kept.LEFT_ === 1 && bonus.ARMOR === 186 && bonus.ARMOR_TYPE === 2,
+    'green armour stays on the floor while you have more; a bonus adds a point and keeps blue');
+  // used up: the type goes, and the next hit isn't absorbed at all
+  await db.exec('UPDATE player SET health = 100, armor = 4, armor_type = 2');
+  const out = await hit(20);
+  const bare = await hit(9);
+  assert(out.HEALTH === 84 && out.ARMOR === 0 && out.ARMOR_TYPE === 0 && bare.HEALTH === 75,
+    'the last 4 points absorb 4 of 20 and the type goes; the next 9 all hurt');
+  // a bonus with no armour gives green's type; the megasphere blue's
+  const b0 = await pick(2015);
+  await db.exec(`DELETE FROM things WHERE thing_type = 83`);
+  const mega = await pick(83);
+  assert(b0.ARMOR === 1 && b0.ARMOR_TYPE === 1 && mega.HEALTH === 200 && mega.ARMOR === 200 && mega.ARMOR_TYPE === 2,
+    'a bonus on nothing is type 1; the megasphere 200 health, 200 armour, type 2');
+  await db.exec('UPDATE player SET health = 100, armor = 0, armor_type = 0');
+}
+
 // ── the computer area map ───────────────────────────────────────────────
 {
   const sp = await one(`SELECT t.x, t.y FROM things t WHERE t.kind = 'player'`);

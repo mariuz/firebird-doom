@@ -28,8 +28,8 @@ you find missing.
 
 ## Simulation (`sql/game.sql`)
 
-- **Armour types.** All armour absorbs a third of the damage. DOOM's green armour (type 1) takes
-  ⅓, and blue armour and the megasphere (type 2) take ½. Needs a `player.armor_type`.
+- ~~**Armour types.**~~ Done: green armour (type 1) absorbs ⅓, and blue armour, the megasphere
+  and IDKFA (type 2) absorb ½. Bonuses keep the type, and used-up armour loses it.
 - **Weapon raise and lower.** Switching weapons is instant. DOOM lowers one and raises the other
   (`A_Lower`/`A_Raise`, about half a second), and you can't fire meanwhile.
 - **Monster active sounds.** Monsters don't make their idle growls while chasing (`activesound`,

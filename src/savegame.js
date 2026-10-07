@@ -98,6 +98,10 @@ export async function restoreGame(db, save) {
     // (a statement holds at most 256 contexts, and an UPDATE takes more than one)
     await perRow(db, rows, 50, (p) => `UPDATE ${t} SET ${set.map((c, k) => `${c} = ${p[k + 1]}`).join(', ')} WHERE id = ${p[0]};`);
   }
+  // saves from before armour types: green's for up to 100 points, blue's above
+  if (!save.tables.player.cols.some((c) => c.toLowerCase() === 'armor_type')) {
+    await db.exec('UPDATE player SET armor_type = IIF(armor > 100, 2, IIF(armor > 0, 1, 0))');
+  }
   // new things must not reuse the restored ids
   await db.exec(`ALTER SEQUENCE thing_seq RESTART WITH ${save.seq + 1}`);
 }

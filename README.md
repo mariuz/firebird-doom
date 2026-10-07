@@ -179,6 +179,16 @@ soul's charge goes astray. `P_SpawnMissile` sends projectiles up to 22.5° off. 
 still land. At 280 units a zombieman hits about 65% of the time when it can see you, and about
 15% when you're partially invisible.
 
+### Armour
+
+Armour comes in two types, as in `P_GiveArmor`. The green armour gives 100 points of type 1,
+which absorbs a third of each hit. The blue armour gives 200 points of type 2, which absorbs half,
+and so do the megasphere and IDKFA/IDFA. You only pick armour up if it has more points than you
+have. An armour bonus adds a point, up to 200, and gives type 1 only if you had no armour, so
+bonuses on top of blue armour stay blue. When a hit uses up the last points, the type goes with
+them (`P_DamageMobj`). The type is `PLAYER.ARMOR_TYPE`, and saves keep it. A save from before
+it existed gets type 2 above 100 points and type 1 below. `npm run test:physics` checks each rule.
+
 ### Invulnerability
 
 The invulnerability sphere gives 30 seconds (`INVULNTICS`, 1050 tics in `PLAYER.INVULN_TICS`).

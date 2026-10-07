@@ -134,7 +134,7 @@ assert(spray > 0, 'BFG ball exploded');
   const phase2 = wad.mapNames()[0].startsWith('MAP');
   assert(k.HAS_SHOTGUN && k.HAS_CHAINGUN && k.HAS_LAUNCHER && k.HAS_PLASMA && k.HAS_BFG && k.HAS_CHAINSAW
     && k.HAS_SSG === (phase2 ? 1 : 0) && k.BULLETS === k.MAX_BULLETS && k.SHELLS === k.MAX_SHELLS
-    && k.ROCKETS === k.MAX_ROCKETS && k.CELLS === k.MAX_CELLS && k.ARMOR === 200 && k.KEYCARDS === 7
+    && k.ROCKETS === k.MAX_ROCKETS && k.CELLS === k.MAX_CELLS && k.ARMOR === 200 && k.ARMOR_TYPE === 2 && k.KEYCARDS === 7
     && k.MSG === 'Very Happy Ammo Added',
     `IDKFA: every weapon (super shotgun ${k.HAS_SSG}), ${k.BULLETS}/${k.SHELLS}/${k.ROCKETS}/${k.CELLS} ammo, armor ${k.ARMOR}, keys ${k.KEYCARDS}`);
 

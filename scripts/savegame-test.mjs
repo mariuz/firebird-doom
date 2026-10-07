@@ -83,6 +83,24 @@ assert(fresh > maxId && ran === 35 && p.HEALTH > 0, `after loading, a new thing 
   assert(wrong.length === 0, `m × 2^e rebuilds ${values.length} doubles exactly, subnormals and extremes included${wrong.length ? ` (wrong: ${wrong.slice(0, 3)})` : ''}`);
 }
 
+// a save from before armour types (no ARMOR_TYPE column) gets one from its points
+{
+  const old = JSON.parse(JSON.stringify(saved));
+  const pl = old.tables.player;
+  const k = pl.cols.indexOf('armor_type');
+  const a = pl.cols.indexOf('armor');
+  const types = [];
+  for (const points of [150, 60]) {
+    pl.rows[0][a] = points;
+    const cols = pl.cols.filter((_, i) => i !== k);
+    const rows = pl.rows.map((r) => r.filter((_, i) => i !== k));
+    await loadMap(db, wad, res, old.map, { skill: old.skill });
+    await restoreGame(db, { ...old, tables: { ...old.tables, player: { cols, rows } } });
+    types.push((await db.query('SELECT armor_type t FROM player')).rows[0].T);
+  }
+  assert(k >= 0 && types.join() === '2,1', `an older save without armour types: 150 points load as blue (${types[0]}), 60 as green (${types[1]})`);
+}
+
 // a save from another version is refused
 let refused = false;
 try { await restoreGame(db, { ...saved, version: 99 }); } catch { refused = true; }
