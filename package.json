@@ -15,7 +15,8 @@
     "test:weapons": "node scripts/weapons-test.mjs",
     "test:specials": "node scripts/specials-test.mjs",
     "test:physics": "node scripts/physics-test.mjs",
-    "test:finale": "node scripts/finale-test.mjs"
+    "test:finale": "node scripts/finale-test.mjs",
+    "test:intermission": "node scripts/intermission-test.mjs"
   },
   "license": "MIT",
   "dependencies": {

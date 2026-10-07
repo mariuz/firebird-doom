@@ -17,6 +17,7 @@ import { createSchema, loadResources, loadMap } from '../src/loader.js';
 import { Renderer } from '../src/renderer.js';
 import { drawStatusBar, drawWeapon } from '../src/hud.js';
 import { Finale } from '../src/finale.js';
+import { Intermission } from '../src/intermission.js';
 import { THING_TYPES } from '../src/thinginfo.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -166,6 +167,16 @@ await shoot(map, 'screenshot-e1m2.png');
     await db.exec('UPDATE player SET invuln_tics = 0');
     break;
   }
+}
+
+// the intermission after E1M2 (example numbers), fully counted
+{
+  const wi = new Intermission(renderer, { playMusic() {}, playEvents() {} }, wad, 'E1M2', 'E1M3',
+    { kills: 17, totalKills: 20, items: 30, totalItems: 37, secrets: 2, totalSecrets: 3, time: 95 * 35 });
+  for (let i = 0; i < 600; i++) wi.tick(false);
+  wi.draw();
+  fs.writeFileSync(path.join(outDir, 'screenshot-intermission.png'), png(renderer.toRGBA(0), 320, 200, 640, 480));
+  console.log('docs/screenshot-intermission.png');
 }
 
 // Phase 2 extras: Commander Keen and the Icon of Sin

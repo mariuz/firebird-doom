@@ -15,6 +15,7 @@ keyboard and paints the rows Firebird returns.
 | ![Two monsters, sprites picked and projected by FRAME_SPRITES](docs/screenshot-monster.png) | ![E1M2: pillars, steps and a lit doorway](docs/screenshot-e1m2.png) |
 | ![Phase 2 MAP11: Commander Keen hanging in his alcove](docs/screenshot-keen.png) | ![Phase 2 MAP30: the Icon of Sin's brain](docs/screenshot-icon.png) |
 | ![After MAP30: Freedoom's story text typed over the RROCK17 flat](docs/screenshot-finale-text.png) | ![The cast call: each monster on BOSSBACK under its name](docs/screenshot-finale-cast.png) |
+| ![The intermission after E1M2: kills, items, secrets, time and par (example numbers)](docs/screenshot-intermission.png) | |
 | ![A spectre in E1M2: a shimmer of fuzz, darker than what's behind it](docs/screenshot-spectre.png) | ![The same view, invulnerable: COLORMAP 32, the inverse greys](docs/screenshot-invuln.png) |
 
 <sub>These screenshots come from `npm run screenshots`, which runs the same SQL and
@@ -227,6 +228,22 @@ secret exit. E?M8 carries on into the next episode, since there's no finale scre
 MAP15's secret exit leads to MAP31 and MAP31's to MAP32, and the normal exits of both secret
 levels return to MAP16. A secret exit on any other map counts as a normal one. MAP30 ends the
 game with the finale below. Only a WAD without the finale's pictures goes back to MAP01.
+
+### The intermission
+
+Between levels comes `wi_stuff.c`'s screen ([src/intermission.js](src/intermission.js)), to `D_INTER`
+(`D_DM2INT` on DOOM II). It shows the level's name patch with "Finished" under it. Then kills,
+items and secrets count up as percentages, two points a tic, with a pistol shot every four tics
+and a barrel explosion as each one settles. The time and par count up three seconds a tic.
+Pars come from vanilla's tables, and episode 4 has none. Fire or use jumps to the final numbers,
+and the next press moves on (`WI_checkForAccelerate`; only a new press counts, so the button
+that hit the exit switch doesn't). DOOM I then shows the episode map: a splat on every level
+done, the secret level's once you've been there, and a blinking "you are here" on the next,
+under "Entering" and the next level's name. Freedoom's episode pictures aren't maps, so it ships
+empty splat and pointer patches, and only "Entering" shows. DOOM II says "Entering" for ten tics
+and moves on, except after MAP30. Then comes any text screen, then the next level. As in vanilla,
+E?M8 skips the stats and goes straight to the episode's ending. `npm run test:intermission`
+checks the counting, the sounds, the skipping and the par table.
 
 ### DOOM II's text screens and finale
 

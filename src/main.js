@@ -17,6 +17,7 @@ import { AM_COLORS, automapColor } from './automap.js';
 import { clevMap, idmusMap, makeCheatReader, makeParamCheatReader } from './cheats.js';
 import { nextMap } from './progress.js';
 import { Finale } from './finale.js';
+import { Intermission, levelOf } from './intermission.js';
 import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 import { createPresenter } from './present.js';
@@ -51,6 +52,9 @@ const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
 let showMap = false;
 let finale = null;                  // text screens: DOOM II's (MAP06/11/20, the secret levels, MAP30) and DOOM I's E1M8
 let finaleKey = false;              // a key went down: F_CastResponder
+let intermission = null;            // the stats screen between levels (wi_stuff.c)
+let wiButtons = true;               // fire/use held last tic: only a new press accelerates
+const didSecret = new Set();        // DOOM I episodes whose secret level is done (wbs->didsecret)
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
 const iddt = makeCheatReader('iddt');
 // ST_Responder: IDDQD and IDKFA, typed any time during play
@@ -233,6 +237,8 @@ async function loadSides() {
 async function startMap(name, newGame) {
   running = false;
   finale = null;
+  intermission = null;
+  if (newGame) didSecret.clear();
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
   await loadMap(db, wad, res, name, { skill: 3, newGame });
@@ -280,6 +286,27 @@ async function frame() {
     lastTic += tics * TIC_MS;
     if (now - lastTic > 200) lastTic = now;
 
+    if (intermission) {
+      // WI_Ticker: a new press of fire or use hurries it along
+      const input = readInput(tics);
+      const buttons = input[4] === 1 || input[5] === 1;
+      for (let i = 0; i < tics; i++) intermission.tick(i === 0 && buttons && !wiButtons);
+      wiButtons = buttons;
+      if (intermission.done) {
+        // G_WorldDone: a text screen if this exit has one, else the next map
+        const { secret } = intermission;
+        intermission = null;
+        if (Finale.available(wad, map.name, secret)) {
+          finale = new Finale(renderer, audio, wad, THING_TYPES, map.name, secret);
+          finaleKey = false;
+        } else {
+          await startMap(nextMap(map.name, secret, wad.mapNames()), false);
+        }
+      } else intermission.draw();
+      nextFrame();
+      return;
+    }
+
     if (finale) {
       // the ending runs on its own clock: a key kills the one on stage (the
       // key that skips the text is spent before the cast starts), fire or
@@ -305,18 +332,25 @@ async function frame() {
 
     if (hud.EXIT_KIND) {
       const kind = hud.EXIT_KIND;
-      const stats = `Kills ${pct(hud.KILLS, hud.TOTAL_KILLS)}  Items ${pct(hud.ITEMS, hud.TOTAL_ITEMS)}  Secrets ${pct(hud.SECRETS, hud.TOTAL_SECRETS)}`;
+      const secret = kind === 2;
       if (kind === 3) await startMap(map.name, true);
-      else if (Finale.available(wad, map.name, kind === 2)) {
-        // F_StartFinale: the story so far after MAP06/11/20 and on the way to
-        // the secret levels, the end after MAP30
+      else {
         await db.exec('UPDATE game SET exit_kind = 0 WHERE id = 1');
-        finale = new Finale(renderer, audio, wad, THING_TYPES, map.name, kind === 2);
-        finaleKey = false;
-      } else {
-        setStatus(`${map.name} finished — ${stats}`);
-        await new Promise((r) => setTimeout(r, 1500));
-        await startMap(nextMap(map.name, kind === 2, wad.mapNames()), false);
+        const level = levelOf(map.name);
+        if (!level.doom2 && level.map === 7 && Finale.available(wad, map.name, secret)) {
+          // G_DoCompleted: DOOM I's E?M8 goes straight to the ending, no stats
+          finale = new Finale(renderer, audio, wad, THING_TYPES, map.name, secret);
+          finaleKey = false;
+        } else {
+          // WI_Start: kills, items, secrets, time and par; then G_WorldDone
+          if (!level.doom2 && level.map === 8) didSecret.add(level.episode);   // E?M9 done
+          intermission = new Intermission(renderer, audio, wad, map.name, nextMap(map.name, secret, wad.mapNames()), {
+            kills: hud.KILLS, totalKills: hud.TOTAL_KILLS, items: hud.ITEMS, totalItems: hud.TOTAL_ITEMS,
+            secrets: hud.SECRETS, totalSecrets: hud.TOTAL_SECRETS, time: hud.TIC,
+          }, didSecret.has(level.episode));
+          intermission.secret = secret;
+          wiButtons = true;   // (the button that pulled the switch doesn't count)
+        }
       }
       nextFrame();
       return;
@@ -383,7 +417,6 @@ async function frame() {
   nextFrame();
 }
 
-const pct = (a, b) => (b ? `${Math.round((100 * a) / b)}%` : '—');
 
 let fpsT = performance.now();
 let fpsN = 0;
