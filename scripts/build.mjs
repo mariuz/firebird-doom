@@ -64,6 +64,17 @@ for (const f of ['firebird-embedded.js', 'firebird-embedded.wasm']) {
 
 // public/ verbatim (index.html, css, service worker, wads/ if present)
 fs.cpSync(path.join(root, 'public'), OUT, { recursive: true });
+// The fallback story text for IWADs that keep theirs in the executable (id's
+// doom2.wad): Freedoom Phase 2's C1TEXT–C6TEXT, BSD-licensed like the WADs.
+{
+  const wad2 = path.join(root, 'public/wads/freedoom2.wad');
+  if (fs.existsSync(wad2)) {
+    const { Wad } = await import('../src/wad.js');
+    const { freedoomStrings } = await import('../src/finale.js');
+    const strings = freedoomStrings(new Wad(fs.readFileSync(wad2)));
+    fs.writeFileSync(path.join(OUT, 'wads/freedoom-strings.json'), JSON.stringify(strings, null, 1));
+  }
+}
 // GitHub Pages runs Jekyll by default, which drops _underscored paths.
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
 

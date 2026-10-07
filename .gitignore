@@ -1,5 +1,6 @@
 node_modules/
 dist/
 public/wads/*.wad
+public/wads/FREEDOOM-COPYING.txt
 *.log
 .claude/

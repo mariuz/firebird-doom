@@ -234,6 +234,38 @@ function wadStrings(wad) {
   return deh ? parseDehStrings(new TextDecoder('latin1').decode(wad.data(deh))) : new Map();
 }
 
+// DOOM II's story text for WADs that have none (id's doom2.wad keeps C1TEXT–
+// C6TEXT in the executable): Freedoom Phase 2's, BSD-licensed, which the build
+// extracts into wads/freedoom-strings.json and the page hands to us.
+const FALLBACK_KEYS = ['C1TEXT', 'C2TEXT', 'C3TEXT', 'C4TEXT', 'C5TEXT', 'C6TEXT'];
+let fallbackStrings = new Map();
+
+/** Use these when a WAD lacks DOOM II's story text: { source, strings: { C1TEXT: … } } */
+export function setFallbackStrings(data) {
+  fallbackStrings = new Map(Object.entries(data?.strings ?? {}).filter(([k]) => FALLBACK_KEYS.includes(k)));
+  fallbackStrings.source = data?.source ?? null;
+}
+
+/** What the build writes as the fallback: Freedoom Phase 2's C1TEXT–C6TEXT. */
+export function freedoomStrings(wad) {
+  const s = wadStrings(wad);
+  return {
+    source: 'Freedoom Phase 2 (BSD-3-Clause, see FREEDOOM-COPYING.txt)',
+    strings: Object.fromEntries(FALLBACK_KEYS.filter((k) => s.get(k)).map((k) => [k, s.get(k)])),
+  };
+}
+
+/**
+ * A screen's words: the WAD's own, else (DOOM II's screens only) the fallback.
+ * DOOM I's endings don't borrow: without words they go straight to their art.
+ */
+function screenText(wad, screen) {
+  const own = wadStrings(wad).get(screen.text);
+  if (own) return { text: own, borrowed: false };
+  const spare = screen.art ? null : fallbackStrings.get(screen.text);
+  return spare ? { text: spare, borrowed: true } : { text: '', borrowed: false };
+}
+
 export class Finale {
   constructor(renderer, audio, wad, thingTypes, mapName = 'MAP30', secret = false) {
     this.renderer = renderer;
@@ -243,7 +275,9 @@ export class Finale {
     this.secret = secret;   // …and how it was left: where the game goes next
     const screen = SCREENS[mapName];
     const strings = wadStrings(wad);
-    this.state = new FinaleState(strings.get(screen.text) ?? '', buildCast(thingTypes, strings),
+    const { text, borrowed } = screenText(wad, screen);
+    this.borrowed = borrowed;   // the words are Freedoom's, the WAD had none
+    this.state = new FinaleState(text, buildCast(thingTypes, strings),
       (snd) => audio.playEvents([[0, snd, 0, null, null]], { x: 0, y: 0, angle: 0 }), !!screen.cast, !!screen.art);
     this.flat = wad.lump(screen.flat) ? wad.data(wad.lump(screen.flat)) : null;
     // F_Drawer's art: for episode 1, CREDIT on a four-episode ("retail") WAD, else HELP2
@@ -266,7 +300,7 @@ export class Finale {
     const screen = SCREENS[mapName];
     if (!screen || (screen.secret && !secret)) return false;
     if (screen.cast) return !!wad.lump('BOSSBACK');
-    const words = !!wad.lump(screen.flat) && !!wadStrings(wad).get(screen.text);
+    const words = !!wad.lump(screen.flat) && !!screenText(wad, screen).text;
     // DOOM I's endings show their art even without the words (id's doom.wad)
     if (screen.art) return words || Finale.hasArt(wad, screen.art);
     return words;

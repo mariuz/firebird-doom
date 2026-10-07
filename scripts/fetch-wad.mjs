@@ -95,3 +95,7 @@ for (const name of ['freedoom1.wad', 'freedoom2.wad']) {
   fs.writeFileSync(path.join(outDir, name), small);
   console.log(`public/wads/${name}: ${(wad.length / 1e6).toFixed(1)} MB → ${(small.length / 1e6).toFixed(1)} MB`);
 }
+// Freedoom's licence (BSD-3-Clause) travels with the WADs and with the story
+// text the build derives from them (wads/freedoom-strings.json)
+fs.writeFileSync(path.join(outDir, 'FREEDOOM-COPYING.txt'), unzipOne(zip, 'COPYING.txt'));
+console.log('public/wads/FREEDOOM-COPYING.txt');

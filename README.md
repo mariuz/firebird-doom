@@ -295,8 +295,12 @@ found and drawn flipped. `npm run test:finale` checks all of this without a scre
 The game ships with Freedoom, but the **WAD** picker loads any IWAD, id's `doom.wad` and
 `doom2.wad` included. Those keep their story texts in the executable rather than the WAD, so
 without them the Doom I endings go straight to their art. E1M8 shows `CREDIT` (Ultimate DOOM)
-or `HELP2` (registered), E2M8 `VICTORY2`, E3M8 the bunny scroll and E4M8 `ENDPIC`. MAP30 goes
-straight to the cast call, and Doom II's text-only screens are skipped. id's WADs also bring
+or `HELP2` (registered), E2M8 `VICTORY2`, E3M8 the bunny scroll and E4M8 `ENDPIC`. Doom II's
+text screens fall back to Freedoom Phase 2's story text (`C1TEXT`–`C6TEXT`, BSD-licensed). The
+build extracts it from the bundled `freedoom2.wad` into `wads/freedoom-strings.json`, next to
+`FREEDOOM-COPYING.txt`. So with `doom2.wad` the screens after MAP06, MAP11 and MAP20, the secret
+exits and MAP30 still appear, though their story is Freedoom's. Without that file they're skipped
+and MAP30 goes straight to the cast call. No id text is ever reproduced. id's WADs also bring
 the intermission's splats, "you are here" pointer and episode-map animations that Freedoom leaves
 empty. To see a screen without playing to it, use the browser console:
 
@@ -374,6 +378,13 @@ four OPL2 waveforms. Operator feedback is baked into the waveform. Percussion us
 47 drum patches. Volumes are under the view, and audio starts after your first click or key
 press (a browser rule). In the devtools console, `await doom.audio.renderLevel('D_E1M1')`
 renders a few seconds offline and reports the level.
+
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how it's built. Files, a tic, a frame, palette
+  indices and presenters, the screens, the tests, and the Firebird gotchas.
+- [docs/ROADMAP.md](docs/ROADMAP.md): what's still missing.
+- [CLAUDE.md](CLAUDE.md): working notes for coding agents (commands, conventions, pitfalls).
 
 ## Running locally
 
@@ -529,7 +540,8 @@ Large maps with many monsters awake at once can still drop below 10 fps. The *Lo
 ## Credits
 
 * Engine: [Electric Firebird](https://github.com/mariuz/electric-firebird) (`firebird-wasm`, Apache-2.0)
-* Game data: [Freedoom](https://freedoom.github.io/) (BSD-3-Clause)
+* Game data: [Freedoom](https://freedoom.github.io/) (BSD-3-Clause; its licence ships as
+  `wads/FREEDOOM-COPYING.txt`, covering the WADs and the story text derived from them)
 * DOOM © id Software. This is a clean-room SQL re-implementation that reads the WAD format.
 * Inspired by [SQL DOOM / DOOMQL](https://github.com/cedardb/sqldoom) by CedarDB and
   [duckdb-doom](https://github.com/patricktrainer/duckdb-doom)

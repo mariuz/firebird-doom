@@ -16,7 +16,7 @@ import { drawStatusBar, drawText, drawWeapon } from './hud.js';
 import { AM_COLORS, automapColor } from './automap.js';
 import { clevMap, idmusMap, makeCheatReader, makeParamCheatReader } from './cheats.js';
 import { nextMap } from './progress.js';
-import { Finale } from './finale.js';
+import { Finale, setFallbackStrings } from './finale.js';
 import { Intermission, levelOf } from './intermission.js';
 import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
@@ -560,6 +560,9 @@ async function loadGame(game) {
 async function boot() {
   try {
     db = await openDatabase();
+    // DOOM II's story text for WADs without it (id's doom2.wad): Freedoom's, built at deploy
+    fetch(new URL('./wads/freedoom-strings.json', location.href))
+      .then((r) => (r.ok ? r.json() : null)).then((d) => d && setFallbackStrings(d)).catch(() => {});
     // for the devtools console: await doom.sql('SELECT * FROM player')
     window.doom = {
       db, audio, sql: (q, p) => db.query(q, p).then((r) => r.rows),

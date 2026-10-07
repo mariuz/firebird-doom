@@ -176,7 +176,23 @@ if (fs.existsSync(wad1Path)) {
     const cm = [];
     const c = new Finale(null, { playMusic: (m) => cm.push(m), playEvents() {} }, id2, THING_TYPES, 'MAP30');
     assert(!Finale.available(id2, 'MAP06') && Finale.available(id2, 'MAP30') && c.state.stage === 'cast' && cm[0] === 'D_EVIL',
-      `an id-style DOOM II: no MAP06 text screen (no words); MAP30 goes straight to the cast call, to ${cm[0]}`);
+      `an id-style DOOM II with no fallback: no MAP06 text screen; MAP30 goes straight to the cast call, to ${cm[0]}`);
+
+    // with the fallback the page loads (Freedoom Phase 2's text, as the build extracts it)
+    const { setFallbackStrings, freedoomStrings } = await import('../src/finale.js');
+    const extracted = freedoomStrings(d2);
+    setFallbackStrings(extracted);
+    const t6 = new Finale(null, { playMusic() {}, playEvents() {} }, id2, THING_TYPES, 'MAP06');
+    const t30 = new Finale(null, { playMusic() {}, playEvents() {} }, id2, THING_TYPES, 'MAP30');
+    const t15 = Finale.available(id2, 'MAP15', true);
+    const own = new Finale(null, { playMusic() {}, playEvents() {} }, d2, THING_TYPES, 'MAP06');
+    assert(Object.keys(extracted.strings).length === 6 && Finale.available(id2, 'MAP06') && t6.borrowed
+      && t6.state.text === extracted.strings.C1TEXT && t30.state.stage === 'text' && t15 && !own.borrowed,
+      `…with the fallback: MAP06 shows Freedoom's C1TEXT (${t6.state.text.length} characters), MAP30 its text before the cast, MAP15's secret exit C5TEXT; Freedoom's own WAD needn't borrow`);
+    // DOOM I's endings don't borrow: without words they still go straight to the art
+    const e3 = new Finale(null, { playMusic() {}, playEvents() {} }, ultimate, THING_TYPES, 'E3M8');
+    assert(e3.state.stage === 'art' && !e3.borrowed, '…and DOOM I\'s endings still go straight to their art');
+    setFallbackStrings(null);
   }
 }
 
