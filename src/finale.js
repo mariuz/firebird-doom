@@ -8,7 +8,11 @@
 // BOSSBACK backdrop under its name, attacks every twelve frames, and dies
 // when you press a key (F_CastResponder); after its last death frame the next
 // one comes on (F_CastTicker). The cast ends with the player and starts over,
-// as in DOOM. The words come from the WAD's DEHACKED lump (Freedoom ships its
+// as in DOOM. DOOM I's episode ends differently: after E1M8 its text plays to
+// D_VICTOR and can't be skipped; TEXTWAIT tics after the last character the
+// art screen follows (CREDIT on a four-episode WAD, else HELP2). DOOM ends
+// the game there; we let fire or use carry on into the next episode.
+// The words come from the WAD's DEHACKED lump (Freedoom ships its
 // own); the state machine is kept apart from the drawing so it can be tested.
 
 const TEXTSPEED = 3;     // tics per character
@@ -17,6 +21,8 @@ const WALK_TICS = 4;     // a cast member's see-state frames
 const ATTACK_TICS = 8;   // …its attack frames
 const DEATH_TICS = 5;    // …its death frames
 const LAST_TICS = 15;    // F_CastTicker: a state lasting forever holds 15 tics
+const TEXTWAIT = 250;    // DOOM I: tics after the text before the art screen
+const ART_HOLD = 35;     // …and how long the art stays before a key moves on
 
 // F_StartFinale for DOOM II: which text, over which flat, after which map
 // (secret: only when it was left by the secret exit, into MAP31 or MAP32)
@@ -27,6 +33,8 @@ const SCREENS = {
   MAP30: { text: 'C4TEXT', flat: 'RROCK17', cast: true },
   MAP15: { text: 'C5TEXT', flat: 'RROCK13', secret: true },
   MAP31: { text: 'C6TEXT', flat: 'RROCK19', secret: true },
+  // DOOM I: the end of an episode
+  E1M8: { text: 'E1TEXT', flat: 'FLOOR4_8', music: 'D_VICTOR', art: true },
 };
 
 // castorder[], by thing type; the player is "type" 0
@@ -80,12 +88,15 @@ export class FinaleState {
    * @param sound  called with a sound lump name to play
    * @param castAfter the cast call follows the text (MAP30); otherwise the
    *                  text ends the screen (stage 'done': on to the next map)
+   * @param artAfter  DOOM I: the text can't be skipped, and the art screen
+   *                  follows it on its own (stage 'art'), then a key ends it
    */
-  constructor(text, cast, sound = () => {}, castAfter = true) {
+  constructor(text, cast, sound = () => {}, castAfter = true, artAfter = false) {
     this.text = text;
     this.cast = cast;
     this.sound = sound;
-    this.castAfter = castAfter;
+    this.castAfter = castAfter && !artAfter;
+    this.artAfter = artAfter;
     this.stage = 'text';
     this.count = 0;
   }
@@ -97,6 +108,14 @@ export class FinaleState {
   tick(buttons = false) {
     this.count++;
     if (this.stage === 'done') return;
+    if (this.artAfter) {
+      // F_Ticker, DOOM I: no skipping the text; TEXTWAIT after it, the art
+      if (this.stage === 'text' && this.count > 10 + this.text.length * TEXTSPEED + TEXTWAIT) {
+        this.stage = 'art';
+        this.count = 0;
+      } else if (this.stage === 'art' && buttons && this.count > ART_HOLD) this.stage = 'done';
+      return;
+    }
     if (this.stage === 'text') {
       if (buttons && this.count > SKIP_AFTER) {
         if (this.castAfter) this.startCast();
@@ -203,16 +222,18 @@ export class Finale {
     const screen = SCREENS[mapName];
     const strings = wadStrings(wad);
     this.state = new FinaleState(strings.get(screen.text) ?? '', buildCast(thingTypes, strings),
-      (snd) => audio.playEvents([[0, snd, 0, null, null]], { x: 0, y: 0, angle: 0 }), !!screen.cast);
+      (snd) => audio.playEvents([[0, snd, 0, null, null]], { x: 0, y: 0, angle: 0 }), !!screen.cast, !!screen.art);
     this.flat = wad.data(wad.lump(screen.flat));
+    // F_Drawer's art for episode 1: CREDIT on a four-episode ("retail") WAD, else HELP2
+    this.art = screen.art ? (wad.lump('E4M1') ? 'CREDIT' : 'HELP2') : null;
     this.names = wad.lumps.map((l) => l.name);
     this.fronts = new Map();
-    audio.playMusic('D_READ_M');
+    audio.playMusic(screen.music ?? 'D_READ_M');
   }
 
   /**
-   * Is there a screen after this map? DOOM II's MAP06/11/20/30, and MAP15/31
-   * left by the secret exit, when the WAD has the flat, and the words (the
+   * Is there a screen after this map? DOOM II's MAP06/11/20/30, MAP15/31
+   * left by the secret exit, and DOOM I's E1M8, when the WAD has the flat, and the words (the
    * text screens) or the backdrop (MAP30's cast call, which plays even
    * without text).
    */
@@ -236,7 +257,9 @@ export class Finale {
 
   draw() {
     const r = this.renderer;
-    if (this.state.stage !== 'cast') {
+    if (this.state.stage === 'art') {
+      r.patch(r.pictureByName(this.art), 0, 0);
+    } else if (this.state.stage !== 'cast') {
       // F_TextWrite: the flat tiled over the whole screen, the text typed onto it
       for (let y = 0; y < 200; y++) {
         for (let x = 0; x < 320; x++) r.sfb[y * 320 + x] = this.flat[((y & 63) << 6) | (x & 63)];

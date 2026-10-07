@@ -238,6 +238,11 @@ exit shows `C5TEXT` over `RROCK13` before MAP31, and leaving MAP31 by its secret
 `C6TEXT` over `RROCK19` before MAP32. Their normal exits show nothing. A WAD without the
 words (DOOM II keeps them in its executable, not its WAD) just goes straight on.
 
+DOOM I's first episode ends the way `F_StartFinale` ends it. After E1M8, `E1TEXT` types itself
+out over `FLOOR4_8` to `D_VICTOR`, and it can't be skipped. 250 tics after the last character
+(`TEXTWAIT`), the art screen follows: `CREDIT` on a four-episode WAD like Freedoom's, `HELP2`
+otherwise. DOOM ends the game there, but this port carries on, so fire or use takes you into E2M1.
+
 
 Finishing MAP30 starts DOOM II's ending ([src/finale.js](src/finale.js), after `f_finale.c`). First
 the story text types itself out a character every three tics over the tiled `RROCK17` flat, to

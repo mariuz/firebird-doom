@@ -103,5 +103,30 @@ if (!fs.existsSync(wadPath)) {
   assert(loop.castnum === 0, 'after the last of the cast, the first comes back');
 }
 
+// DOOM I: the end of episode 1
+const wad1Path = path.join(root, 'public/wads/freedoom1.wad');
+if (fs.existsSync(wad1Path)) {
+  const wad1 = new Wad(fs.readFileSync(wad1Path));
+  const strings1 = parseDehStrings(new TextDecoder('latin1').decode(wad1.data(wad1.lump('DEHACKED'))));
+  const music = [];
+  const fin = new Finale(null, { playMusic: (m) => music.push(m), playEvents() {} }, wad1, THING_TYPES, 'E1M8');
+  const len = fin.state.text.length;
+  assert(Finale.available(wad1, 'E1M8') && !Finale.available(wad1, 'E1M7') && fin.state.text === strings1.get('E1TEXT')
+    && music[0] === 'D_VICTOR' && fin.art === 'CREDIT',
+    `E1M8: E1TEXT (${len} characters) to ${music[0]}, then ${fin.art} (a four-episode WAD)`);
+  // the text can't be skipped; TEXTWAIT tics after the last character, the art
+  for (let i = 0; i < 10 + len * 3 + 250; i++) fin.tick(true);
+  const held = fin.state.stage;
+  fin.tick(false);
+  assert(held === 'text' && fin.state.stage === 'art', `fire held all along doesn't skip the text; ${10 + len * 3 + 250} tics in, the art screen`);
+  fin.tick(true);
+  const early = fin.state.stage;
+  for (let i = 0; i < 40; i++) fin.tick(false);
+  fin.tick(true);
+  const { nextMap } = await import('../src/progress.js');
+  assert(early === 'art' && fin.done && nextMap('E1M8', false, wad1.mapNames()) === 'E2M1',
+    'the art holds a second, then fire carries on into E2M1');
+} else console.log('(no freedoom1.wad)');
+
 console.log(failures ? `${failures} failure(s)` : 'finale ok');
 process.exit(failures ? 1 : 0);

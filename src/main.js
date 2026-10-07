@@ -49,7 +49,7 @@ const saveSettings = () => {
 };
 const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
 let showMap = false;
-let finale = null;                  // DOOM II's text screens (MAP06/11/20, the secret levels) and ending (MAP30)
+let finale = null;                  // text screens: DOOM II's (MAP06/11/20, the secret levels, MAP30) and DOOM I's E1M8
 let finaleKey = false;              // a key went down: F_CastResponder
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
 const iddt = makeCheatReader('iddt');
@@ -289,7 +289,7 @@ async function frame() {
       for (let i = 0; i < tics; i++) finale.tick(input[4] === 1 || input[5] === 1);
       if (finale.done) {
         // G_WorldDone after a text screen: on to the next map (MAP31/32 after a
-        // secret exit's), inventory kept
+        // secret exit's; the next episode after E1M8's), inventory kept
         await startMap(nextMap(map.name, finale.secret, wad.mapNames()), false);
         nextFrame();
         return;
