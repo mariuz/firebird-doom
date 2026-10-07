@@ -895,6 +895,199 @@ if (slimeMap) {
   await db.exec('UPDATE player SET health = 100');
 }
 
+// ── the less common linedef specials ────────────────────────────────────
+{
+  await loadMap(db, wad, res, maps[0], { skill: 3 });
+  await quiet();
+  // a test sector X (empty, with room, neighbours above and below would be
+  // nice but aren't needed) tagged 999, and a line elsewhere to carry the special
+  const X = await one(`SELECT FIRST 1 s.id, s.floor_h, s.ceil_h, s.floor_flat, s.light FROM sectors s
+      WHERE s.ceil_h - s.floor_h >= 96 AND s.special = 0 AND s.tag = 0
+        AND NOT EXISTS (SELECT 1 FROM things t WHERE t.sector_id = s.id)
+        AND (SELECT COUNT(*) FROM linedefs l WHERE (l.front_sector = s.id OR l.back_sector = s.id) AND l.back_sector IS NOT NULL) >= 2
+      ORDER BY s.id`);
+  const L = await one(`SELECT FIRST 1 l.id, l.front_sector f FROM linedefs l WHERE l.front_sector <> ${X.ID} AND l.back_sector IS NULL ORDER BY l.id`);
+  await db.exec(`UPDATE sectors SET tag = 999 WHERE id = ${X.ID}`);
+  const state = () => one(`SELECT s.floor_h, s.ceil_h, s.floor_flat, s.light, s.special, s.base_light, s.min_light,
+      m.kind, m.dir, m.speed, m.top_h, m.bottom_h, m.wait_left, m.stay, m.new_flat, m.new_special
+      FROM sectors s LEFT JOIN movers m ON m.sector_id = s.id WHERE s.id = ${X.ID}`);
+  const reset = async () => {
+    await db.exec(`DELETE FROM movers`);
+    await db.exec(`UPDATE sectors SET floor_h = ${X.FLOOR_H}, ceil_h = ${X.CEIL_H}, floor_flat = ${X.FLOOR_FLAT},
+        light = ${X.LIGHT}, base_light = ${X.LIGHT}, special = 0 WHERE id = ${X.ID}`);
+  };
+  const fire = async (sp, how = 'walk') => {
+    await db.exec(`UPDATE linedefs SET special = ${sp}, tag = 999 WHERE id = ${L.ID}`);
+    await db.exec(`EXECUTE PROCEDURE activate_line(${L.ID}, '${how}')`);
+    return state();
+  };
+  const nb = (what) => one(`SELECT neighbor_h(${X.ID}, '${what}') v FROM rdb$database`).then((r) => r.V);
+  const until = async (cond, max = 3000) => { for (let i = 0; i < max; i++) { const s = await state(); if (cond(s)) return s; await tic(); } return state(); };
+
+  // lights
+  await reset();
+  const l255 = await fire(13);
+  const l35 = await fire(35);
+  const lmax = await fire(12);
+  const brightest = await nb('max_light');
+  await db.exec(`UPDATE sectors SET light = 255 WHERE id = ${X.ID}`);
+  const lmin = await fire(104);
+  const darkest = Math.min(255, await nb('min_light'));
+  const l138 = await fire(138, 'use');
+  assert(l255.LIGHT === 255 && l35.LIGHT === 35 && lmax.LIGHT === brightest && lmin.LIGHT === darkest && l138.LIGHT === 255,
+    `lights: 13 → 255, 35 → 35, 12 → the brightest neighbour (${brightest}), 104 → the darkest (${darkest}), switch 138 → 255`);
+  await reset();
+  await db.exec(`UPDATE sectors SET light = 200 WHERE id = ${X.ID}`);
+  const strobe = await fire(17);
+  const seen = new Set();
+  for (let i = 0; i < 44; i++) { await tic(); seen.add((await state()).LIGHT); }
+  assert(strobe.SPECIAL === 3 && strobe.BASE_LIGHT === 200 && seen.has(200) && seen.has(strobe.MIN_LIGHT) && seen.size === 2,
+    `17 starts a slow strobe between 200 and ${strobe.MIN_LIGHT} (light type 3)`);
+
+  // a door that closes for thirty seconds
+  await reset();
+  const c30 = await fire(16);
+  const shut = await until((s) => s.CEIL_H === s.FLOOR_H);
+  await db.exec(`UPDATE movers SET wait_left = 2 WHERE sector_id = ${X.ID}`);
+  const back = await until((s) => s.KIND === null);
+  assert(c30.DIR === -1 && c30.STAY === 2 && shut.DIR === 0 && shut.WAIT_LEFT >= 30 * 35 - 1 && back.CEIL_H === X.CEIL_H,
+    `16: the door closes, waits thirty seconds (${shut.WAIT_LEFT} tics left), and opens again to ${back.CEIL_H} for good`);
+
+  // perpetual lifts, stopped and started
+  await reset();
+  const perp = await fire(53);
+  const hi = Math.max(X.FLOOR_H, await nb('max_floor'));
+  const lo = Math.min(X.FLOOR_H, await nb('min_floor'));
+  for (let i = 0; i < 400; i++) await tic();
+  const still = await state();
+  const stopped = await fire(54);
+  const fh0 = stopped.FLOOR_H;
+  for (let i = 0; i < 20; i++) await tic();
+  const frozen = await state();
+  const going = await fire(53);
+  assert(perp.KIND === 'lift' && perp.STAY === 2 && perp.SPEED === 1 && perp.TOP_H === hi && perp.BOTTOM_H === lo
+      && still.KIND === 'lift' && stopped.KIND === 'lifts' && frozen.FLOOR_H === fh0 && going.KIND === 'lift',
+    `53: a perpetual lift between ${lo} and ${hi}, still going 400 tics later; 54 stops it dead, 53 starts it again`);
+
+  // raise and change
+  await db.exec('DELETE FROM movers');
+  await reset();
+  const other = (await one(`SELECT FIRST 1 id FROM flats WHERE id <> ${X.FLOOR_FLAT} AND is_sky = 0 ORDER BY id`)).ID;
+  await db.exec(`UPDATE sectors SET floor_flat = ${other} WHERE id = ${L.F}`);
+  const r24 = await fire(15, 'use');
+  await reset();
+  const r32 = await fire(14, 'use');
+  await reset();
+  await db.exec(`UPDATE sectors SET special = 7 WHERE id = ${X.ID}`);
+  const near = await fire(22);
+  assert(r24.FLOOR_FLAT === other && r24.TOP_H === X.FLOOR_H + 24 && r24.SPEED === 0.5 && r32.TOP_H === X.FLOOR_H + 32
+      && near.FLOOR_FLAT === other && near.SPECIAL === 0,
+    'raise and change: the front sector\'s flat at once, then up 24 (15), 32 (14), or to the next floor (22, which also clears the special), at half speed');
+
+  // lower and change
+  await reset();
+  const low = await nb('min_floor');
+  if (low < X.FLOOR_H) {
+    const lc = await fire(37);
+    const after = await until((s) => s.KIND === null);
+    assert(lc.TOP_H === low && lc.NEW_FLAT !== null && after.FLOOR_H === low && after.FLOOR_FLAT === lc.NEW_FLAT,
+      `37: down to the lowest floor around (${low}), taking that neighbour's flat when it gets there`);
+  } else console.log('(no lower neighbour for lowerAndChange)');
+
+  // floors: by the shortest lower texture, turbo to the next, by 512, and the gun's
+  await reset();
+  const tex = await fire(30);
+  const shortest = (await one(`SELECT MIN(t.h) h FROM linedefs l JOIN sidedefs sd ON sd.id IN (l.front_side, l.back_side)
+      JOIN textures t ON t.id = sd.lower_tex WHERE (l.front_sector = ${X.ID} OR l.back_sector = ${X.ID})
+        AND l.back_sector IS NOT NULL AND sd.lower_tex > 0`)).H;
+  await reset();
+  const f512 = await fire(140, 'use');
+  await reset();
+  const turbo = await fire(131, 'use');
+  await reset();
+  const gun = await fire(24, 'shoot');
+  assert((shortest == null || tex.TOP_H === X.FLOOR_H + shortest) && f512.TOP_H === X.FLOOR_H + 512
+      && (turbo.KIND === null || turbo.SPEED === 4) && (gun.KIND === null || gun.TOP_H <= X.CEIL_H),
+    `floors: 30 up by the shortest lower texture (${shortest}), 140 by 512, 131 to the next at speed 4, and shooting 24 raises it`);
+
+  // ceilings
+  await reset();
+  const top = Math.max(X.CEIL_H, await nb('max_ceil'));
+  await fire(40);
+  const raised = await until((s) => s.KIND === null);
+  await reset();
+  const lowering = await fire(41, 'use');
+  const down = await until((s) => s.KIND === null);
+  assert(raised.CEIL_H === top && lowering.STAY === 1 && down.CEIL_H === down.FLOOR_H,
+    `ceilings: 40 up to the highest ceiling around (${top}) and stops; 41 down to the floor`);
+
+  // turbo stairs
+  await reset();
+  const st16 = await fire(100);
+  assert(st16.TOP_H === X.FLOOR_H + 16 && st16.SPEED === 4, `100: stairs in steps of 16, four times as fast`);
+
+  // the donut
+  await reset();
+  const s2 = (await one(`SELECT FIRST 1 IIF(l.front_sector = ${X.ID}, l.back_sector, l.front_sector) s FROM linedefs l
+      WHERE (l.front_sector = ${X.ID} OR l.back_sector = ${X.ID}) AND l.back_sector IS NOT NULL ORDER BY l.id`)).S;
+  await db.exec(`UPDATE linedefs SET special = 9, tag = 999 WHERE id = ${L.ID}`);
+  await db.exec(`EXECUTE PROCEDURE activate_line(${L.ID}, 'use')`);
+  const ring = await one(`SELECT m.top_h, m.new_flat, m.speed FROM movers m WHERE m.sector_id = ${s2}`);
+  const hole = await state();
+  assert((ring == null || (ring.SPEED === 0.5 && ring.NEW_FLAT !== null)) && (hole.KIND === null || hole.SPEED === 0.5)
+      && (ring == null || hole.KIND === null || ring.TOP_H === hole.TOP_H),
+    `9: the donut – the ring and the hole move to the same height at half speed, the ring taking the outer flat`);
+  await db.exec(`DELETE FROM movers WHERE sector_id = ${s2}`);
+
+  // a walk line doesn't answer USE, nor a switch a step
+  await reset();
+  const wrong = await fire(13, 'use');
+  const wrong2 = await fire(138, 'walk');
+  assert(wrong.LIGHT === X.LIGHT && wrong2.LIGHT === X.LIGHT, 'a walk-over special ignores USE, and a switch ignores walking over it');
+  await reset();
+  await db.exec(`UPDATE sectors SET tag = 0 WHERE id = ${X.ID}`);
+  await db.exec(`UPDATE linedefs SET special = 0, tag = 0 WHERE id = ${L.ID}`);
+}
+
+// ── a scrolling wall (48) in the renderer ───────────────────────────────
+{
+  const { Renderer } = await import('../src/renderer.js');
+  await loadMap(db, wad, res, maps[0], { skill: 3 });
+  await quiet();
+  const arr = { rowMode: 'array' };
+  const hud = (await tic()).rows[0];
+  const walls = (await db.query('SELECT * FROM frame_walls', [], arr)).rows;
+  const map = { skyTex: 0 };
+  map.lines = new Map((await db.query('SELECT id, front_side, back_side, flags, light_delta FROM linedefs', [], arr)).rows
+    .map((r) => [r[0], { fs: r[1], bs: r[2], flags: r[3], lightDelta: r[4], scroll: false }]));
+  map.sides = new Map((await db.query('SELECT id, xoff, yoff, upper_tex, lower_tex, mid_tex, sector_id FROM sidedefs', [], arr)).rows
+    .map((r) => [r[0], { xoff: r[1], yoff: r[2], upper: r[3], lower: r[4], mid: r[5], sector: r[6] }]));
+  map.sectors = new Map((await db.query('SELECT * FROM frame_sectors', [], arr)).rows
+    .map((r) => [r[0], { floor: r[1], ceil: r[2], floorFlat: r[3], ceilFlat: r[4], light: r[5], sky: r[6] === 1 }]));
+  // the solid wall (one-sided, textured) that fills most of the view
+  const count = new Map();
+  for (const w of walls) {
+    const ln = map.lines.get(w[3]);
+    if (!w[4] && ln.bs == null && map.sides.get(ln.fs).mid > 0) count.set(w[3], (count.get(w[3]) ?? 0) + 1);
+  }
+  const lineId = [...count].sort((a, b) => b[1] - a[1])[0][0];
+  const line = map.lines.get(lineId);
+  const side = map.sides.get(line.fs);
+  const x0 = side.xoff;
+  const r = new Renderer(wad, res);
+  const frame = (scroll, extra) => {
+    line.scroll = scroll;
+    side.xoff = x0 + extra;
+    r.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: 37, palette: 0, fixedColormap: null }, walls, [], map);
+    return Buffer.from(r.fb).toString('base64');
+  };
+  const scrolled = frame(true, 0);
+  const byHand = frame(false, 37);
+  const plain = frame(false, 0);
+  assert(scrolled === byHand && scrolled !== plain,
+    `line 48: at tic 37 its front side is drawn 37 units along (line ${lineId}, ${count.get(lineId)} columns), exactly as if its offset were 37 more`);
+}
+
 // ── the computer area map ───────────────────────────────────────────────
 {
   const sp = await one(`SELECT t.x, t.y FROM things t WHERE t.kind = 'player'`);

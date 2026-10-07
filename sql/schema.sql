@@ -349,7 +349,10 @@ CREATE TABLE movers (
   bottom_h  DOUBLE PRECISION NOT NULL,
   wait_tics INTEGER NOT NULL,
   wait_left INTEGER DEFAULT 0 NOT NULL,
-  stay      SMALLINT DEFAULT 0 NOT NULL, -- 1 = do not return after reaching target
+  stay      SMALLINT DEFAULT 0 NOT NULL, -- 1 = do not return after reaching target; 2 = a door that
+                                         -- reopens 30 s after closing, or a perpetual lift
   crush     SMALLINT DEFAULT 0 NOT NULL, -- damages what it squeezes
-  silent    SMALLINT DEFAULT 0 NOT NULL  -- type 141: no grinding noise
+  silent    SMALLINT DEFAULT 0 NOT NULL, -- type 141: no grinding noise
+  new_flat  INTEGER,                     -- a floor's flat when it arrives (lowerAndChange, donut)
+  new_special INTEGER                    -- …and its new sector special
 );

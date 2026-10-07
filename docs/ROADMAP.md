@@ -42,9 +42,11 @@ you find missing.
   blocked (`MF_FLOAT`). `A_Look` still ignores the player beyond 2400 units, to save sight checks.
 - ~~**Sector specials.**~~ Done: 10 and 14's timed doors, 11's exit at 10 health, and type 4's
   strobe (it was only hurting). Every type `P_SpawnSpecials` knows is handled now.
-- **Linedef specials.** Missing: scrolling walls (48), and the less common door, lift and floor
-  variants. `ACTIVATE_LINE` maps specials to actions in one `CASE`, so a missing number does
-  nothing.
+- ~~**Linedef specials.**~~ Done: every special the player can trigger, the scrolling wall (48)
+  included (see the README's list).
+- **Monsters crossing lines.** Monsters never trigger lines. In DOOM they walk through teleporters
+  (39, 97, and the monster-only 125/126) and open some doors and lifts (4, 10, 88) as they cross,
+  and open manual doors (1, 32–34) they bump into (`P_Move`'s special lines).
 - **Telefrag.** A teleport onto a monster should kill it (10000 damage).
 - **Multiplayer and deathmatch.** Single player only. Co-op and deathmatch starts and things are
   skipped.

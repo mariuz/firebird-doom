@@ -201,7 +201,8 @@ export class Renderer {
       const fStart = fTop; // …and ends where the floor starts
 
       const light = fs.light + L.lightDelta;
-      const tu = u + S.xoff;
+      // P_UpdateSpecials: line 48's front side scrolls a unit a tic (textureoffset += FRACUNIT)
+      const tu = u + S.xoff + (L.scroll && !backView ? tic : 0);
       if (!bs) {
         const tex = this.texture(this.anim(S.mid, this.texAnim, tic));
         if (tex) {

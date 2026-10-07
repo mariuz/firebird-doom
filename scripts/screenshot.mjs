@@ -35,8 +35,8 @@ const arr = { rowMode: 'array' };
 async function mapState(name) {
   const m = /^E(\d)M/.exec(name);
   const map = { skyTex: res.texId.get(`SKY${m ? Math.min(4, Number(m[1])) : 1}`) ?? 0 };
-  const lines = (await db.query('SELECT id, front_side, back_side, flags, light_delta FROM linedefs', [], arr)).rows;
-  map.lines = new Map(lines.map((r) => [r[0], { fs: r[1], bs: r[2], flags: r[3], lightDelta: r[4] }]));
+  const lines = (await db.query('SELECT id, front_side, back_side, flags, light_delta, special FROM linedefs', [], arr)).rows;
+  map.lines = new Map(lines.map((r) => [r[0], { fs: r[1], bs: r[2], flags: r[3], lightDelta: r[4], scroll: r[5] === 48 }]));
   const sides = (await db.query('SELECT id, xoff, yoff, upper_tex, lower_tex, mid_tex, sector_id FROM sidedefs', [], arr)).rows;
   map.sides = new Map(sides.map((r) => [r[0], { xoff: r[1], yoff: r[2], upper: r[3], lower: r[4], mid: r[5], sector: r[6] }]));
   return map;

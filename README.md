@@ -266,6 +266,37 @@ Every sector type DOOM uses is handled, as in `P_SpawnSpecials` and `P_PlayerInS
 
 `npm run test:physics` runs each kind of special.
 
+### Linedef specials
+
+`ACTIVATE_LINE` maps every linedef special the player can trigger to its action, as `p_spec.c`,
+`p_switch.c` and the action tables do: walk-over (W1/WR), switches (S1/SR), shootable (G1/GR)
+and manual doors. Each acts on the sectors with the line's tag, and `MOVERS` rows do the moving.
+Besides the common doors, lifts, floors, crushers, stairs, teleporters and exits, the port has:
+
+- **lights:** 12/80 to the brightest neighbour, 13/81/138 to 255, 35/79/139 to 35, 104 to the
+  darkest neighbour, 17 starts a slow strobe
+- **doors:** 16/76 close for thirty seconds, then open again for good (`close30ThenOpen`)
+- **lifts:** 53/87 go up and down for ever (`perpetualRaise`), 54/89 stop them where they are,
+  and 53/87 start them again
+- **raise and change:** the floor takes the flat of the line's front sector, then rises at half
+  speed to the next floor up (22/95/20/68/47, which also clear the sector's special), or by 24
+  (15/66/59/93) or 32 (14/67)
+- **floors:** 37/84 lower to the lowest neighbour and take its flat and special on arrival,
+  30/96 rise by the shortest lower texture around, 130/129/131/132 rise to the next floor at
+  four times the speed, 140 rises by 512, and shooting 24 raises it to the lowest ceiling
+- **ceilings:** 40 rises to the highest ceiling around, 41/43 lower to the floor without crushing,
+  72 is a repeatable 44
+- **stairs:** 100/127 build them in steps of 16, four times as fast
+- **the donut (9):** the ring around the sector rises to the floor beyond it and takes that flat,
+  while the hole sinks to the same height
+- **scrolling walls (48):** the front side's texture moves one unit a tic (`P_UpdateSpecials`).
+  It's a function of the tic, like animated textures, so the renderer works it out.
+
+Moving floors grind (`DSSTNMOV`) every 8 tics and stop with `DSPSTOP`, as in `T_MoveFloor`.
+`npm run test:physics` triggers each kind on a test sector and runs it to the end. The
+renderer test draws a scrolling wall at tic 37 and checks it against the same wall with its
+offset moved by 37.
+
 ### Level order
 
 When you leave a level, [src/progress.js](src/progress.js) picks the next one, as `G_DoCompleted`

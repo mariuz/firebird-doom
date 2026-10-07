@@ -452,7 +452,7 @@ async function startMap(name, newGame, { skill = settings.skill, seed = null } =
   const { rows } = await db.query(
     'SELECT id, front_side, back_side, flags, light_delta, x1, y1, x2, y2, front_sector, back_sector, special FROM linedefs',
     [], { rowMode: 'array' });
-  map.lines = new Map(rows.map((r) => [r[0], { fs: r[1], bs: r[2], flags: r[3], lightDelta: r[4] }]));
+  map.lines = new Map(rows.map((r) => [r[0], { fs: r[1], bs: r[2], flags: r[3], lightDelta: r[4], scroll: r[11] === 48 }]));
   map.linedefs = rows;
   map.seen = new Set();   // ML_MAPPED: every line the renderer has drawn on this level
   await loadSides();
