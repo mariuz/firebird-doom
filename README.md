@@ -239,8 +239,12 @@ Pars come from vanilla's tables, and episode 4 has none. Fire or use jumps to th
 and the next press moves on (`WI_checkForAccelerate`; only a new press counts, so the button
 that hit the exit switch doesn't). DOOM I then shows the episode map: a splat on every level
 done, the secret level's once you've been there, and a blinking "you are here" on the next,
-under "Entering" and the next level's name. Freedoom's episode pictures aren't maps, so it ships
-empty splat and pointer patches, and only "Entering" shows. DOOM II says "Entering" for ten tics
+under "Entering" and the next level's name. The episode maps come alive as well
+(`WI_updateAnimatedBack`, vanilla's `anim_t` tables). Episodes 1 and 3 cycle their little
+animations, three frames 11 tics apart from a random start. On episode 2, the part of the map
+you're entering lights up and stays lit, restarting when "Entering" comes up. Freedoom's episode
+pictures aren't maps, so it ships the splat, pointer and animation patches as empty 1×1
+placeholders, and only "Entering" shows. Load id's `doom.wad` and they all appear. DOOM II says "Entering" for ten tics
 and moves on, except after MAP30. Then comes any text screen, then the next level. As in vanilla,
 E?M8 skips the stats and goes straight to the episode's ending. `npm run test:intermission`
 checks the counting, the sounds, the skipping and the par table.

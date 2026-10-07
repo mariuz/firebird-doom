@@ -7,6 +7,9 @@
 // there, another press moves on. DOOM I then shows the episode map: a splat
 // on every level done, a blinking "you are here" on the next, and "Entering
 // <level>" (WI_updateShowNextLoc). DOOM II just says "Entering" for a moment.
+// DOOM I's episode maps also come alive (WI_updateAnimatedBack): little
+// animations cycle on episodes 1 and 3, and on episode 2 the part of the map
+// you're heading for lights up.
 // The counting is IntermissionState, kept apart from the drawing for tests.
 
 const TICRATE = 35;
@@ -31,6 +34,66 @@ const LNODES = [
   [[254, 25], [97, 50], [188, 64], [128, 78], [214, 92], [133, 130], [208, 136], [148, 140], [235, 158]],
   [[156, 168], [48, 154], [174, 95], [265, 75], [130, 48], [279, 23], [198, 48], [140, 25], [281, 136]],
 ];
+
+// wi_stuff.c's anim_t tables, per episode: [period, frames, x, y, level]. A
+// level animation (episode 2) only plays when `level` is the map you're
+// entering (wbs->next); the others always cycle.
+const T3 = Math.floor(TICRATE / 3);
+const T4 = Math.floor(TICRATE / 4);
+const BACK_ANIMS = [
+  [[T3, 3, 224, 104], [T3, 3, 184, 160], [T3, 3, 112, 136], [T3, 3, 72, 112], [T3, 3, 88, 96],
+    [T3, 3, 64, 48], [T3, 3, 192, 40], [T3, 3, 136, 16], [T3, 3, 80, 16], [T3, 3, 64, 24]],
+  [[T3, 1, 128, 136, 1], [T3, 1, 128, 136, 2], [T3, 1, 128, 136, 3], [T3, 1, 128, 136, 4], [T3, 1, 128, 136, 5],
+    [T3, 1, 128, 136, 6], [T3, 1, 128, 136, 7], [T3, 3, 192, 144, 8], [T3, 1, 128, 136, 8]],
+  [[T3, 3, 104, 168], [T3, 3, 40, 136], [T3, 3, 160, 96], [T3, 3, 104, 80], [T3, 3, 120, 32], [T4, 3, 40, 0]],
+];
+
+/** WI_initAnimatedBack / WI_updateAnimatedBack / WI_drawAnimatedBack for one episode map. */
+export class BackAnims {
+  /**
+   * @param episode 0–2 (anything else has none)
+   * @param next    the map being entered, 0-based (wbs->next)
+   * @param random  [0, 1) – where in its period each always-on animation starts
+   */
+  constructor(episode, next, random = Math.random) {
+    this.episode = episode;
+    this.next = next;
+    this.random = random;
+    this.list = (BACK_ANIMS[episode] ?? []).map(([period, frames, x, y, level], j) => ({ j, period, frames, x, y, level }));
+    this.reset(0);
+  }
+
+  reset(bcnt) {
+    for (const a of this.list) {
+      a.ctr = -1;
+      a.nexttic = a.level == null ? bcnt + 1 + Math.floor(this.random() * a.period) : bcnt + 1;
+    }
+  }
+
+  /** statCount: the stats are still counting (one of episode 2's waits for them) */
+  update(bcnt, statCount) {
+    this.list.forEach((a, i) => {
+      if (bcnt !== a.nexttic) return;
+      if (a.level == null) {
+        if (++a.ctr >= a.frames) a.ctr = 0;
+        a.nexttic = bcnt + a.period;
+      } else if (!(statCount && i === 7) && this.next === a.level) {
+        // "gawd-awful hack for level anims": light up, then hold the last frame
+        a.ctr++;
+        if (a.ctr === a.frames) a.ctr--;
+        a.nexttic = bcnt + a.period;
+      }
+    });
+  }
+
+  /** what to draw: [{ lump, x, y }] – WIAeaaff, episode 2's ninth borrowing the fifth's pictures */
+  get frames() {
+    const two = (n) => String(n).padStart(2, '0');
+    return this.list.filter((a) => a.ctr >= 0).map((a) => ({
+      lump: `WIA${this.episode}${two(this.episode === 1 && a.j === 8 ? 4 : a.j)}${two(a.ctr)}`, x: a.x, y: a.y,
+    }));
+  }
+}
 
 /** E1M3 → { doom2: false, episode: 0, map: 2 }; MAP07 → { doom2: true, map: 6 } (0-based, like wbs) */
 export function levelOf(name) {
@@ -158,10 +221,18 @@ export class Intermission {
     this.didSecret = didSecret;
     this.state = new IntermissionState({ ...stats, par: parTime(from) }, this.from.doom2,
       (snd) => audio.playEvents([[0, snd, 0, null, null]], { x: 0, y: 0, angle: 0 }));
+    // the episode map's animations (none on DOOM II or episode 4)
+    this.anims = new BackAnims(this.from.doom2 ? -1 : this.from.episode, this.to.map);
     audio.playMusic(this.from.doom2 ? 'D_DM2INT' : 'D_INTER');
   }
 
-  tick(accelerate) { this.state.tick(accelerate); }
+  tick(accelerate) {
+    const was = this.state.stage;
+    this.state.tick(accelerate);
+    // WI_initShowNextLoc starts the animations over
+    if (was === 'stats' && this.state.stage === 'next') this.anims.reset(this.state.bcnt);
+    this.anims.update(this.state.bcnt, this.state.stage === 'stats');
+  }
 
   get done() { return this.state.done; }
 
@@ -177,6 +248,7 @@ export class Intermission {
     // WI_slamBackground: the episode map (DOOM I, episodes 1–3), else INTERPIC
     const bg = !this.from.doom2 && this.from.episode < 3 ? `WIMAP${this.from.episode}` : 'INTERPIC';
     r.patch(this.pic(bg), 0, 0);
+    for (const f of this.anims.frames) r.patch(this.pic(f.lump), f.x, f.y);   // WI_drawAnimatedBack
     if (this.state.stage === 'stats') this.drawStats();
     else this.drawNextLoc();
     r.present();

@@ -57,6 +57,51 @@ assert(s3.cnt.kills === 0 && s3.stage === 'nostate', 'DOOM II: straight to "Ente
 for (let i = 0; i < 10; i++) s3.tick(false);
 assert(s3.done, '…for ten tics, then on');
 
+// the episode maps' animations (WI_updateAnimatedBack)
+{
+  const { BackAnims } = await import('../src/intermission.js');
+  // episode 1: ten of them, three frames 11 tics apart (started together here: random 0)
+  const e1 = new BackAnims(0, 3, () => 0);
+  const seen = [];
+  for (let bcnt = 1; bcnt <= 40; bcnt++) { e1.update(bcnt, true); seen.push(e1.frames[0]?.lump ?? '-'); }
+  assert(e1.list.length === 10 && seen[0] === 'WIA00000' && seen[11] === 'WIA00001' && seen[22] === 'WIA00002' && seen[33] === 'WIA00000',
+    `episode 1: ten animations, each cycling WIA00000 → 01 → 02 every 11 tics`);
+  // a random start staggers them
+  let k = 0;
+  const e1r = new BackAnims(0, 3, () => [0, 0.5, 0.9][k++ % 3]);
+  assert(new Set(e1r.list.map((a) => a.nexttic)).size === 3, 'their starts are staggered within the period');
+
+  // episode 2: only the level being entered lights up, and stays lit
+  const e2 = new BackAnims(1, 3, () => 0);
+  for (let bcnt = 1; bcnt <= 60; bcnt++) e2.update(bcnt, true);
+  const lit = e2.frames.map((f) => f.lump);
+  assert(lit.join() === 'WIA10200', `episode 2, entering E2M4: only its light, the one waiting for map 3 (${lit.join()})`);
+  // entering E2M9 (next 8): the three-frame one waits for the stats, then plays and holds; the ninth borrows the fifth's pictures
+  const e9 = new BackAnims(1, 8, () => 0);
+  for (let bcnt = 1; bcnt <= 30; bcnt++) e9.update(bcnt, true);
+  const during = e9.frames.map((f) => f.lump).join();
+  e9.reset(30);
+  for (let bcnt = 31; bcnt <= 120; bcnt++) e9.update(bcnt, false);
+  const after = e9.frames.map((f) => f.lump).join();
+  assert(during === 'WIA10400' && after === 'WIA10702,WIA10400',
+    `entering E2M9: during the count only ${during} (the fifth's picture); afterwards the big one plays to its last frame (${after})`);
+  // episode 3 has a faster one; DOOM II and episode 4 have none
+  const e3 = new BackAnims(2, 0, () => 0);
+  assert(e3.list.length === 6 && e3.list[5].period === 8 && new BackAnims(3, 0).list.length === 0 && new BackAnims(-1, 0).list.length === 0,
+    'episode 3: six, the last at 8 tics; episode 4 and DOOM II: none');
+
+  // drawn where vanilla draws them, between the background and the stats
+  const calls = [];
+  const stub = { pictureByName: (n) => ({ name: n, w: 10, h: 10, left: 0, top: 0 }), patch: (p, x, y) => calls.push(`${p?.name}@${x},${y}`), present() {}, sfb: new Uint8Array(64000) };
+  const wad1 = { lump: () => null };
+  const wi = new Intermission(stub, { playMusic() {}, playEvents() {} }, wad1, 'E1M3', 'E1M4', stats);
+  wi.anims = new BackAnims(0, 3, () => 0);
+  wi.tick(false);
+  wi.draw();
+  assert(calls[0] === 'WIMAP0@0,0' && calls[1] === 'WIA00000@224,104' && calls[10] === 'WIA00900@64,24' && calls[11].startsWith('WILV02'),
+    `drawn on the map, under the stats: ${calls.slice(0, 3).join(' ')} … ${calls[10]}`);
+}
+
 // the screens draw from each WAD's own graphics
 for (const [file, from, to] of [['freedoom1.wad', 'E1M3', 'E1M4'], ['freedoom2.wad', 'MAP07', 'MAP08']]) {
   const p = path.join(root, 'public/wads', file);
