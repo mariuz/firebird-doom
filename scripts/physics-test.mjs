@@ -615,7 +615,8 @@ if (sky) {
   const god = (await one('SELECT god FROM player')).GOD;
   assert(nm.HEALTH === 80 && nm.BULLETS === 30 && Math.abs(ball.V - 20) < 0.01 && god === 0,
     `Nightmare: full damage, double ammo (+${nm.BULLETS - 10}), imp fireballs at ${ball.V.toFixed(0)}, and IDDQD does nothing`);
-  // demons run twice as often
+  // demons run twice as often (the test fireball goes first: it flies east, right through where the demon stands)
+  await db.exec('DELETE FROM things WHERE thing_type = 9000');
   const demon = await spawn(3002, p.X + 96, p.Y);
   const steps = [];
   for (let i = 0; i < 6; i++) {
@@ -624,7 +625,7 @@ if (sky) {
     steps.push((await one(`SELECT st_tics FROM things WHERE id = ${demon}`)).ST_TICS);
   }
   assert(steps.every((s) => s >= 1 && s <= 2), `Nightmare demons take a step every 1–2 tics (${steps.join(' ')}), not every 3`);
-  await db.exec(`DELETE FROM things WHERE id = ${demon} OR thing_type = 9000`);
+  await db.exec(`DELETE FROM things WHERE id = ${demon}`);
 
   // a corpse gets back up at its spawn spot, in teleport fog; a lost soul doesn't
   await db.exec('DELETE FROM sound_events');
