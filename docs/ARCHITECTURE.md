@@ -77,6 +77,9 @@ Per tic, `DOOM_TIC` runs:
 `GAME.RNG`. `loadMap` restarts `thing_seq` at 1. So the same map, skill, seed and `DOOM_TIC`
 calls always give the same game, which is what demos rely on. Never call `RAND()` in the game
 SQL, and never let a tic depend on wall-clock time or on the frame rate except through `tics`.
+And never let it depend on physical row order: cursors whose order matters say `ORDER BY`
+(`MONSTERS_THINK` runs in id order, like `P_RunThinkers` in spawn order), and `p_random()` is
+never drawn inside a multi-row `UPDATE` (`LIGHTS_THINK` flickers one sector at a time).
 
 Sounds are rows: `PLAY_SOUND` inserts into `SOUND_EVENTS`, and the page plays whatever is newer
 than the last id it saw. Exits set `game.exit_kind` (1 normal, 2 secret, 3 restart after death).

@@ -533,7 +533,7 @@ BEGIN
   END
   ELSE IF (tg > 0) THEN
   BEGIN
-    FOR SELECT id, floor_h, ceil_h, floor_flat FROM sectors WHERE tag = :tg INTO sec, fh, ch, flat DO
+    FOR SELECT id, floor_h, ceil_h, floor_flat FROM sectors WHERE tag = :tg ORDER BY id INTO sec, fh, ch, flat DO
     BEGIN
       IF (act = 'crushstop') THEN
       BEGIN
@@ -660,6 +660,7 @@ BEGIN
   FOR SELECT t.id, t.kind, t.st, t.x, t.y, t.z, t.height
         FROM things t
        WHERE t.sector_id = :sid AND t.z + t.height > :ch AND t.kind IN ('monster', 'player', 'barrel')
+        ORDER BY t.id
         INTO tid, k, st, tx, ty, tz, th
   DO
   BEGIN
@@ -703,6 +704,7 @@ BEGIN
   FOR SELECT m.sector_id, m.kind, m.dir, m.speed, m.top_h, m.bottom_h, m.wait_tics, m.wait_left, m.stay,
              s.floor_h, s.ceil_h, m.crush, m.silent
         FROM movers m JOIN sectors s ON s.id = m.sector_id
+        ORDER BY m.sector_id
         INTO sid, k, dir, spd, top_h, bottom_h, wait_tics, wait_left, stay, fh, ch, crush, silent
   DO
   BEGIN
@@ -991,6 +993,7 @@ BEGIN
         FROM things t
        WHERE t.x BETWEEN :bx - :dmg - 32 AND :bx + :dmg + 32
          AND t.kind IN ('monster', 'barrel', 'keen', 'brain', 'player') AND t.st NOT IN ('dying', 'dead')
+        ORDER BY t.id
         INTO oid, ok, od, ox, oy, oz
   DO
   BEGIN
@@ -1256,6 +1259,7 @@ BEGIN
             <> SIGN((:x - :ox) * (l.y2 - :oy) - (:y - :oy) * (l.x2 - :ox))
            -- teleporters only work entered from the front
            AND (l.special NOT IN (39, 97) OR l.dx * (:oy - l.y1) - l.dy * (:ox - l.x1) < 0)
+          ORDER BY l.id
           INTO lid
     DO
       EXECUTE PROCEDURE activate_line(lid, 'walk');
@@ -1469,6 +1473,7 @@ BEGIN
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        WHERE t.kind = 'item' AND ABS(t.x - :x) < t.radius + 16 AND ABS(t.y - :y) < t.radius + 16
          AND t.z <= :z + 56 AND t.z + 16 >= :z
+        ORDER BY t.id
         INTO iid, pk, amt, lbl
   DO
   BEGIN
@@ -1659,15 +1664,15 @@ BEGIN
     UPDATE game SET exit_kind = 1 WHERE id = 1;
   ELSE IF ((mn = 'E1M8' AND ttype = 3003) OR (mn = 'E4M8' AND ttype = 7) OR (mn = 'MAP07' AND ttype = 67)) THEN
     -- lowerFloorToLowest, tag 666
-    FOR SELECT id, floor_h FROM sectors WHERE tag = 666 INTO sec, fh DO
+    FOR SELECT id, floor_h FROM sectors WHERE tag = 666 ORDER BY id INTO sec, fh DO
       EXECUTE PROCEDURE floor_start(sec, MINVALUE(fh, COALESCE(neighbor_h(sec, 'min_floor'), fh)), 1);
   ELSE IF (mn = 'E4M6' AND ttype = 16) THEN
     -- blazeOpen, tag 666
-    FOR SELECT id FROM sectors WHERE tag = 666 INTO sec DO
+    FOR SELECT id FROM sectors WHERE tag = 666 ORDER BY id INTO sec DO
       EXECUTE PROCEDURE door_start(sec, 8, 1, 'open');
   ELSE IF (mn = 'MAP07' AND ttype = 68) THEN
     -- raiseToTexture, tag 667: by the height of the shortest lower texture around it
-    FOR SELECT id, floor_h FROM sectors WHERE tag = 667 INTO sec, fh DO
+    FOR SELECT id, floor_h FROM sectors WHERE tag = 667 ORDER BY id INTO sec, fh DO
     BEGIN
       SELECT MIN(tx.h) FROM linedefs l
         JOIN sidedefs sd ON sd.id IN (l.front_side, l.back_side)
@@ -1684,7 +1689,7 @@ AS
 DECLARE sec INTEGER;
 BEGIN
   IF (EXISTS (SELECT 1 FROM things t WHERE t.kind = 'keen' AND t.st NOT IN ('dying', 'dead'))) THEN EXIT;
-  FOR SELECT id FROM sectors WHERE tag = 666 INTO sec DO
+  FOR SELECT id FROM sectors WHERE tag = 666 ORDER BY id INTO sec DO
     EXECUTE PROCEDURE door_start(sec, 2, 1, 'open');
 END^
 
@@ -1803,6 +1808,7 @@ BEGIN
          AND (t.st <> 'dead' OR t.momz <> 0)          -- a corpse still falling
          AND NOT (t.kind = 'barrel' AND t.st = 'idle' AND t.momz = 0)
          AND NOT (t.st = 'idle' AND t.momz = 0 AND MOD(:tic + t.id, 8) <> 0)
+        ORDER BY t.id                                  -- (P_RunThinkers: in spawn order, every time)
         INTO id, k, x, y, z, ang, st, st_tics, st_len, step, reaction, rad, hgt, momx, momy, owner_id, flags, frame, momz,
              spd, walk_fr, atk_fr, death_fr, atk_kind, missile_type, dmg_lo, dmg_hi, shots, sec,
              see_snd, atk_snd, death_snd, ttype,
@@ -2480,6 +2486,7 @@ BEGIN
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        WHERE t.kind = 'monster' AND t.st = 'dead' AND t.thing_type <> 3006
          AND t.spawn_x IS NOT NULL AND t.dead_tic IS NOT NULL AND :tic - t.dead_tic >= 12 * 35
+        ORDER BY t.id
         INTO id, x, y, sx, sy, sa, rad, hgt
   DO
   BEGIN
@@ -2505,6 +2512,7 @@ END^
 -- Light specials: T_LightFlash, T_StrobeFlash, T_Glow, T_FireFlicker.
 CREATE OR ALTER PROCEDURE lights_think (tic INTEGER)
 AS
+DECLARE sec INTEGER;
 BEGIN
   UPDATE sectors
      SET light = CASE special
@@ -2514,10 +2522,14 @@ BEGIN
                    WHEN 3  THEN IIF(MOD(:tic + id * 7, 40) < 5, base_light, min_light)
                    WHEN 13 THEN IIF(MOD(:tic, 40) < 5, base_light, min_light)
                    WHEN 8  THEN min_light + ABS(MOD(:tic * 8, 2 * (base_light - min_light) + 1) - (base_light - min_light))
-                   WHEN 17 THEN IIF(MOD(:tic, 4) = 0, base_light - 16 * CAST(FLOOR(p_random() * 4) AS INTEGER), light)
                    ELSE light
                  END
-   WHERE special IN (1, 2, 3, 8, 12, 13, 17);
+   WHERE special IN (1, 2, 3, 8, 12, 13);
+  -- T_FireFlicker draws P_RANDOM per sector, so one at a time, in sector order
+  -- (a set-based UPDATE would draw in whatever order the rows happen to lie)
+  IF (MOD(tic, 4) = 0) THEN
+    FOR SELECT id FROM sectors WHERE special = 17 ORDER BY id INTO sec DO
+      UPDATE sectors SET light = base_light - 16 * CAST(FLOOR(p_random() * 4) AS INTEGER) WHERE id = :sec;
 END^
 
 -- ── the tic ───────────────────────────────────────────────────────────────
@@ -2787,7 +2799,8 @@ BEGIN
          -- P_SpawnMobj: on Nightmare monsters start with no reaction time
          IIF(:skill = 5, 0, 2)
     FROM map_things m JOIN thing_types tt ON tt.thing_type = m.ttype
-   WHERE BIN_AND(m.flags, 16) = 0 AND BIN_AND(m.flags, :skill_bit) <> 0 AND tt.kind <> 'player';
+   WHERE BIN_AND(m.flags, 16) = 0 AND BIN_AND(m.flags, :skill_bit) <> 0 AND tt.kind <> 'player'
+   ORDER BY m.id;                                       -- (the same ids on every load)
 
   -- the player
   SELECT FIRST 1 x, y, angle * PI() / 180 FROM map_things WHERE ttype = 1 INTO px, py, pa;

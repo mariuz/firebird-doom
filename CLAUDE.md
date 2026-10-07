@@ -77,6 +77,9 @@ intermission, menu, savegame and demo (both WADs) and the build. All of them mus
   (`lastOn`), so scripted key sequences must allow for it.
 - **Determinism:** use `p_random()`, never `RAND()`, in game SQL. Anything random or
   time-dependent outside `DOOM_TIC`'s inputs breaks demos (`npm run test:demo` catches it).
+  Row order counts too: every `FOR SELECT` whose order affects state needs an `ORDER BY`, and
+  never call `p_random()` in a multi-row `UPDATE`. Physical row order changes when a reload
+  reuses pages, so a replay drifts only sometimes (it failed on CI, not locally).
 - **Tests:** physics-test and weapons-test share one database through many sections. A monster
   woken by an earlier section can hurt the player later, so read state right after the action,
   before another tic. Make statistical assertions robust (bigger samples, fixed bounds rather than

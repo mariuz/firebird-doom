@@ -54,9 +54,17 @@ const tics = rec.tics;
 const killed = JSON.parse(a).things.rows.length;
 assert(a === b && player.done, `${map}: ${demo.calls.length} recorded calls (${tics} tics) replay into the same game, every row (${(a.length / 1024).toFixed(0)} KB compared)`);
 
-// the same again, a third time: no drift between runs
-const c3 = await play(demo.seed, inputs);
-assert(c3 === a, 'a third run lands on the same game again');
+// the same again, several times, with other maps loaded in between: their rows
+// reuse the tables' pages, so the map's rows lie in a different physical order.
+// Anything that depends on that order (an unordered cursor, a set-based UPDATE
+// drawing P_RANDOM) shows up as drift here.
+const others = wad.mapNames().slice(1, 4);
+let drift = 0;
+for (let k = 0; k < 4; k++) {
+  if (k) await loadMap(db, wad, res, others[(k - 1) % others.length], { skill: 3 });
+  if ((await play(demo.seed, inputs)) !== a) drift++;
+}
+assert(drift === 0, `four more runs, other maps loaded in between, land on the same game (${drift} drifted)`);
 
 // another seed, another game
 const d = await play(999, inputs);
