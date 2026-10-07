@@ -288,6 +288,25 @@ text (`C4TEXT`) and cast names (`CC_*`), so none of id's text is reproduced. Spr
 front view hides in the mirrored half of a lump name (`SKELA1D1` holds frame D flipped) are
 found and drawn flipped. `npm run test:finale` checks all of this without a screen.
 
+### Testing with id's WADs
+
+The game ships with Freedoom, but the **WAD** picker loads any IWAD, id's `doom.wad` and
+`doom2.wad` included. Those keep their story texts in the executable rather than the WAD, so
+without them the Doom I endings go straight to their art. E1M8 shows `CREDIT` (Ultimate DOOM)
+or `HELP2` (registered), E2M8 `VICTORY2`, E3M8 the bunny scroll and E4M8 `ENDPIC`. MAP30 goes
+straight to the cast call, and Doom II's text-only screens are skipped. id's WADs also bring
+the intermission's splats, "you are here" pointer and episode-map animations that Freedoom leaves
+empty. To see a screen without playing to it, use the browser console:
+
+```js
+doom.finale('E3M8')              // the bunny scroll
+doom.finale('MAP15', true)       // the screen on MAP15's secret exit
+doom.intermission('E2M3', 'E2M4', { kills: 20, totalKills: 20 })
+```
+
+Afterwards the game goes on to the next map, as if you'd just finished the one named.
+`npm run test:finale` simulates both id layouts by hiding Freedoom's `DEHACKED` (and `E4M1`).
+
 ### Cheats
 
 Type **IDDQD**, **IDKFA**, **IDFA**, **IDCLIP**, **IDCHOPPERS**, **IDBEHOLD**<i>x</i>, **IDMYPOS**, **IDMUS**<i>xy</i> or **IDCLEV**<i>xy</i> any time during

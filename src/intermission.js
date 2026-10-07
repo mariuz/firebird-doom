@@ -216,6 +216,7 @@ export class Intermission {
   constructor(renderer, audio, wad, from, to, stats, didSecret = false) {
     this.renderer = renderer;
     this.wad = wad;
+    this.fromName = from;
     this.from = levelOf(from);
     this.to = levelOf(to);
     this.didSecret = didSecret;

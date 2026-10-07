@@ -294,13 +294,13 @@ async function frame() {
       wiButtons = buttons;
       if (intermission.done) {
         // G_WorldDone: a text screen if this exit has one, else the next map
-        const { secret } = intermission;
+        const { secret, fromName } = intermission;
         intermission = null;
-        if (Finale.available(wad, map.name, secret)) {
-          finale = new Finale(renderer, audio, wad, THING_TYPES, map.name, secret);
+        if (Finale.available(wad, fromName, secret)) {
+          finale = new Finale(renderer, audio, wad, THING_TYPES, fromName, secret);
           finaleKey = false;
         } else {
-          await startMap(nextMap(map.name, secret, wad.mapNames()), false);
+          await startMap(nextMap(fromName, secret, wad.mapNames()), false);
         }
       } else intermission.draw();
       nextFrame();
@@ -317,7 +317,7 @@ async function frame() {
       if (finale.done) {
         // G_WorldDone after a text screen: on to the next map (MAP31/32 after a
         // secret exit's; the next episode after E1M8's), inventory kept
-        await startMap(nextMap(map.name, finale.secret, wad.mapNames()), false);
+        await startMap(nextMap(finale.from, finale.secret, wad.mapNames()), false);
         nextFrame();
         return;
       }
@@ -561,7 +561,29 @@ async function boot() {
   try {
     db = await openDatabase();
     // for the devtools console: await doom.sql('SELECT * FROM player')
-    window.doom = { db, audio, sql: (q, p) => db.query(q, p).then((r) => r.rows), get renderer() { return renderer; }, get presenter() { return presenter; } };
+    window.doom = {
+      db, audio, sql: (q, p) => db.query(q, p).then((r) => r.rows),
+      get renderer() { return renderer; }, get presenter() { return presenter; },
+      // previews for testing a WAD's screens without playing to them (try id's
+      // doom.wad: doom.finale('E3M8') is the bunny); afterwards the game goes on
+      // to the map after the one named, as if you'd just finished it
+      finale(name, secret = false) {
+        if (!Finale.available(wad, name, secret)) return `no screen after ${name}${secret ? "'s secret exit" : ''} in this WAD`;
+        intermission = null;
+        finale = new Finale(renderer, audio, wad, THING_TYPES, name, secret);
+        finaleKey = false;
+        return `showing the screen after ${name}`;
+      },
+      intermission(from, to = nextMap(from, false, wad.mapNames()), stats = {}) {
+        finale = null;
+        intermission = new Intermission(renderer, audio, wad, from, to, {
+          kills: 17, totalKills: 20, items: 30, totalItems: 37, secrets: 2, totalSecrets: 3, time: 95 * 35, ...stats,
+        }, didSecret.has(levelOf(from).episode));
+        intermission.secret = false;
+        wiButtons = true;
+        return `showing the intermission ${from} → ${to}`;
+      },
+    };
     await loadGame(settings.game);
     nextFrame();
   } catch (err) {

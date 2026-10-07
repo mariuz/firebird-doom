@@ -115,8 +115,11 @@ export class FinaleState {
     this.sound = sound;
     this.castAfter = castAfter && !artAfter;
     this.artAfter = artAfter;
-    this.stage = 'text';
+    // no text to show (id's WADs keep it in the executable): DOOM I's art, or
+    // DOOM II's cast call, at once
+    this.stage = artAfter && !text ? 'art' : 'text';
     this.count = 0;
+    if (this.castAfter && !text) this.startCast();
   }
 
   /** How much of the text is showing. */
@@ -236,18 +239,21 @@ export class Finale {
     this.renderer = renderer;
     this.audio = audio;
     this.wad = wad;
-    this.secret = secret;   // how the map was left: where the game goes next
+    this.from = mapName;    // the map it follows…
+    this.secret = secret;   // …and how it was left: where the game goes next
     const screen = SCREENS[mapName];
     const strings = wadStrings(wad);
     this.state = new FinaleState(strings.get(screen.text) ?? '', buildCast(thingTypes, strings),
       (snd) => audio.playEvents([[0, snd, 0, null, null]], { x: 0, y: 0, angle: 0 }), !!screen.cast, !!screen.art);
-    this.flat = wad.data(wad.lump(screen.flat));
+    this.flat = wad.lump(screen.flat) ? wad.data(wad.lump(screen.flat)) : null;
     // F_Drawer's art: for episode 1, CREDIT on a four-episode ("retail") WAD, else HELP2
     this.art = screen.art === 'credit' ? (wad.lump('E4M1') ? 'CREDIT' : 'HELP2') : screen.art ?? null;
     this.lastEnd = -1;
     this.names = wad.lumps.map((l) => l.name);
     this.fronts = new Map();
-    audio.playMusic(screen.music ?? 'D_READ_M');
+    // straight to the bunny or the cast (no text first): their own music from the start
+    audio.playMusic(this.state.stage === 'art' && this.art === 'bunny' ? 'D_BUNNY'
+      : this.state.stage === 'cast' ? 'D_EVIL' : screen.music ?? 'D_READ_M');
   }
 
   /**
@@ -258,9 +264,19 @@ export class Finale {
    */
   static available(wad, mapName, secret = false) {
     const screen = SCREENS[mapName];
-    if (!screen || (screen.secret && !secret) || !wad.lump(screen.flat)) return false;
+    if (!screen || (screen.secret && !secret)) return false;
     if (screen.cast) return !!wad.lump('BOSSBACK');
-    return !!wadStrings(wad).get(screen.text);
+    const words = !!wad.lump(screen.flat) && !!wadStrings(wad).get(screen.text);
+    // DOOM I's endings show their art even without the words (id's doom.wad)
+    if (screen.art) return words || Finale.hasArt(wad, screen.art);
+    return words;
+  }
+
+  /** the art screen's pictures are in the WAD */
+  static hasArt(wad, art) {
+    if (art === 'credit') return !!(wad.lump('CREDIT') || wad.lump('HELP2'));
+    if (art === 'bunny') return !!(wad.lump('PFUB1') && wad.lump('PFUB2'));
+    return !!wad.lump(art);
   }
 
   /** The text screen is over: on to the next map. */

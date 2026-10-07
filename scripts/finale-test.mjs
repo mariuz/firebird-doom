@@ -145,6 +145,41 @@ if (fs.existsSync(wad1Path)) {
   }
 } else console.log('(no freedoom1.wad)');
 
+// id's own doom.wad keeps the texts in the executable: no DEHACKED. Simulated
+// by hiding Freedoom's (and, for the registered three-episode WAD, E4M1).
+if (fs.existsSync(wad1Path)) {
+  const base = new Wad(fs.readFileSync(wad1Path));
+  const idLike = (hide) => {
+    const w = Object.create(base);
+    w.lump = (n) => (hide.includes(n) ? null : base.lump(n));
+    return w;
+  };
+  const ultimate = idLike(['DEHACKED']);
+  const registered = idLike(['DEHACKED', 'E4M1']);
+  const tunes = [];
+  const b = new Finale(null, { playMusic: (t) => tunes.push(t), playEvents() {} }, ultimate, THING_TYPES, 'E3M8');
+  for (let i = 0; i < 1300; i++) b.tick(false);
+  assert(Finale.available(ultimate, 'E3M8') && b.state.text === '' && b.art === 'bunny' && tunes[0] === 'D_BUNNY'
+    && b.state.stage === 'art' && b.lastEnd === 6,
+    `an id-style WAD (no DEHACKED): E3M8 goes straight to the bunny scroll, to ${tunes[0]}, all the way to THE END`);
+  const e1u = new Finale(null, { playMusic() {}, playEvents() {} }, ultimate, THING_TYPES, 'E1M8');
+  const e1r = new Finale(null, { playMusic() {}, playEvents() {} }, registered, THING_TYPES, 'E1M8');
+  const e2 = new Finale(null, { playMusic() {}, playEvents() {} }, registered, THING_TYPES, 'E2M8');
+  assert(e1u.art === 'CREDIT' && e1r.art === 'HELP2' && e1u.state.stage === 'art' && e2.art === 'VICTORY2' && e2.state.stage === 'art',
+    `…E1M8 shows ${e1u.art} on the Ultimate DOOM layout, ${e1r.art} on the registered one; E2M8 ${e2.art}`);
+  // DOOM II's text screens have nothing to show without their words
+  const d2Path = path.join(root, 'public/wads/freedoom2.wad');
+  if (fs.existsSync(d2Path)) {
+    const d2 = new Wad(fs.readFileSync(d2Path));
+    const id2 = Object.create(d2);
+    id2.lump = (n) => (n === 'DEHACKED' ? null : d2.lump(n));
+    const cm = [];
+    const c = new Finale(null, { playMusic: (m) => cm.push(m), playEvents() {} }, id2, THING_TYPES, 'MAP30');
+    assert(!Finale.available(id2, 'MAP06') && Finale.available(id2, 'MAP30') && c.state.stage === 'cast' && cm[0] === 'D_EVIL',
+      `an id-style DOOM II: no MAP06 text screen (no words); MAP30 goes straight to the cast call, to ${cm[0]}`);
+  }
+}
+
 // F_BunnyScroll's clock: the scroll, then THE END a letter every 5 tics
 {
   const { bunnyFrame } = await import('../src/finale.js');
