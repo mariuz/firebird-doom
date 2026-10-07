@@ -1,8 +1,9 @@
-// finale.js – DOOM II's ending after MAP30 (f_finale.c).
+// finale.js – DOOM II's text screens and its ending (f_finale.c).
 //
-// First the story text types itself out over a tiled flat (F_TextWrite) to
-// D_READ_M; once 50 tics have passed, fire or use moves on (F_Ticker). Then
-// the cast call (F_StartCast) to D_EVIL: each monster in turn walks on the
+// After MAP06, MAP11 and MAP20 (G_WorldDone) the story so far types itself
+// out over a tiled flat (F_TextWrite) to D_READ_M; once 50 tics have passed,
+// fire or use moves on to the next map (F_Ticker). After MAP30 the text is
+// followed by the cast call (F_StartCast) to D_EVIL: each monster in turn walks on the
 // BOSSBACK backdrop under its name, attacks every twelve frames, and dies
 // when you press a key (F_CastResponder); after its last death frame the next
 // one comes on (F_CastTicker). The cast ends with the player and starts over,
@@ -15,6 +16,14 @@ const WALK_TICS = 4;     // a cast member's see-state frames
 const ATTACK_TICS = 8;   // …its attack frames
 const DEATH_TICS = 5;    // …its death frames
 const LAST_TICS = 15;    // F_CastTicker: a state lasting forever holds 15 tics
+
+// F_StartFinale for DOOM II: which text, over which flat, after which map
+const SCREENS = {
+  MAP06: { text: 'C1TEXT', flat: 'SLIME16' },
+  MAP11: { text: 'C2TEXT', flat: 'RROCK14' },
+  MAP20: { text: 'C3TEXT', flat: 'RROCK07' },
+  MAP30: { text: 'C4TEXT', flat: 'RROCK17', cast: true },
+};
 
 // castorder[], by thing type; the player is "type" 0
 const CAST = [
@@ -65,11 +74,14 @@ export class FinaleState {
    * @param text   the story text (C4TEXT)
    * @param cast   [{ name, sprite, walk, attack, melee, death, seeSnd, atkSnd, deathSnd }]
    * @param sound  called with a sound lump name to play
+   * @param castAfter the cast call follows the text (MAP30); otherwise the
+   *                  text ends the screen (stage 'done': on to the next map)
    */
-  constructor(text, cast, sound = () => {}) {
+  constructor(text, cast, sound = () => {}, castAfter = true) {
     this.text = text;
     this.cast = cast;
     this.sound = sound;
+    this.castAfter = castAfter;
     this.stage = 'text';
     this.count = 0;
   }
@@ -80,8 +92,12 @@ export class FinaleState {
   /** One tic. buttons: fire or use is held (F_Ticker skips the text on those). */
   tick(buttons = false) {
     this.count++;
+    if (this.stage === 'done') return;
     if (this.stage === 'text') {
-      if (buttons && this.count > SKIP_AFTER) this.startCast();
+      if (buttons && this.count > SKIP_AFTER) {
+        if (this.castAfter) this.startCast();
+        else this.stage = 'done';         // gameaction = ga_worlddone
+      }
       return;
     }
     if (--this.tics > 0) return;
@@ -168,25 +184,41 @@ export function buildCast(thingTypes, strings) {
 }
 
 /** The finale on screen: FinaleState plus F_TextWrite and F_CastDrawer. */
+/** The WAD's DEHACKED strings (Freedoom ships its own text). */
+function wadStrings(wad) {
+  const deh = wad.lump('DEHACKED');
+  return deh ? parseDehStrings(new TextDecoder('latin1').decode(wad.data(deh))) : new Map();
+}
+
 export class Finale {
-  constructor(renderer, audio, wad, thingTypes) {
+  constructor(renderer, audio, wad, thingTypes, mapName = 'MAP30') {
     this.renderer = renderer;
     this.audio = audio;
     this.wad = wad;
-    const deh = wad.lump('DEHACKED');
-    const strings = deh ? parseDehStrings(new TextDecoder('latin1').decode(wad.data(deh))) : new Map();
-    this.state = new FinaleState(strings.get('C4TEXT') ?? '', buildCast(thingTypes, strings),
-      (snd) => audio.playEvents([[0, snd, 0, null, null]], { x: 0, y: 0, angle: 0 }));
-    this.flat = wad.lump('RROCK17') ? wad.data(wad.lump('RROCK17')) : null;
+    const screen = SCREENS[mapName];
+    const strings = wadStrings(wad);
+    this.state = new FinaleState(strings.get(screen.text) ?? '', buildCast(thingTypes, strings),
+      (snd) => audio.playEvents([[0, snd, 0, null, null]], { x: 0, y: 0, angle: 0 }), !!screen.cast);
+    this.flat = wad.data(wad.lump(screen.flat));
     this.names = wad.lumps.map((l) => l.name);
     this.fronts = new Map();
     audio.playMusic('D_READ_M');
   }
 
-  /** DOOM II only, and only with the backdrop and the words to draw it with. */
+  /**
+   * Is there a screen after this map? DOOM II's MAP06/11/20/30, when the WAD
+   * has the flat, and the words (the text screens) or the backdrop (MAP30's
+   * cast call, which plays even without text).
+   */
   static available(wad, mapName) {
-    return mapName === 'MAP30' && !!wad.lump('BOSSBACK') && !!wad.lump('RROCK17');
+    const screen = SCREENS[mapName];
+    if (!screen || !wad.lump(screen.flat)) return false;
+    if (screen.cast) return !!wad.lump('BOSSBACK');
+    return !!wadStrings(wad).get(screen.text);
   }
+
+  /** The text screen is over: on to the next map. */
+  get done() { return this.state.stage === 'done'; }
 
   tick(buttons) {
     const was = this.state.stage;
@@ -198,7 +230,7 @@ export class Finale {
 
   draw() {
     const r = this.renderer;
-    if (this.state.stage === 'text') {
+    if (this.state.stage !== 'cast') {
       // F_TextWrite: the flat tiled over the whole screen, the text typed onto it
       for (let y = 0; y < 200; y++) {
         for (let x = 0; x < 320; x++) r.sfb[y * 320 + x] = this.flat[((y & 63) << 6) | (x & 63)];

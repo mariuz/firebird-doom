@@ -21,7 +21,7 @@ if (!fs.existsSync(wadPath)) {
   console.log('(no freedoom2.wad: run npm run fetch-wad)');
 } else {
   const wad = new Wad(fs.readFileSync(wadPath));
-  assert(Finale.available(wad, 'MAP30') && !Finale.available(wad, 'MAP29'), 'the finale follows MAP30 only');
+  assert(Finale.available(wad, 'MAP30') && !Finale.available(wad, 'MAP29'), 'the ending follows MAP30, not MAP29');
   const strings = parseDehStrings(new TextDecoder('latin1').decode(wad.data(wad.lump('DEHACKED'))));
   const cast = buildCast(THING_TYPES, strings);
   const text = strings.get('C4TEXT');
@@ -70,6 +70,18 @@ if (!fs.existsSync(wadPath)) {
   const attacks = [];
   for (let i = 0; i < 400 && attacks.length < 3; i++) { const was = rev.mode; rev.tick(false); if (rev.mode !== was && rev.mode !== 'see') attacks.push(rev.mode); }
   assert(attacks.join() === 'attack,melee,attack', `${cast[11].name}: missile, punch, missile (${attacks.join(', ')})`);
+
+  // the story so far after MAP06, MAP11 and MAP20: text only, then the next map
+  const quiet = { playMusic() {}, playEvents() {} };
+  for (const [m, key] of [['MAP06', 'C1TEXT'], ['MAP11', 'C2TEXT'], ['MAP20', 'C3TEXT']]) {
+    const fin = new Finale(null, quiet, wad, THING_TYPES, m);
+    for (let i = 0; i < 60; i++) fin.tick(false);
+    const waiting = fin.state.stage;
+    fin.tick(true);
+    assert(Finale.available(wad, m) && fin.state.text === strings.get(key) && waiting === 'text' && fin.done && fin.state.stage === 'done',
+      `${m}: ${key} (${fin.state.text.length} characters), and fire goes on to the next map, no cast`);
+  }
+  assert(!Finale.available(wad, 'MAP07') && !Finale.available(wad, 'MAP15'), 'no text screen after other maps');
 
   // after the hero, the cast starts over
   const loop = new FinaleState('', cast);

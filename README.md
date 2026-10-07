@@ -228,7 +228,14 @@ MAP15's secret exit leads to MAP31 and MAP31's to MAP32, and the normal exits of
 levels return to MAP16. A secret exit on any other map counts as a normal one. MAP30 ends the
 game with the finale below. Only a WAD without the finale's pictures goes back to MAP01.
 
-### The DOOM II finale
+### DOOM II's text screens and finale
+
+Finishing MAP06, MAP11 or MAP20 shows the story so far, as `G_WorldDone` does: `C1TEXT` over
+`SLIME16`, `C2TEXT` over `RROCK14` and `C3TEXT` over `RROCK07`, typed out like the ending's
+text below to `D_READ_M`. After 50 tics, fire or use goes on to the next map with your
+inventory intact. A WAD without the words (DOOM II keeps them in its executable, not its WAD)
+just goes straight on.
+
 
 Finishing MAP30 starts DOOM II's ending ([src/finale.js](src/finale.js), after `f_finale.c`). First
 the story text types itself out a character every three tics over the tiled `RROCK17` flat, to
