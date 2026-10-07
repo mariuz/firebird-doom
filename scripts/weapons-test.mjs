@@ -155,7 +155,14 @@ assert(spray > 0, 'BFG ball exploded');
   assert(s.WEAPON === 1, 'chainsaw: key 1 again goes back to the fist');
 
   // the berserk pack: health back to 100, out comes the fist, and it hits ten times as hard
+  // (it doesn't stand still beside you – P_NewChaseDir walks it round you – so put it back in reach)
+  const inReach = () => db.exec(`UPDATE things m SET
+      x = (SELECT p.x + COS(p.angle) * 50 FROM things p WHERE p.kind = 'player'),
+      y = (SELECT p.y + SIN(p.angle) * 50 FROM things p WHERE p.kind = 'player'),
+      z = (SELECT p.z FROM things p WHERE p.kind = 'player'), momz = 0 WHERE m.id = ${target}`)
+    .then(() => db.exec(`UPDATE things t SET sector_id = sector_at(t.x, t.y) WHERE t.id = ${target}`));
   const punches = async (n) => {
+    await inReach();
     const h0 = (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0].HP;
     for (let k = 0; k < n; k++) {
       for (let i = 0; i < 18; i++) {
@@ -291,7 +298,7 @@ assert(gone.DEAD === 1 && gone.WEAPON_Y === 96, `dead, the weapon goes down out 
 // rockets hurt whoever is close, including you
 await db.exec(`UPDATE player SET health = 100, armor = 0, dead = 0`);
 const p = (await db.query(`SELECT t.x, t.y, t.z FROM things t WHERE t.kind = 'player'`)).rows[0];
-await db.exec(`EXECUTE PROCEDURE radius_attack(${p.X + 40}, ${p.Y}, ${p.Z}, 128, -1)`);
+await db.exec(`EXECUTE PROCEDURE radius_attack(${p.X + 1}, ${p.Y}, ${p.Z}, 128, -1)`);   // (right beside you: 40 away can be inside a wall)
 const hp = (await db.query('SELECT health FROM player')).rows[0].HEALTH;
 assert(hp < 100, `splash damage reaches the player (${100 - hp})`);
 

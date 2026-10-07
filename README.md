@@ -594,6 +594,17 @@ sector adjacency graph built at map load, and doors count live through the curre
 heights. A shot costs 3 ms on E1M1 and about 40 ms on the largest maps. It reruns at most once a
 second from the same sector.
 
+Monsters chase the way `p_enemy.c` does. Each one walks one of eight headings, 45° apart
+(`MOVEDIR`), for a random 0–15 steps (`MOVECOUNT`), and turns its body 45° a step towards it.
+When the count runs out or the way is blocked, `P_NewChaseDir` picks again: the diagonal
+towards its target first, then the straight headings, the bigger difference first, then the old
+heading, then all eight in a random sweep. It turns straight round only when nothing else is
+open. That's what makes monsters zigzag, sidestep and wander round pillars. A missile attack
+waits for `MOVECOUNT` to run out, except on Nightmare. The step after an attack only picks a new
+heading (`MF_JUSTATTACKED`). When its target dies, a monster goes back to standing. `A_Look`
+only sees ahead: a monster facing away doesn't notice you unless you come within 64 units, or
+make a noise. `P_Move` and `P_NewChaseDir` are stored procedures (`P_MOVE`, `NEW_CHASE_DIR`).
+
 Monsters fight each other, as in DOOM. When one monster's attack hurts another, the victim turns
 on the attacker and won't switch again for 100 chase steps (`BASETHRESHOLD`). After that, hurting
 it yourself brings it back to you, and once its target dies it hunts you again. Monster projectiles

@@ -1758,6 +1758,140 @@ BEGIN
 END^
 
 -- ── monsters, missiles, effects ───────────────────────────────────────────
+-- P_Move: one step of SPD in the eight-way heading DIR (xspeed/yspeed: the
+-- diagonals are 47000/65536), if there's room to stand there.
+CREATE OR ALTER PROCEDURE p_move (
+  id INTEGER, x DOUBLE PRECISION, y DOUBLE PRECISION, z DOUBLE PRECISION, rad DOUBLE PRECISION,
+  hgt DOUBLE PRECISION, spd DOUBLE PRECISION, fl SMALLINT, momz DOUBLE PRECISION, dir SMALLINT)
+RETURNS (ok SMALLINT, nx DOUBLE PRECISION, ny DOUBLE PRECISION, nz DOUBLE PRECISION, sec INTEGER)
+AS
+DECLARE d DOUBLE PRECISION = 0.7171630859375e0;
+DECLARE tx DOUBLE PRECISION;
+DECLARE ty DOUBLE PRECISION;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
+DECLARE dz DOUBLE PRECISION;
+BEGIN
+  ok = 0;
+  nx = x;
+  ny = y;
+  nz = z;
+  sec = NULL;
+  IF (dir IS NULL OR dir < 0 OR dir > 7) THEN EXIT;
+  tx = x + spd * CASE dir WHEN 0 THEN 1 WHEN 1 THEN d WHEN 2 THEN 0 WHEN 3 THEN -d
+                          WHEN 4 THEN -1 WHEN 5 THEN -d WHEN 6 THEN 0 ELSE d END;
+  ty = y + spd * CASE dir WHEN 0 THEN 0 WHEN 1 THEN d WHEN 2 THEN 1 WHEN 3 THEN d
+                          WHEN 4 THEN 0 WHEN 5 THEN -d WHEN 6 THEN -1 ELSE -d END;
+  EXECUTE PROCEDURE check_position(id, tx, ty, z, rad, hgt, 1) RETURNING_VALUES ok, fz, cz, dz, sec;
+  IF (ok = 1) THEN
+  BEGIN
+    nx = tx;
+    ny = ty;
+    -- on the ground it steps up and down with the floor; tossed or flying,
+    -- it keeps its height
+    nz = IIF(momz = 0 AND fl = 0, fz, MAXVALUE(z, fz));
+  END
+END^
+
+-- P_NewChaseDir: head for the target in one of eight directions – the
+-- diagonal first, then the straight ones (the bigger difference first, or at
+-- random 55 times in 256), then the old heading, then every heading in a
+-- random sweep, and only then a turnaround. P_TryWalk: a successful step
+-- sets MOVECOUNT to P_Random() & 15.
+CREATE OR ALTER PROCEDURE new_chase_dir (
+  id INTEGER, x DOUBLE PRECISION, y DOUBLE PRECISION, z DOUBLE PRECISION, rad DOUBLE PRECISION,
+  hgt DOUBLE PRECISION, spd DOUBLE PRECISION, fl SMALLINT, momz DOUBLE PRECISION, olddir SMALLINT,
+  tx DOUBLE PRECISION, ty DOUBLE PRECISION)
+RETURNS (movedir SMALLINT, movecount INTEGER, nx DOUBLE PRECISION, ny DOUBLE PRECISION, nz DOUBLE PRECISION,
+         sec INTEGER, moved SMALLINT)
+AS
+DECLARE turnaround SMALLINT;
+DECLARE dx DOUBLE PRECISION;
+DECLARE dy DOUBLE PRECISION;
+DECLARE d1 SMALLINT;
+DECLARE d2 SMALLINT;
+DECLARE t SMALLINT;
+DECLARE cand SMALLINT;
+DECLARE stage INTEGER = 0;
+DECLARE sweep_up SMALLINT = 0;
+DECLARE ok SMALLINT;
+DECLARE mx DOUBLE PRECISION;
+DECLARE my DOUBLE PRECISION;
+DECLARE mz DOUBLE PRECISION;
+DECLARE msec INTEGER;
+BEGIN
+  moved = 0;
+  movecount = 0;
+  nx = x;
+  ny = y;
+  nz = z;
+  sec = NULL;
+  turnaround = IIF(olddir >= 8, 8, MOD(olddir + 4, 8));
+  dx = tx - x;
+  dy = ty - y;
+  d1 = IIF(dx > 10, 0, IIF(dx < -10, 4, 8));
+  d2 = IIF(dy < -10, 6, IIF(dy > 10, 2, 8));
+  -- the direct route: diags[((deltay < 0) << 1) + (deltax > 0)]
+  IF (d1 <> 8 AND d2 <> 8) THEN
+  BEGIN
+    cand = CASE WHEN dy < 0 AND dx > 0 THEN 7 WHEN dy < 0 THEN 5 WHEN dx > 0 THEN 1 ELSE 3 END;
+    IF (cand <> turnaround) THEN
+    BEGIN
+      EXECUTE PROCEDURE p_move(id, x, y, z, rad, hgt, spd, fl, momz, cand) RETURNING_VALUES ok, mx, my, mz, msec;
+      IF (ok = 1) THEN
+      BEGIN
+        moved = 1;
+        movedir = cand;
+      END
+    END
+  END
+  IF (moved = 0) THEN
+  BEGIN
+    IF (FLOOR(p_random() * 256) > 200 OR ABS(dy) > ABS(dx)) THEN
+    BEGIN
+      t = d1;
+      d1 = d2;
+      d2 = t;
+    END
+    IF (d1 = turnaround) THEN d1 = 8;
+    IF (d2 = turnaround) THEN d2 = 8;
+    -- 0: d1, 1: d2, 2: the old heading, 3–10: the sweep, 11: the turnaround
+    WHILE (moved = 0 AND stage <= 11) DO
+    BEGIN
+      cand = 8;
+      IF (stage = 0) THEN cand = d1;
+      ELSE IF (stage = 1) THEN cand = d2;
+      ELSE IF (stage = 2) THEN cand = olddir;
+      ELSE IF (stage <= 10) THEN
+      BEGIN
+        IF (stage = 3) THEN sweep_up = MOD(FLOOR(p_random() * 256), 2);
+        cand = IIF(sweep_up = 1, stage - 3, 10 - stage);
+        IF (cand = turnaround) THEN cand = 8;
+      END
+      ELSE cand = turnaround;
+      IF (cand < 8) THEN
+      BEGIN
+        EXECUTE PROCEDURE p_move(id, x, y, z, rad, hgt, spd, fl, momz, cand) RETURNING_VALUES ok, mx, my, mz, msec;
+        IF (ok = 1) THEN
+        BEGIN
+          moved = 1;
+          movedir = cand;
+        END
+      END
+      stage = stage + 1;
+    END
+  END
+  IF (moved = 1) THEN
+  BEGIN
+    nx = mx;
+    ny = my;
+    nz = mz;
+    sec = msec;
+    movecount = MOD(FLOOR(p_random() * 256), 16);
+  END
+  ELSE movedir = 8;
+END^
+
 -- A_Look / A_Chase / A_FaceTarget / A_PosAttack / A_TroopAttack / A_SargAttack,
 -- collapsed into one state machine per thing.
 CREATE OR ALTER PROCEDURE monsters_think (tic INTEGER)
@@ -1808,6 +1942,15 @@ DECLARE dz DOUBLE PRECISION;
 DECLARE n INTEGER;
 DECLARE mid INTEGER;
 DECLARE melee_range DOUBLE PRECISION;
+DECLARE movedir SMALLINT;
+DECLARE movecount INTEGER;
+DECLARE just_attacked SMALLINT;
+DECLARE moved SMALLINT;
+DECLARE msec INTEGER;
+DECLARE a45 DOUBLE PRECISION;
+DECLARE delta DOUBLE PRECISION;
+DECLARE behind SMALLINT;
+DECLARE heard SMALLINT;
 DECLARE see_snd VARCHAR(8);
 DECLARE active_snd VARCHAR(8);
 DECLARE atk_snd VARCHAR(8);
@@ -1886,9 +2029,11 @@ BEGIN
     -- monster may have hurt, killed or provoked it, and writing back the
     -- cursor's stale copy would undo that.
     ost = NULL;
-    SELECT t.st, t.st_tics, t.st_len, t.frame, t.reaction, t.target_id, t.threshold, t.z, t.momz
+    SELECT t.st, t.st_tics, t.st_len, t.frame, t.reaction, t.target_id, t.threshold, t.z, t.momz,
+           t.movedir, t.movecount, t.just_attacked
       FROM things t WHERE t.id = :id
-      INTO ost, st_tics, st_len, frame, reaction, target_id, threshold, z, momz;
+      INTO ost, st_tics, st_len, frame, reaction, target_id, threshold, z, momz,
+           movedir, movecount, just_attacked;
     IF (ost IS NULL OR (ost = 'dead' AND momz = 0)) THEN CONTINUE;   -- gone (exploded, picked up) or just died
     st = ost;
     del = 0;
@@ -2251,11 +2396,18 @@ BEGIN
     END
     ELSE IF (st = 'idle') THEN
     BEGIN
-      -- A_Look: the sector's soundtarget wakes it (ambush monsters must also
-      -- see the player), or it simply sees the player
+      -- A_Look: the sector's soundtarget wakes it (an ambush monster must also
+      -- see the player, in any direction), or it sees the player for itself –
+      -- P_LookForPlayers, not all around: only in front, the 180° ahead of it,
+      -- unless the player is within MELEERANGE (64) behind its back
+      heard = COALESCE((SELECT se.sound_heard FROM sectors se WHERE se.id = :sec), 0);
+      delta = ATAN2(py - y, px - x) - ang;
+      delta = delta - 2 * PI() * FLOOR(delta / (2 * PI()));
+      behind = IIF(delta > PI() / 2 AND delta < 3 * PI() / 2, 1, 0);
       IF (k = 'monster' AND pdead = 0
-          AND ((BIN_AND(flags, 8) = 0 AND (SELECT se.sound_heard FROM sectors se WHERE se.id = :sec) = 1)
-               OR (dist < 2400 AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1))) THEN
+          AND ((BIN_AND(flags, 8) = 0 AND heard = 1)
+               OR (dist < 2400 AND (heard = 1 OR behind = 0 OR dist <= 64)
+                   AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1))) THEN
       BEGIN
         st = 'chase';
         st_tics = 0;
@@ -2389,6 +2541,16 @@ BEGIN
         IF (reaction > 0) THEN reaction = reaction - 1;
         IF (threshold > 0) THEN threshold = threshold - 1;
         melee_range = 60 + rad / 2;
+        -- A_Chase: turn towards the heading, 45° a step (angle &= 7<<29 first)
+        IF (movedir < 8) THEN
+        BEGIN
+          a45 = FLOOR(ang / (PI() / 4) + 1e-9) * (PI() / 4);
+          delta = a45 - movedir * (PI() / 4);
+          delta = delta - 2 * PI() * FLOOR((delta + PI()) / (2 * PI()));
+          IF (delta > 1e-9) THEN a45 = a45 - PI() / 4;
+          ELSE IF (delta < -1e-9) THEN a45 = a45 + PI() / 4;
+          ang = a45 - 2 * PI() * FLOOR(a45 / (2 * PI()) + 1e-12);
+        END
         -- A_VileChase: a raisable corpse within reach, with room to stand up?
         -- (not lost souls, cyberdemons, spider masterminds or other arch-viles)
         corpse = NULL;
@@ -2421,15 +2583,40 @@ BEGIN
                  st_tics = 5 * (SELECT CHAR_LENGTH(tt.death_fr) FROM thing_types tt WHERE tt.thing_type = t.thing_type)
            WHERE t.id = :corpse;
         END
+        -- A_Chase with no live target: P_LookForPlayers finds nobody, back to its spawn state
+        ELSE IF (pdead = 1) THEN
+        BEGIN
+          st = 'idle';
+          st_tics = 0;
+          movedir = 8;
+        END
+        -- MF_JUSTATTACKED: the step after a missile attack only picks a new
+        -- heading (on Nightmare it may attack again at once)
+        ELSE IF (just_attacked = 1 AND skill <> 5) THEN
+        BEGIN
+          just_attacked = 0;
+          EXECUTE PROCEDURE new_chase_dir(id, x, y, z, rad, hgt, spd, fl, momz, movedir, px, py)
+            RETURNING_VALUES movedir, movecount, nx, ny, fz, msec, moved;
+          IF (moved = 1) THEN
+          BEGIN
+            x = nx;
+            y = ny;
+            z = fz;
+            sec = msec;
+          END
+        END
         ELSE IF (pdead = 0 AND reaction = 0 AND dist < 2048
             AND ((atk_kind = 'melee' AND dist < melee_range)
-                 OR (atk_kind IN ('hitscan', 'missile')
+                 OR (melee_fr IS NOT NULL AND dist < melee_range)
+                 -- a missile attack waits for MOVECOUNT to run out (not on Nightmare)
+                 OR ((movecount = 0 OR skill = 5) AND (
+                    (atk_kind IN ('hitscan', 'missile')
                      AND (dist < melee_range OR p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2)))
-                 -- P_CheckMissileRange: the arch-vile only reaches 14 × 64 units
-                 OR (atk_kind = 'vile' AND dist < 896
-                     AND p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2))
-                 -- the lost soul's range check counts half the distance
-                 OR (atk_kind = 'skull' AND p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 4)))
+                    -- P_CheckMissileRange: the arch-vile only reaches 14 × 64 units
+                    OR (atk_kind = 'vile' AND dist < 896
+                        AND p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2))
+                    -- the lost soul's range check counts half the distance
+                    OR (atk_kind = 'skull' AND p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 4)))))
             AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
         BEGIN
           ang = ATAN2(py - y, px - x);
@@ -2443,6 +2630,7 @@ BEGIN
           ELSE
           BEGIN
             st = 'attack';
+            IF (atk_kind <> 'melee') THEN just_attacked = 1;   -- (a missile state)
             st_len = IIF(atk_kind = 'skull', 10, CHAR_LENGTH(atk_fr) * IIF(skill = 5 AND ttype IN (3002, 58), 4, 8));
             st_tics = st_len;
             frame = SUBSTRING(atk_fr FROM 1 FOR 1);
@@ -2451,33 +2639,23 @@ BEGIN
         END
         ELSE
         BEGIN
-          IF (dist > melee_range - 8) THEN
+          -- chase towards the target: along the heading while MOVECOUNT lasts
+          -- and the way is clear, else P_NewChaseDir
+          movecount = movecount - 1;
+          moved = 0;
+          IF (movecount >= 0) THEN
           BEGIN
-            -- P_NewChaseDir, simplified: straight at the player, then 45° and
-            -- 90° either side, then a random heading.
-            a0 = ATAN2(py - y, px - x);
-            IF (pdead = 1) THEN a0 = ang;
-            n = 0;
-            ok = 0;
-            WHILE (n < 6 AND ok = 0) DO
-            BEGIN
-              try_ang = CASE n WHEN 0 THEN a0 WHEN 1 THEN a0 + PI() / 4 WHEN 2 THEN a0 - PI() / 4
-                               WHEN 3 THEN a0 + PI() / 2 WHEN 4 THEN a0 - PI() / 2
-                               ELSE p_random() * 2 * PI() END;
-              nx = x + COS(try_ang) * spd;
-              ny = y + SIN(try_ang) * spd;
-              EXECUTE PROCEDURE check_position(id, nx, ny, z, rad, hgt, 1) RETURNING_VALUES ok, fz, cz, dz, sec;
-              n = n + 1;
-            END
-            IF (ok = 1) THEN
-            BEGIN
-              x = nx;
-              y = ny;
-              -- on the ground it steps up and down with the floor; tossed or
-              -- flying, it keeps its height
-              IF (momz = 0 AND fl = 0) THEN z = fz; ELSE z = MAXVALUE(z, fz);
-              ang = try_ang;
-            END
+            EXECUTE PROCEDURE p_move(id, x, y, z, rad, hgt, spd, fl, momz, movedir) RETURNING_VALUES moved, nx, ny, fz, msec;
+          END
+          IF (moved = 0) THEN
+            EXECUTE PROCEDURE new_chase_dir(id, x, y, z, rad, hgt, spd, fl, momz, movedir, px, py)
+              RETURNING_VALUES movedir, movecount, nx, ny, fz, msec, moved;
+          IF (moved = 1) THEN
+          BEGIN
+            x = nx;
+            y = ny;
+            z = fz;
+            sec = msec;
           END
           -- A_Chase, last: the activesound, 3 times in 256
           IF (active_snd IS NOT NULL AND p_random() * 256 < 3) THEN
@@ -2527,7 +2705,8 @@ BEGIN
       UPDATE things t
          SET x = :x, y = :y, z = :z, angle = :ang, st = :st, st_tics = :st_tics, st_len = :st_len,
              step = :step, reaction = :reaction, frame = :frame, sector_id = :sec,
-             target_id = :target_id, threshold = :threshold, momz = :momz
+             target_id = :target_id, threshold = :threshold, momz = :momz,
+             movedir = :movedir, movecount = :movecount, just_attacked = :just_attacked
        WHERE t.id = :id;
   END
 END^

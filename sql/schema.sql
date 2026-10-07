@@ -234,6 +234,9 @@ CREATE TABLE things (
   spawn_x    DOUBLE PRECISION,                 -- where the map put it (P_NightmareRespawn)
   spawn_y    DOUBLE PRECISION,
   spawn_angle DOUBLE PRECISION,
+  movedir     SMALLINT DEFAULT 8 NOT NULL,      -- P_NewChaseDir's heading: 0 east … 7 south-east (45° steps), 8 none
+  movecount   INTEGER DEFAULT 0 NOT NULL,       -- chase steps before it picks a new heading
+  just_attacked SMALLINT DEFAULT 0 NOT NULL,    -- MF_JUSTATTACKED
   dead_tic   INTEGER,                          -- when it became a corpse
   sector_id  INTEGER,
   hp         INTEGER,

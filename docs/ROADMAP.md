@@ -35,10 +35,11 @@ you find missing.
   berserk bringing their weapon up, the weapon rising at each level start and dropping at death.
 - ~~**Monster active sounds.**~~ Done: `A_Chase`'s `activesound` (`THING_TYPES.ACTIVE_SND`), 3 in
   256 per chase step that doesn't attack.
-- **Monster chase details.** `P_NewChaseDir` is simplified: straight at the target, then 45° and
-  90° either side, then random. DOOM's eight-direction choice with turnaround avoidance and
-  `movecount` makes monsters wander more convincingly. `A_Look`'s 180° field of view (monsters
-  behind you don't see you until they hear you) needs checking.
+- ~~**Monster chase details.**~~ Done: `P_NewChaseDir`/`P_TryWalk`/`P_Move` with eight headings,
+  `movecount` and turnaround avoidance, the 45° turn, `MF_JUSTATTACKED`, the `movecount` gate on
+  missile attacks, `A_Look`'s 180° field of view. Still missing: monsters opening doors as they walk
+  into them (`P_Move`'s special lines), and floating monsters rising and sinking as they're
+  blocked (`MF_FLOAT`). `A_Look` still ignores the player beyond 2400 units, to save sight checks.
 - **Sector specials.** Missing: 10 (door closes after 30 s), 14 (door opens after 5 minutes), and
   11's exit: E1M8's floor ends the level when your health drops to 10 or below (only its damage and
   its cancelling of god mode are done). Also check the lighting types against `P_SpawnSpecials`:
