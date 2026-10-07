@@ -19,7 +19,7 @@ npm ci
 npm run fetch-wad          # Freedoom 0.13.0 → public/wads/ (+ FREEDOOM-COPYING.txt); needed by everything
 npm test                   # SQL smoke test
 WAD=public/wads/freedoom2.wad npm run test:weapons   # weapons/specials/physics take WAD=: run both WADs
-npm run test:finale && npm run test:intermission
+npm run test:finale && npm run test:intermission && npm run test:menu
 npm run test:renderers -- E1M1 E1M2 E1M3
 node scripts/all-maps.mjs public/wads/freedoom2.wad  # every map (the WAD is an argument here, not WAD=)
 npm run build              # dist/ (also writes dist/wads/freedoom-strings.json)
@@ -28,7 +28,7 @@ npm run screenshots        # regenerates docs/screenshot-*.png
 ```
 
 Before every commit, run the smoke test, weapons/specials/physics on **both** WADs, finale,
-intermission and the build. All of them must pass; CI runs the same set.
+intermission, menu and the build. All of them must pass; CI runs the same set.
 
 ## How the user likes it
 
@@ -67,6 +67,10 @@ intermission and the build. All of them must pass; CI runs the same set.
 - **Freedoom specifics:** `WISPLAT`, `WIURH0/1` and all `WIA*` intermission lumps are empty 1×1
   placeholders, so those features are invisible with Freedoom by design. Freedoom 1 has E4 maps, so
   it counts as "retail" (E1 ending art is `CREDIT`). Map names in Phase 2 are `MAP01`–`MAP32`.
+- **The page opens on the title loop.** A key opens the menu, and the map underneath doesn't tick
+  until a game starts. Browser-driven checks must start a game first: any key, then Enter
+  through the menus, or `startMap` via the **Map** selector. Menus remember their cursor
+  (`lastOn`), so scripted key sequences must allow for it.
 - **Tests:** physics-test and weapons-test share one database through many sections. A monster
   woken by an earlier section can hurt the player later, so read state right after the action,
   before another tic. Make statistical assertions robust (bigger samples, fixed bounds rather than
@@ -82,4 +86,5 @@ intermission and the build. All of them must pass; CI runs the same set.
 | Colours, palette, upscaling | `src/present.js` |
 | Screens between levels | `src/intermission.js`, `src/finale.js`, `src/progress.js`; the hand-off is in `main.js`'s `frame()` |
 | Cheats | SQL `CHEAT` procedure; readers in `src/cheats.js`; key handling in `main.js` |
+| Title screen, menus, options | `src/menu.js`; the actions (new game, settings) are wired in `main.js`'s `makeMenu` |
 | Previewing screens in the browser | `doom.finale('E3M8')`, `doom.intermission('E2M3', 'E2M4')` in the console |

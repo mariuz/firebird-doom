@@ -16,7 +16,8 @@ import { drawStatusBar, drawText, drawWeapon } from './hud.js';
 import { AM_COLORS, automapColor } from './automap.js';
 import { clevMap, idmusMap, makeCheatReader, makeParamCheatReader } from './cheats.js';
 import { nextMap } from './progress.js';
-import { Finale, setFallbackStrings } from './finale.js';
+import { Finale, parseDehStrings, setFallbackStrings } from './finale.js';
+import { Menu, TitleLoop } from './menu.js';
 import { Intermission, levelOf } from './intermission.js';
 import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
@@ -41,7 +42,7 @@ let running = false;
 let paused = false;
 let lastTic = 0;
 // settings, remembered per browser
-const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, display: 'webgl', smooth: false, skill: 3 };
+const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, display: 'webgl', smooth: false, skill: 3, messages: true, mouse: 5 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('firebird-doom:settings') || '{}'));
 } catch { /* storage unavailable: defaults */ }
@@ -53,6 +54,11 @@ let showMap = false;
 let finale = null;                  // text screens: DOOM II's (MAP06/11/20, the secret levels, MAP30) and DOOM I's E1M8
 let finaleKey = false;              // a key went down: F_CastResponder
 let intermission = null;            // the stats screen between levels (wi_stuff.c)
+let menu = null;                    // m_menu.c, for this WAD
+let title = null;                   // the title loop (before a game, after End Game or Quit)
+let menuBackdrop = null;            // the screen as it was when the menu opened over the game
+let menuOpenedAt = -1e9;
+let lastPalette = 0;
 let wiButtons = true;               // fire/use held last tic: only a new press accelerates
 const didSecret = new Set();        // DOOM I episodes whose secret level is done (wbs->didsecret)
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
@@ -90,6 +96,23 @@ const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
   if (!running) return;
+  // M_Responder: the menu takes every key while it's open; on the title any
+  // key opens it; in play Esc does. (Esc that just freed the mouse already did.)
+  if (menu?.active) {
+    e.preventDefault();
+    if (!(e.key === 'Escape' && performance.now() - menuOpenedAt < 200)) menu.key(e.key);
+    return;
+  }
+  if (title && menu) {
+    e.preventDefault();
+    openMenu();
+    return;
+  }
+  if (e.key === 'Escape' && menu) {
+    e.preventDefault();
+    openMenu();
+    return;
+  }
   if (GAME_KEYS.has(e.code)) e.preventDefault();
   keys.add(e.code);
   if (finale) finaleKey = true;
@@ -139,8 +162,76 @@ function bindCanvas(c) {
   c.addEventListener('touchend', touchEnd, { passive: false });
 }
 window.addEventListener('mouseup', () => { fireClick = false; });
+// letting go of the mouse in play (Esc, or switching away) brings up the menu, as Esc would
+document.addEventListener('pointerlockchange', () => {
+  if (!document.pointerLockElement && running && menu && !menu.active && !title) {
+    openMenu();
+    menuOpenedAt = performance.now();
+  }
+});
+
+/** M_StartControlPanel: the menu over a frozen picture of the game */
+function openMenu() {
+  if (!menu || menu.active) return;
+  menuBackdrop = renderer.sfb.slice();
+  keys.clear();
+  menu.open();
+}
+
+/** D_StartTitle: back to the title loop (End Game, Quit, and at boot) */
+function goTitle() {
+  finale = null;
+  intermission = null;
+  menu?.close(true);
+  const maps = wad.mapNames();
+  title = new TitleLoop(maps.some((m) => m.startsWith('MAP')), !!wad.lump('E4M1'), (m) => audio.playMusic(m));
+}
+
+/** This WAD's menu, its options wired to the settings */
+function makeMenu() {
+  const maps = wad.mapNames();
+  const doom2 = maps.some((m) => m.startsWith('MAP'));
+  const deh = wad.lump('DEHACKED');
+  const strings = deh ? parseDehStrings(new TextDecoder('latin1').decode(wad.data(deh))) : new Map();
+  const quitSounds = ['DSPLDETH', 'DSDMPAIN', 'DSPOPAIN', 'DSSLOP', 'DSTELEPT', 'DSPOSIT1', 'DSPOSIT3', 'DSSGTATK'];
+  const play = (lump) => audio.playEvents([[0, lump, 'menu', null, null]], { x: 0, y: 0, angle: 0 });
+  menu = new Menu({
+    doom2,
+    episodes: [1, 2, 3, 4].filter((e) => maps.includes(`E${e}M1`)).length || 1,
+    retail: !!wad.lump('E4M1'),
+    strings,
+    sound: play,
+    actions: {
+      newGame(episode, skill) {
+        settings.skill = skill;
+        saveSettings();
+        $('skill').value = String(skill);
+        const first = doom2 ? (maps.includes('MAP01') ? 'MAP01' : maps[0]) : `E${episode}M1`;
+        $('map').value = first;
+        startMap(first, true).catch((err) => setStatus(err.message, true));
+      },
+      endGame: () => goTitle(),
+      quit() {
+        play(quitSounds[Math.floor(Math.random() * quitSounds.length)]);
+        goTitle();
+      },
+      get messages() { return settings.messages; },
+      set messages(v) { settings.messages = v; saveSettings(); },
+      get detail() { return settings.detail; },
+      set detail(v) { $('detail').value = v; $('detail').dispatchEvent(new Event('change')); },
+      get mouse() { return settings.mouse; },
+      set mouse(v) { settings.mouse = v; saveSettings(); },
+      // the 0–15 thermometers on the 0–100 sliders
+      get sfx() { return Math.round((settings.sfx * 15) / 100); },
+      set sfx(v) { $('sfxvol').value = Math.round((v * 100) / 15); $('sfxvol').dispatchEvent(new Event('input')); },
+      get music() { return Math.round((settings.music * 15) / 100); },
+      set music(v) { $('musicvol').value = Math.round((v * 100) / 15); $('musicvol').dispatchEvent(new Event('input')); },
+    },
+  });
+}
 window.addEventListener('mousemove', (e) => {
-  if (document.pointerLockElement === canvas) mouseTurn -= e.movementX * 0.0035;
+  // (mouse sensitivity 0–9 from the Options menu; 5 is the old fixed rate)
+  if (document.pointerLockElement === canvas) mouseTurn -= e.movementX * 0.0035 * ((settings.mouse + 1) / 6);
 });
 
 // Touch: left half moves, right half turns, tap on the right fires.
@@ -238,6 +329,8 @@ async function startMap(name, newGame) {
   running = false;
   finale = null;
   intermission = null;
+  title = null;
+  menu?.close(true);
   if (newGame) didSecret.clear();
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
@@ -275,7 +368,7 @@ function nextFrame() {
 }
 
 async function frame() {
-  if (!running || paused || document.hidden) {
+  if (!running || document.hidden || (paused && !menu?.active)) {
     lastTic = performance.now();
     nextFrame();
     return;
@@ -285,6 +378,17 @@ async function frame() {
     const tics = Math.max(1, Math.min(6, Math.round((now - lastTic) / TIC_MS)));
     lastTic += tics * TIC_MS;
     if (now - lastTic > 200) lastTic = now;
+
+    if (title || menu?.active) {
+      // the title loop, or the menu over a frozen game (single player waits)
+      for (let i = 0; i < tics; i++) { title?.tick(); menu?.tick(); }
+      if (title) title.draw(renderer);
+      else if (menuBackdrop) renderer.sfb.set(menuBackdrop);
+      if (menu?.active) menu.draw(renderer);
+      renderer.present(title ? 0 : lastPalette);
+      nextFrame();
+      return;
+    }
 
     if (intermission) {
       // WI_Ticker: a new press of fire or use hurries it along
@@ -403,8 +507,9 @@ async function frame() {
     if (!hud.DEAD) drawWeapon(renderer, hud);
     if (showMap) drawAutomap();
     drawStatusBar(renderer, hud);
-    if (hud.MSG) drawText(renderer, hud.MSG, 2, 2);
+    if (hud.MSG && settings.messages) drawText(renderer, hud.MSG, 2, 2);
     if (paused) drawText(renderer, 'PAUSED', 136, 80);
+    lastPalette = palette;
     renderer.present(palette);
     lastFrame.draw = performance.now() - t;
     updateStats();
@@ -541,6 +646,7 @@ async function useWad(buffer, label) {
   renderer = new Renderer(wad, res);
   renderer.attach(presenter);
   audio.setWad(wad);
+  makeMenu();
   renderer.setSize(viewWidth(), 168);
   const sel = $('map');
   sel.innerHTML = maps.map((m) => `<option>${m}</option>`).join('');
@@ -570,15 +676,21 @@ async function boot() {
       // previews for testing a WAD's screens without playing to them (try id's
       // doom.wad: doom.finale('E3M8') is the bunny); afterwards the game goes on
       // to the map after the one named, as if you'd just finished it
+      get menu() { return menu; },
+      get title() { return title; },
       finale(name, secret = false) {
         if (!Finale.available(wad, name, secret)) return `no screen after ${name}${secret ? "'s secret exit" : ''} in this WAD`;
         intermission = null;
+        title = null;
+        menu?.close(true);
         finale = new Finale(renderer, audio, wad, THING_TYPES, name, secret);
         finaleKey = false;
         return `showing the screen after ${name}`;
       },
       intermission(from, to = nextMap(from, false, wad.mapNames()), stats = {}) {
         finale = null;
+        title = null;
+        menu?.close(true);
         intermission = new Intermission(renderer, audio, wad, from, to, {
           kills: 17, totalKills: 20, items: 30, totalItems: 37, secrets: 2, totalSecrets: 3, time: 95 * 35, ...stats,
         }, didSecret.has(levelOf(from).episode));
@@ -588,6 +700,7 @@ async function boot() {
       },
     };
     await loadGame(settings.game);
+    goTitle();   // DOOM starts on its title screen; a key brings up the menu
     nextFrame();
   } catch (err) {
     console.error(err);

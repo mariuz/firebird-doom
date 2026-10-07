@@ -17,7 +17,7 @@ keyboard and paints the rows Firebird returns.
 | ![Two monsters, sprites picked and projected by FRAME_SPRITES](docs/screenshot-monster.png) | ![E1M2: pillars, steps and a lit doorway](docs/screenshot-e1m2.png) |
 | ![Phase 2 MAP11: Commander Keen hanging in his alcove](docs/screenshot-keen.png) | ![Phase 2 MAP30: the Icon of Sin's brain](docs/screenshot-icon.png) |
 | ![After MAP30: Freedoom's story text typed over the RROCK17 flat](docs/screenshot-finale-text.png) | ![The cast call: each monster on BOSSBACK under its name](docs/screenshot-finale-cast.png) |
-| ![The intermission after E1M2: kills, items, secrets, time and par (example numbers)](docs/screenshot-intermission.png) | |
+| ![The intermission after E1M2: kills, items, secrets, time and par (example numbers)](docs/screenshot-intermission.png) | ![The main menu over the title screen, with the skull cursor](docs/screenshot-menu.png) |
 | ![A spectre in E1M2: a shimmer of fuzz, darker than what's behind it](docs/screenshot-spectre.png) | ![The same view, invulnerable: COLORMAP 32, the inverse greys](docs/screenshot-invuln.png) |
 
 <sub>These screenshots come from `npm run screenshots`, which runs the same SQL and
@@ -313,6 +313,35 @@ doom.intermission('E2M3', 'E2M4', { kills: 20, totalKills: 20 })
 Afterwards the game goes on to the next map, as if you'd just finished the one named.
 `npm run test:finale` simulates both id layouts by hiding Freedoom's `DEHACKED` (and `E4M1`).
 
+### The title screen and the menus
+
+The game opens on the title loop (`D_DoAdvanceDemo`, [src/menu.js](src/menu.js)): `TITLEPIC` to
+the title music (`D_INTRO`, `D_DM2TTL` on DOOM II), then the credits page, round and round.
+DOOM plays demos in between, and there are none here yet. Any key brings up the main menu
+(`m_menu.c`), drawn with the WAD's own `M_*` graphics and the blinking skull. In play, Esc opens
+it, and so does letting go of the mouse. The game waits behind it, as DOOM's single player does.
+Arrows move, Enter chooses, Backspace goes back, Esc closes, and each menu remembers where its
+cursor was.
+
+- **New Game:** episode (DOOM I, as many as the WAD has), then skill. Nightmare first asks you
+  with the WAD's own `NIGHTMARE` text.
+- **Options:**
+  - End Game, back to the title.
+  - Messages on/off.
+  - Graphic Detail.
+  - Mouse Sensitivity.
+  - Sound Volume, two thermometers tied to the page's sliders.
+
+  DOOM's Screen Size row is blank, because the view is always full width.
+- **Read This!** (DOOM I): `HELP1`, then `HELP2` (or `CREDIT` on a four-episode WAD).
+- **Load Game and Save Game** say they aren't in yet.
+- **Quit** asks with one of the WAD's quit messages, then plays one of DOOM's quit sounds and goes
+  back to the title. A browser tab can't quit.
+
+Menu sounds are DOOM's: a click on cursor moves, a pistol shot on choosing, and the switch sounds
+when it opens and closes. The settings under the view still work as before and stay in step
+with the menu. `npm run test:menu` drives all of it headless.
+
 ### Skill levels
 
 The **Skill** setting (1–5, default 3) picks which things spawn: easy, normal or hard, by each
@@ -471,7 +500,7 @@ arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd>
 <kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>7</kbd> pick weapons (fist, pistol, shotgun, chaingun, rocket
 launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggles the chainsaw and
 <kbd>3</kbd> again the super shotgun. <kbd>Tab</kbd> shows the
-automap (type IDDT on it to reveal everything), and <kbd>P</kbd> pauses. Under the view you can set **Detail** (320 or 160 columns),
+automap (type IDDT on it to reveal everything), <kbd>P</kbd> pauses, and <kbd>Esc</kbd> opens the menu. Under the view you can set **Detail** (320 or 160 columns),
 **Renderer** (BSP + solidsegs, or brute force), **Skill** (1–5), **Display** (WebGL palette shader or Canvas 2D),
 **Smooth upscaling**, **Audio** on/off (<kbd>M</kbd>), and **Sound** and **Music** volume. These settings
 are remembered in your browser. The SQL console under the game queries the live game

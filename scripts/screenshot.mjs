@@ -18,6 +18,8 @@ import { Renderer } from '../src/renderer.js';
 import { drawStatusBar, drawWeapon } from '../src/hud.js';
 import { Finale } from '../src/finale.js';
 import { Intermission } from '../src/intermission.js';
+import { Menu, TitleLoop } from '../src/menu.js';
+import { parseDehStrings } from '../src/finale.js';
 import { THING_TYPES } from '../src/thinginfo.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -177,6 +179,17 @@ await shoot(map, 'screenshot-e1m2.png');
   wi.draw();
   fs.writeFileSync(path.join(outDir, 'screenshot-intermission.png'), png(renderer.toRGBA(0), 320, 200, 640, 480));
   console.log('docs/screenshot-intermission.png');
+}
+
+// the main menu over the title screen
+{
+  const strings = parseDehStrings(new TextDecoder('latin1').decode(wad.data(wad.lump('DEHACKED'))));
+  const menu = new Menu({ episodes: 4, retail: true, strings, actions: { messages: true, detail: 'high', mouse: 5, sfx: 10, music: 7 } });
+  new TitleLoop(false, true).draw(renderer);
+  menu.open();
+  menu.draw(renderer);
+  fs.writeFileSync(path.join(outDir, 'screenshot-menu.png'), png(renderer.toRGBA(0), 320, 200, 640, 480));
+  console.log('docs/screenshot-menu.png');
 }
 
 // Phase 2 extras: Commander Keen and the Icon of Sin

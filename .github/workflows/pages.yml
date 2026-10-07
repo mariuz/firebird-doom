@@ -77,6 +77,9 @@ jobs:
       - name: Intermission (kills, items, secrets, time, par)
         run: npm run test:intermission
 
+      - name: Title screen and menus
+        run: npm run test:menu
+
       # BSP + solidsegs must find exactly the walls brute force finds
       - name: Renderer equivalence (BSP vs brute force)
         run: npm run test:renderers -- E1M1 E1M2 E1M3

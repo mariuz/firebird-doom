@@ -1,0 +1,288 @@
+// menu.js – the title screen and the menus (d_main.c's page loop, m_menu.c).
+//
+// The game opens on the title loop: TITLEPIC with the title music, then the
+// credits page, round and round (DOOM plays demos in between; there are none
+// here). A key opens the main menu; Esc opens it during play, and the game
+// waits behind it. New Game → episode (DOOM I) → skill, Nightmare asking to
+// be sure; Options (end game, messages, detail, mouse sensitivity, sound
+// volume); Read This! (DOOM I); Quit, which here goes back to the title.
+// Load and Save aren't in yet and say so. Everything is drawn with the WAD's
+// own M_* graphics and HU font; the words in messages are Freedoom's where
+// its DEHACKED has them (NIGHTMARE, QUITMSG…), else our own, never id's.
+
+const LINEHEIGHT = 16;
+const SKULLXOFF = -32;
+
+/** The menus as m_menu.c lays them out: x, y, title patches, items. */
+function menus(doom2, episodes) {
+  const item = (lump, act, extra = {}) => ({ lump, act, ...extra });
+  const empty = { lump: null, act: null };
+  const main = {
+    name: 'main', x: 97, y: 64, titles: [['M_DOOM', 94, 2]],
+    items: [item('M_NGAME', 'newgame'), item('M_OPTION', 'options'), item('M_LOADG', 'load'), item('M_SAVEG', 'save'),
+      ...(doom2 ? [] : [item('M_RDTHIS', 'readthis')]), item('M_QUITG', 'quit')],
+  };
+  const episode = {
+    name: 'episode', x: 48, y: 63, titles: [['M_EPISOD', 54, 38]], prev: 'main',
+    items: ['M_EPI1', 'M_EPI2', 'M_EPI3', 'M_EPI4'].slice(0, episodes).map((l, i) => item(l, 'episode', { episode: i + 1 })),
+  };
+  const skill = {
+    name: 'skill', x: 48, y: 63, titles: [['M_NEWG', 96, 14], ['M_SKILL', 54, 38]], prev: doom2 ? 'main' : 'episode', lastOn: 2,
+    items: ['M_JKILL', 'M_ROUGH', 'M_HURT', 'M_ULTRA', 'M_NMARE'].map((l, i) => item(l, 'skill', { skill: i + 1 })),
+  };
+  // (DOOM's Screen Size row stays blank: the view here is always the full width)
+  const options = {
+    name: 'options', x: 60, y: 37, titles: [['M_OPTTTL', 108, 15]], prev: 'main',
+    items: [item('M_ENDGAM', 'endgame'), item('M_MESSG', 'messages', { toggle: true }), item('M_DETAIL', 'detail', { toggle: true }),
+      empty, empty, item('M_MSENS', 'mouse', { slider: true }), empty, item('M_SVOL', 'sound')],
+  };
+  const sound = {
+    name: 'sound', x: 80, y: 64, titles: [['M_SVOL', 60, 38]], prev: 'options',
+    items: [item('M_SFXVOL', 'sfx', { slider: true }), empty, item('M_MUSVOL', 'music', { slider: true }), empty],
+  };
+  return { main, episode, skill, options, sound };
+}
+
+export class Menu {
+  /**
+   * @param o.doom2     DOOM II (no episodes, no Read This!)
+   * @param o.episodes  how many episodes the WAD has (DOOM I)
+   * @param o.retail    four episodes: Read This! ends on CREDIT, not HELP2
+   * @param o.strings   the WAD's DEHACKED strings (Map)
+   * @param o.sound     (lump) → play a menu sound
+   * @param o.actions   { newGame(episode, skill), endGame(), quit(), get/set: messages, detail, mouse (0–9), sfx and music (0–15) }
+   */
+  constructor({ doom2 = false, episodes = 1, retail = false, strings = new Map(), sound = () => {}, actions = {} } = {}) {
+    this.doom2 = doom2;
+    this.retail = retail;
+    this.strings = strings;
+    this.sound = sound;
+    this.actions = actions;
+    this.defs = menus(doom2, episodes);
+    for (const m of Object.values(this.defs)) m.lastOn = m.lastOn ?? 0;
+    this.active = false;
+    this.current = this.defs.main;
+    this.on = 0;
+    this.message = null;     // { text, yesno, onYes }
+    this.page = null;        // Read This!: the full-screen page showing
+    this.chosenEpisode = 1;
+    this.skullTics = 8;
+    this.whichSkull = 0;
+  }
+
+  /** M_StartControlPanel */
+  open() {
+    if (this.active) return;
+    this.active = true;
+    this.go('main');
+    this.sound('DSSWTCHN');
+  }
+
+  /** M_ClearMenus */
+  close(silent = false) {
+    if (!this.active) return;
+    this.active = false;
+    this.message = null;
+    this.page = null;
+    if (!silent) this.sound('DSSWTCHX');
+  }
+
+  go(name) {
+    this.current.lastOn = this.on;
+    this.current = this.defs[name];
+    this.on = this.current.lastOn;
+  }
+
+  /** M_StartMessage: a box of text; yes/no ones wait for Y */
+  say(text, yesno = false, onYes = null) {
+    this.message = { text, yesno, onYes };
+  }
+
+  get item() { return this.current.items[this.on]; }
+
+  /** one tic: the skull blinks every 8 */
+  tick() {
+    if (--this.skullTics <= 0) {
+      this.whichSkull ^= 1;
+      this.skullTics = 8;
+    }
+  }
+
+  /** M_Responder. key: KeyboardEvent.key. Returns true when it took the key. */
+  key(key) {
+    if (!this.active) return false;
+    const k = key.length === 1 ? key.toLowerCase() : key;
+    if (this.message) {
+      const { yesno, onYes } = this.message;
+      if (yesno && k !== 'y' && k !== 'n' && k !== 'Escape') return true;
+      this.message = null;
+      this.sound('DSSWTCHX');
+      if (yesno && k === 'y') onYes?.();
+      return true;
+    }
+    if (this.page) {
+      // Read This!: HELP1, then HELP2 (or CREDIT on a four-episode WAD), then back
+      if (k === 'Escape' || k === 'Backspace') this.page = null;
+      else this.page = this.page === 'HELP1' ? (this.retail ? 'CREDIT' : 'HELP2') : null;
+      this.sound('DSPISTOL');
+      return true;
+    }
+    const items = this.current.items;
+    const step = (d) => {
+      do this.on = (this.on + d + items.length) % items.length; while (!items[this.on].act);
+      this.sound('DSPSTOP');
+    };
+    if (k === 'ArrowDown') step(1);
+    else if (k === 'ArrowUp') step(-1);
+    else if (k === 'ArrowLeft' || k === 'ArrowRight') {
+      const it = this.item;
+      if (it.slider || it.toggle) {
+        this.change(it, k === 'ArrowRight' ? 1 : -1);
+        this.sound('DSSTNMOV');
+      }
+    } else if (k === 'Enter') {
+      const it = this.item;
+      if (it.slider) {
+        this.change(it, 1);
+        this.sound('DSSTNMOV');
+      } else {
+        this.current.lastOn = this.on;
+        this.sound('DSPISTOL');
+        this.choose(it);
+      }
+    } else if (k === 'Escape') {
+      this.current.lastOn = this.on;
+      this.close();
+    } else if (k === 'Backspace') {
+      if (this.current.prev) {
+        this.go(this.current.prev);
+        this.sound('DSSWTCHN');
+      }
+    }
+    return true;
+  }
+
+  change(it, dir) {
+    const a = this.actions;
+    const clamp = (v, hi) => Math.max(0, Math.min(hi, v));
+    if (it.act === 'messages') a.messages = !a.messages;
+    else if (it.act === 'detail') a.detail = a.detail === 'high' ? 'low' : 'high';
+    else if (it.act === 'mouse') a.mouse = clamp(a.mouse + dir, 9);
+    else if (it.act === 'sfx') a.sfx = clamp(a.sfx + dir, 15);
+    else if (it.act === 'music') a.music = clamp(a.music + dir, 15);
+  }
+
+  choose(it) {
+    const a = this.actions;
+    switch (it.act) {
+      case 'newgame': this.go(this.doom2 ? 'skill' : 'episode'); break;
+      case 'episode': this.chosenEpisode = it.episode; this.go('skill'); break;
+      case 'skill':
+        if (it.skill === 5) {
+          this.say(this.strings.get('NIGHTMARE') ?? 'Nightmare: fast monsters that come back.\n\n(press y to confirm)', true,
+            () => this.startGame(5));
+        } else this.startGame(it.skill);
+        break;
+      case 'options': this.go('options'); break;
+      case 'sound': this.go('sound'); break;
+      case 'messages': case 'detail': this.change(it, 1); break;
+      case 'endgame':
+        this.say('End this game and go back to the title?\n\n(press y or n)', true, () => { this.close(true); a.endGame?.(); });
+        break;
+      case 'load': case 'save':
+        this.say('Saving and loading aren\'t in\nthis port yet.\n\n(press a key)');
+        break;
+      case 'readthis': this.page = 'HELP1'; break;
+      case 'quit': this.say(this.quitMessage(), true, () => { this.close(true); a.quit?.(); }); break;
+      default: break;
+    }
+  }
+
+  startGame(skill) {
+    this.close(true);
+    this.actions.newGame?.(this.doom2 ? 1 : this.chosenEpisode, skill);
+  }
+
+  /** M_QuitDOOM: one of the WAD's quit messages, with a "press y" if it hasn't one */
+  quitMessage() {
+    const pool = ['QUITMSG', 'QUITMSG1', 'QUITMSG2', 'QUITMSG3', 'QUITMSG4', 'QUITMSG5', 'QUITMSG6', 'QUITMSG7']
+      .map((k) => this.strings.get(k)).filter(Boolean);
+    const msg = pool.length ? pool[Math.floor(Math.random() * pool.length)] : 'Quit to the title?';
+    return /press y/i.test(msg) ? msg : `${msg}\n\n(press y to quit)`;
+  }
+
+  /** M_Drawer: over whatever is on the screen already */
+  draw(r) {
+    const pic = (n) => r.pictureByName(n);
+    if (this.page) { r.patch(pic(this.page), 0, 0); return; }
+    if (this.message) { this.drawMessage(r, this.message.text); return; }
+    const m = this.current;
+    for (const [lump, x, y] of m.titles) r.patch(pic(lump), x, y);
+    m.items.forEach((it, i) => { if (it.lump) r.patch(pic(it.lump), m.x, m.y + i * LINEHEIGHT); });
+    const a = this.actions;
+    if (m.name === 'options') {
+      r.patch(pic(a.messages ? 'M_MSGON' : 'M_MSGOFF'), m.x + 120, m.y + LINEHEIGHT * 1);
+      r.patch(pic(a.detail === 'high' ? 'M_GDHIGH' : 'M_GDLOW'), m.x + 175, m.y + LINEHEIGHT * 2);
+      this.thermo(r, m.x, m.y + LINEHEIGHT * 6, 10, a.mouse);
+    } else if (m.name === 'sound') {
+      this.thermo(r, m.x, m.y + LINEHEIGHT * 1, 16, a.sfx);
+      this.thermo(r, m.x, m.y + LINEHEIGHT * 3, 16, a.music);
+    }
+    r.patch(pic(this.whichSkull ? 'M_SKULL2' : 'M_SKULL1'), m.x + SKULLXOFF, m.y - 5 + this.on * LINEHEIGHT);
+  }
+
+  /** M_DrawThermo */
+  thermo(r, x, y, width, dot) {
+    let xx = x;
+    r.patch(r.pictureByName('M_THERML'), xx, y);
+    xx += 8;
+    for (let i = 0; i < width; i++, xx += 8) r.patch(r.pictureByName('M_THERMM'), xx, y);
+    r.patch(r.pictureByName('M_THERMR'), xx, y);
+    r.patch(r.pictureByName('M_THERMO'), x + 8 + dot * 8, y);
+  }
+
+  /** the message box: each line centred, the block centred on the screen */
+  drawMessage(r, text) {
+    const glyph = (ch) => {
+      const c = ch.toUpperCase().charCodeAt(0);
+      return c >= 33 && c <= 95 ? r.pictureByName(`STCFN${String(c).padStart(3, '0')}`) : null;
+    };
+    const lh = glyph('A')?.h ?? 8;
+    const lines = text.split('\n');
+    let y = Math.floor(100 - (lines.length * lh) / 2);
+    for (const line of lines) {
+      const w = [...line].reduce((s, ch) => s + (glyph(ch)?.w ?? 4), 0);
+      let x = Math.floor(160 - w / 2);
+      for (const ch of line) {
+        const g = glyph(ch);
+        if (g) r.patch(g, x, y);
+        x += g?.w ?? 4;
+      }
+      y += lh;
+    }
+  }
+}
+
+/** D_DoAdvanceDemo without the demos: the title, then the credits, round again. */
+export class TitleLoop {
+  constructor(doom2, retail, playMusic = () => {}) {
+    this.playMusic = playMusic;
+    this.pages = doom2
+      ? [['TITLEPIC', 35 * 11, 'D_DM2TTL'], ['CREDIT', 200, null]]
+      : [['TITLEPIC', 170, 'D_INTRO'], ['CREDIT', 200, null], [retail ? 'CREDIT' : 'HELP2', 200, null]];
+    this.index = -1;
+    this.advance();
+  }
+
+  advance() {
+    this.index = (this.index + 1) % this.pages.length;
+    const [page, tics, music] = this.pages[this.index];
+    this.page = page;
+    this.tics = tics;
+    if (music) this.playMusic(music);
+  }
+
+  tick() { if (--this.tics <= 0) this.advance(); }
+
+  draw(r) { r.patch(r.pictureByName(this.page), 0, 0); }
+}

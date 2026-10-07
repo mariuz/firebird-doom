@@ -10,9 +10,10 @@ you find missing.
 - ~~**Skill levels.**~~ Done: the **Skill** setting, with spawn flags, half damage and double ammo
   on 1, and Nightmare's fast monsters, instant reactions, respawning and no cheats on 5.
   Still missing: DOOM's dropped clips giving half ammo (`MF_DROPPED`), on any skill.
-- **Main menu, new game and episode select.** Today a game starts at the first map, and the
-  **Map** selector starts a new game anywhere. There's no `M_*` menu, title screen (`TITLEPIC`),
-  demo loop or help screens.
+- ~~**Main menu, new game and episode select.**~~ Done ([src/menu.js](../src/menu.js)): the
+  title loop, the main menu, episode and skill select, Options, Read This!, Quit. Still missing:
+  the demo loop between the title pages (needs demo playback), the Screen Size option, and
+  Load/Save (next item).
 - **Save and load.** The whole game is in Firebird tables, so a save is in principle a snapshot of
   `game`, `player`, `things`, `movers`, `sectors` and `sidedefs`. Firebird WASM can persist a
   database; nothing uses that yet.

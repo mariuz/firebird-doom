@@ -16,7 +16,8 @@
     "test:specials": "node scripts/specials-test.mjs",
     "test:physics": "node scripts/physics-test.mjs",
     "test:finale": "node scripts/finale-test.mjs",
-    "test:intermission": "node scripts/intermission-test.mjs"
+    "test:intermission": "node scripts/intermission-test.mjs",
+    "test:menu": "node scripts/menu-test.mjs"
   },
   "license": "MIT",
   "dependencies": {

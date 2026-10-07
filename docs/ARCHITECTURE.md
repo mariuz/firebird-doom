@@ -34,6 +34,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `src/intermission.js` | `wi_stuff.c`: stats, time and par, "Entering", the episode maps and their animations. |
 | `src/finale.js` | `f_finale.c`: Doom I endings with their art and the bunny scroll, Doom II text screens, the cast call. DEHACKED string parsing and the Freedoom text fallback. |
 | `src/progress.js` | `G_DoCompleted`'s next-map rules, secret exits included. |
+| `src/menu.js` | The title loop (`D_DoAdvanceDemo`) and the menus (`m_menu.c`): `Menu` (menus, cursor, messages, sliders; actions are callbacks) and `TitleLoop`. |
 | `src/cheats.js` | `cht_CheckCheat`: readers for fixed cheats, IDCLEV/IDMUS digits, `clevMap`, `idmusMap`. |
 | `src/audio.js` / `src/music.js` | Sound effects from `SOUND_EVENTS`, positioned like `S_AdjustSoundParams`; MUS/MIDI music on an OPL2-style FM synthesiser with the WAD's `GENMIDI`. |
 | `public/` | `index.html`, `style.css`, `coi-serviceworker.js` (cross-origin isolation for the Worker), and `wads/` (fetched, not committed). |
@@ -51,7 +52,8 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
    denormalised line coordinates, the blockmap, the sound-link graph and the BSP child bounding
    boxes, spawns the things for the chosen skill (stored in `game.skill`), and resets the player (or only the per-level state, when
    not a new game).
-4. The frame loop starts (`requestAnimationFrame`, with a timer as backstop).
+4. The frame loop starts (`requestAnimationFrame`, with a timer as backstop), on the title loop:
+   the first map is loaded underneath but doesn't tick until a game starts from the menu.
 
 ## A tic
 
@@ -107,6 +109,9 @@ rebinds the input listeners).
 
 ## Screens outside the 3D view
 
+The title loop and the menu come first in `frame()`. While either is up, nothing else ticks: the
+menu draws over a snapshot of the screen taken when it opened, so the game waits behind it.
+
 When an exit is seen, the page stops calling `DOOM_TIC` and runs one of these objects on its own
 35 Hz clock, until it reports `done`:
 
@@ -151,6 +156,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `physics-test.mjs` | Crushers, 3D aiming, sound propagation, infighting, vertical physics, lost souls, power-ups, the automap rules, cheat parsing, map order, IDCLIP. |
 | `finale-test.mjs` | Every text screen and ending, the cast call, the bunny scroll, the id-WAD layouts and the fallback text. |
 | `intermission-test.mjs` | Pars, counting and sounds, skipping, the after-stats flow, the episode-map animations, the secret routes. |
+| `menu-test.mjs` | The title loop; menu navigation, remembered cursors, New Game → episode → skill, Nightmare's question, options and sliders, Load/Save, Quit, Read This!, coordinates, and every graphic present in both WADs. |
 | `compare-renderers.mjs` | BSP and brute-force renderers agree, column by column. |
 | `all-maps.mjs [wad]` | Loads, tics and renders every map, and checks a teleporter on each. |
 
