@@ -104,7 +104,9 @@ CREATE TABLE thing_types (
   melee_snd     VARCHAR(8),
   melee_hit_snd VARCHAR(8),
   melee_dmg     INTEGER,                     -- damage is melee_dmg × 1d(melee_rolls)
-  melee_rolls   INTEGER
+  melee_rolls   INTEGER,
+  count_kill    SMALLINT DEFAULT 0 NOT NULL, -- MF_COUNTKILL: in the kill tally
+  count_item    SMALLINT DEFAULT 0 NOT NULL  -- MF_COUNTITEM: in the item tally
 );
 
 -- ── the map ─────────────────────────────────────────────────────────────

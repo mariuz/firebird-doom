@@ -224,6 +224,22 @@ bonuses on top of blue armour stay blue. When a hit uses up the last points, the
 them (`P_DamageMobj`). The type is `PLAYER.ARMOR_TYPE`, and saves keep it. A save from before
 it existed gets type 2 above 100 points and type 1 below. `npm run test:physics` checks each rule.
 
+### Pickups and the tallies
+
+What a zombieman, shotgun guy or chaingunner drops when it dies is marked `MF_DROPPED` (bit 65536
+of `THINGS.FLAGS`, above the map's flags) and is worth half, as in `P_TouchSpecialThing`: a dropped
+clip gives 5 bullets instead of 10 (`P_GiveAmmo(…, 0)`), a dropped shotgun 4 shells instead of 8, a
+dropped chaingun 10 bullets instead of 20 (`P_GiveWeapon`'s `dropped`). Skills 1 and 5 double that
+afterwards. A weapon you already have is left on the floor when there is no room for its ammo, and
+a second chainsaw is always left, since it has no ammo to give. The intermission's tallies count
+only what vanilla counts: kills are the `MF_COUNTKILL` monsters, so lost souls and barrels aren't
+kills, and items are the `MF_COUNTITEM` things, which are the health and armour bonuses, the
+soulsphere, megasphere, berserk pack, invulnerability, partial invisibility, computer map and light
+amplification visor (not the radiation suit, weapons, ammo, keys, health or armour). Monsters that
+an arch-vile raises or the Icon of Sin spawns aren't added to the total, so 100% can be beaten, as
+in DOOM. DeHackEd's `COUNTKILL` and `COUNTITEM` bits move things in and out of the tallies.
+`npm run test:weapons` checks each rule.
+
 ### Changing weapons
 
 A weapon key only picks the next weapon (`pendingweapon`), as in `p_pspr.c`. The one in your hands

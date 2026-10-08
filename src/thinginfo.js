@@ -119,7 +119,13 @@ const MASS = {
 const FLOATERS = new Set([3005, 3006, 71]);
 // MF_SHADOW: the spectre is a demon drawn as a shimmer of fuzz
 const SHADOWS = new Set([58]);
+// MF_COUNTITEM: what the intermission's item tally counts – the bonuses and
+// the powerups, but not the radiation suit, weapons, ammo, keys, health or armour
+const COUNT_ITEMS = new Set([2014, 2015, 2013, 2022, 2023, 2024, 2026, 2045, 83]);
 for (const t of THING_TYPES) {
+  // MF_COUNTKILL: every monster and Commander Keen, but not the lost soul
+  if ((t.kind === 'monster' && t.type !== 3006) || t.kind === 'keen') t.countKill = 1;
+  if (COUNT_ITEMS.has(t.type)) t.countItem = 1;
   if (SHADOWS.has(t.type)) t.shadow = 1;
   if (MASS[t.type]) t.mass = MASS[t.type];
   if (FLOATERS.has(t.type)) t.floats = 1;

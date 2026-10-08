@@ -364,12 +364,13 @@ DECLARE skind VARCHAR(10);
 DECLARE satk VARCHAR(10);
 DECLARE vatk VARCHAR(10);
 DECLARE thr INTEGER;
+DECLARE count_kill SMALLINT;
 BEGIN
   SELECT t.kind, t.hp, t.st, tt.pain_chance, tt.pain_fr, tt.death_fr, tt.death_sprite, tt.drop_type, t.x, t.y,
-         tt.pain_snd, tt.death_snd
+         tt.pain_snd, tt.death_snd, tt.count_kill
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
    WHERE t.id = :tid
-    INTO k, hp, st, pain_chance, pain_fr, death_fr, death_sprite, drop_type, tx, ty, pain_snd, death_snd;
+    INTO k, hp, st, pain_chance, pain_fr, death_fr, death_sprite, drop_type, tx, ty, pain_snd, death_snd, count_kill;
   IF (k IS NULL OR k NOT IN ('monster', 'barrel', 'keen', 'brain') OR st IN ('dying', 'dead')
       OR COALESCE(dmg, 0) <= 0) THEN EXIT;
   hp = hp - dmg;
@@ -380,11 +381,17 @@ BEGIN
            st_tics = CHAR_LENGTH(:death_fr) * 5, st_len = CHAR_LENGTH(:death_fr) * 5,
            frame = SUBSTRING(:death_fr FROM 1 FOR 1), sprite = :death_sprite
      WHERE id = :tid;
-    IF (k IN ('monster', 'keen')) THEN UPDATE player SET kills = kills + 1 WHERE id = 1;
+    -- P_KillMobj: MF_COUNTKILL things count (not lost souls, not barrels)
+    IF (count_kill = 1) THEN UPDATE player SET kills = kills + 1 WHERE id = 1;
     IF (k = 'brain') THEN UPDATE things SET st_tics = 100, st_len = 100 WHERE id = :tid;   -- A_BrainScream
     EXECUTE PROCEDURE play_sound(death_snd, tid, tx, ty);
+    -- P_KillMobj: what it drops is MF_DROPPED (65536 in THINGS.FLAGS, above
+    -- the map's flags), worth half when picked up
     IF (drop_type IS NOT NULL) THEN
+    BEGIN
       EXECUTE PROCEDURE spawn_thing(drop_type, tx, ty, NULL, 0) RETURNING_VALUES dummy;
+      UPDATE things t SET flags = BIN_OR(t.flags, 65536) WHERE t.id = :dummy;
+    END
   END
   ELSE
   BEGIN
@@ -1485,6 +1492,8 @@ DECLARE pk VARCHAR(10);
 DECLARE amt INTEGER;
 DECLARE lbl VARCHAR(40);
 DECLARE took SMALLINT;
+DECLARE dropped SMALLINT;
+DECLARE count_item SMALLINT;
 DECLARE health INTEGER;
 DECLARE armor INTEGER;
 DECLARE armor_type SMALLINT;
@@ -1872,12 +1881,12 @@ BEGIN
   -- P_GiveAmmo: twice the ammo on the easiest skill and on Nightmare
   mult = IIF((SELECT g.skill FROM game g WHERE g.id = 1) IN (1, 5), 2, 1);
   -- P_TouchSpecialThing: pick up anything we overlap
-  FOR SELECT t.id, tt.pickup, tt.amount, tt.label
+  FOR SELECT t.id, tt.pickup, tt.amount, tt.label, IIF(BIN_AND(t.flags, 65536) <> 0, 1, 0), tt.count_item
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        WHERE t.kind = 'item' AND ABS(t.x - :x) < t.radius + 16 AND ABS(t.y - :y) < t.radius + 16
          AND t.z <= :z + 56 AND t.z + 16 >= :z
         ORDER BY t.id
-        INTO iid, pk, amt, lbl
+        INTO iid, pk, amt, lbl, dropped, count_item
   DO
   BEGIN
     SELECT p.health, p.armor, p.armor_type, p.bullets, p.shells, p.max_bullets, p.max_shells, p.has_shotgun, p.has_chaingun,
@@ -1887,8 +1896,20 @@ BEGIN
            rockets, cells, maxr, maxc, has_rl, has_pl, has_bfg;
     SELECT p.has_chainsaw, p.has_ssg FROM player p WHERE p.id = 1 INTO has_saw, has_ssg;
     took = 1;
+    -- MF_DROPPED: a clip a zombie dropped is half a clip (P_GiveAmmo(…, 0)),
+    -- a dropped weapon one clip instead of two (P_GiveWeapon's dropped)
+    IF (dropped = 1 AND pk IN ('bullets', 'shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'ssg')) THEN
+      amt = amt / 2;
     IF (pk IN ('bullets', 'shells', 'rockets', 'cells', 'shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'ssg', 'backpack')) THEN
       amt = amt * mult;
+    -- P_GiveWeapon: a weapon you have stays where it is if there's no room
+    -- for its ammo (P_GiveAmmo gives nothing at the maximum); the chainsaw
+    -- has no ammo, so you only take the first
+    IF ((pk = 'shotgun' AND has_sg = 1 AND shells >= maxs) OR (pk = 'ssg' AND has_ssg = 1 AND shells >= maxs)
+        OR (pk = 'chaingun' AND has_cg = 1 AND bullets >= maxb) OR (pk = 'launcher' AND has_rl = 1 AND rockets >= maxr)
+        OR (pk = 'plasma' AND has_pl = 1 AND cells >= maxc) OR (pk = 'bfg' AND has_bfg = 1 AND cells >= maxc)
+        OR (pk = 'chainsaw' AND has_saw = 1)) THEN
+      took = 0;
     IF (pk = 'health') THEN
       IF (health >= 100) THEN took = 0; ELSE health = MINVALUE(100, health + amt);
     ELSE IF (pk = 'health+') THEN health = MINVALUE((SELECT r.max_health FROM rules r WHERE r.id = 1), health + amt);
@@ -1997,7 +2018,7 @@ BEGIN
              rockets = :rockets, cells = :cells, max_rockets = :maxr, max_cells = :maxc,
              has_launcher = :has_rl, has_plasma = :has_pl, has_bfg = :has_bfg,
              has_chainsaw = :has_saw, has_ssg = :has_ssg,
-             pending_weapon = :pending, items = items + 1, bonus_count = 6,
+             pending_weapon = :pending, items = items + :count_item, bonus_count = 6,
              keycards = IIF(:pk = 'key', BIN_OR(keycards, :amt), keycards),
              invis_tics = IIF(:pk = 'invis', :amt, invis_tics),
              invuln_tics = IIF(:pk = 'invuln', :amt, invuln_tics),
@@ -3544,8 +3565,10 @@ BEGIN
                WHERE s.id = t.sector_id AND tt.thing_type = t.thing_type);
 
   UPDATE game g
-     SET total_kills = (SELECT COUNT(*) FROM things WHERE kind IN ('monster', 'keen')),
-         total_items = (SELECT COUNT(*) FROM things WHERE kind = 'item'),
+     SET total_kills = (SELECT COUNT(*) FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                         WHERE tt.count_kill = 1),
+         total_items = (SELECT COUNT(*) FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                         WHERE tt.count_item = 1),
          total_secrets = (SELECT COUNT(*) FROM sectors WHERE special = 9)
    WHERE id = 1;
 

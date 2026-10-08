@@ -312,6 +312,64 @@ for (const [type, check] of [[2003, 'HAS_LAUNCHER'], [2004, 'HAS_PLASMA'], [2046
   assert(s[check] > 0, `picking up type ${type} sets ${check} (${s[check]})`);
 }
 
+// MF_DROPPED: what a zombie drops is worth half (P_GiveAmmo(…, 0), P_GiveWeapon's dropped);
+// P_GiveWeapon: a weapon you own stays put when its ammo is full; MF_COUNTKILL / MF_COUNTITEM
+const mult = [1, 5].includes((await db.query('SELECT skill FROM game')).rows[0].SKILL) ? 2 : 1;
+const one = async (sql) => (await db.query(sql)).rows[0];
+const spawnHere = async (type) => (await one(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN
+    EXECUTE PROCEDURE spawn_thing(${type}, (SELECT x FROM things WHERE kind = 'player'), (SELECT y FROM things WHERE kind = 'player'), NULL, 0) RETURNING_VALUES id;
+    SUSPEND; END`)).ID;
+const killHere = async (type) => {
+  const id = await spawnHere(type);
+  await db.query(`EXECUTE PROCEDURE damage_thing(${id}, 10000)`);
+  return one(`SELECT FIRST 1 t.id, t.thing_type, t.flags FROM things t WHERE t.kind = 'item' ORDER BY t.id DESC`);
+};
+// (in god mode: the barrels earlier sections set off are still going off around you)
+await db.exec(`UPDATE player SET bullets = 0, shells = 0, has_shotgun = 1, has_chaingun = 1, has_chainsaw = 0, dead = 0, health = 100, god = 1`);
+const k0 = await one('SELECT kills, items FROM player');
+const clip = await killHere(3004);
+assert(clip.THING_TYPE === 2007 && (clip.FLAGS & 65536) !== 0, `a dead zombieman drops a clip marked MF_DROPPED (flags ${clip.FLAGS})`);
+let s = await tic(IDLE);
+assert(s.BULLETS === 5 * mult, `a dropped clip gives half a clip (${s.BULLETS}, expected ${5 * mult})`);
+const k1 = await one('SELECT kills, items FROM player');
+assert(k1.KILLS === k0.KILLS + 1, `the zombieman counts as a kill (${k0.KILLS} → ${k1.KILLS})`);
+assert(k1.ITEMS === k0.ITEMS, `a clip isn't in the item tally (${k0.ITEMS} → ${k1.ITEMS})`);
+await db.exec('UPDATE player SET bullets = 0');
+await spawnHere(2007);
+s = await tic(IDLE);
+assert(s.BULLETS === 10 * mult, `a clip from the map gives a whole clip (${s.BULLETS})`);
+const sg = await killHere(9);
+assert(sg.THING_TYPE === 2001 && (sg.FLAGS & 65536) !== 0, 'a dead shotgun guy drops a shotgun marked MF_DROPPED');
+s = await tic(IDLE);
+assert(s.SHELLS === 4 * mult, `a dropped shotgun gives one clip of shells (${s.SHELLS}, expected ${4 * mult})`);
+await db.exec('UPDATE player SET bullets = 0');
+await killHere(65);
+s = await tic(IDLE);
+assert(s.BULLETS === 10 * mult, `a dropped chaingun gives one clip of bullets (${s.BULLETS}, expected ${10 * mult})`);
+const k2 = await one('SELECT kills FROM player');
+await killHere(3006);
+assert((await one('SELECT kills FROM player')).KILLS === k2.KILLS, 'a lost soul is not a kill (no MF_COUNTKILL)');
+// a weapon you own, its ammo full: left on the floor
+await db.exec('UPDATE player SET shells = max_shells');
+const full = await spawnHere(2001);
+await tic(IDLE);
+assert((await db.query(`SELECT id FROM things WHERE id = ${full}`)).rows.length === 1, 'an owned shotgun stays put when your shells are full');
+await db.exec('UPDATE player SET shells = 0');
+await tic(IDLE);
+assert((await db.query(`SELECT id FROM things WHERE id = ${full}`)).rows.length === 0, '…and is taken once there is room for its shells');
+const saw = await spawnHere(2005);
+await tic(IDLE);
+assert((await one('SELECT has_chainsaw FROM player')).HAS_CHAINSAW === 1, 'the first chainsaw is taken');
+await spawnHere(2005);
+await tic(IDLE);
+assert((await db.query(`SELECT id FROM things WHERE thing_type = 2005 AND id > ${saw}`)).rows.length === 1, 'a second chainsaw is left (it has no ammo to give)');
+const i0 = (await one('SELECT items FROM player')).ITEMS;
+await spawnHere(2014);
+await tic(IDLE);
+assert((await one('SELECT items FROM player')).ITEMS === i0 + 1, 'a health bonus is in the item tally (MF_COUNTITEM)');
+const tot = await one(`SELECT (SELECT COUNT(*) FROM thing_types WHERE count_item = 1) ci, (SELECT COUNT(*) FROM thing_types WHERE count_kill = 1 AND thing_type = 3006) cs FROM rdb$database`);
+assert(Number(tot.CI) === 9 && Number(tot.CS) === 0, `nine item types count (${tot.CI}), the lost soul doesn't`);
+
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'weapons ok');
 process.exit(failures ? 1 : 0);

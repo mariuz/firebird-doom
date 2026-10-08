@@ -81,7 +81,8 @@ export async function loadResources(db, wad, { width = 320, height = 168, dehack
     ['thing_type', 'sprite', 'kind', 'radius', 'height', 'solid', 'hp', 'speed', 'pain_chance', 'walk_fr', 'atk_fr',
       'pain_fr', 'death_fr', 'death_sprite', 'bright', 'atk_kind', 'missile_type', 'dmg_lo', 'dmg_hi', 'shots',
       'drop_type', 'pickup', 'amount', 'label', 'see_snd', 'atk_snd', 'pain_snd', 'death_snd', 'hang',
-      'melee_fr', 'melee_snd', 'melee_hit_snd', 'melee_dmg', 'melee_rolls', 'mass', 'floats', 'shadow', 'active_snd'],
+      'melee_fr', 'melee_snd', 'melee_hit_snd', 'melee_dmg', 'melee_rolls', 'mass', 'floats', 'shadow', 'active_snd',
+      'count_kill', 'count_item'],
     deh.types.map((t) => [
       t.type, t.sprite, t.kind, t.radius, t.height, t.solid ?? 0, t.hp ?? null, t.speed ?? null, t.painChance ?? null,
       t.walk ?? 'A', t.attack ?? null, t.pain ?? null, t.death ?? null, t.deathSprite ?? null, t.bright ?? 0,
@@ -89,7 +90,7 @@ export async function loadResources(db, wad, { width = 320, height = 168, dehack
       t.pickup ?? null, t.amount ?? null, ITEM_LABELS[t.sprite] ?? t.sprite,
       t.seeSnd ?? null, t.atkSnd ?? null, t.painSnd ?? null, t.deathSnd ?? null, t.hang ?? 0,
       t.meleeFr ?? null, t.meleeSnd ?? null, t.meleeHitSnd ?? null, t.meleeDmg ?? null, t.meleeRolls ?? null,
-      t.mass ?? 100, t.floats ?? 0, t.shadow ?? 0, t.activeSnd ?? null,
+      t.mass ?? 100, t.floats ?? 0, t.shadow ?? 0, t.activeSnd ?? null, t.countKill ?? 0, t.countItem ?? 0,
     ]),
   );
   await db.exec(`SET TERM ^ ;

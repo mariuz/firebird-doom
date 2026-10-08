@@ -4,7 +4,8 @@
 // What this port can take from a patch:
 //   Thing N   hit points, speed, width, height, pain chance, mass, missile
 //             damage, the five sounds, the map number (ID #) and the bits it
-//             models (solid, float, shadow, spawn on the ceiling)
+//             models (solid, float, shadow, spawn on the ceiling, and whether
+//             it counts as a kill or an item)
 //   Ammo N    max ammo and the clip size (which sets every pickup's amount)
 //   Misc      starting health and bullets, the health and armour caps, the
 //             armour classes, soulsphere and megasphere, the cheats' health
@@ -68,7 +69,7 @@ const MISC_FIELDS = {
 const AMMO = ['bullets', 'shells', 'cells', 'rockets'];   // am_clip, am_shell, am_cell, am_misl
 
 // mobjflag_t bits the port models (by number, or by BEX name)
-const BITS = { SOLID: 0x2, SPAWNCEILING: 0x100, FLOAT: 0x4000, SHADOW: 0x40000 };
+const BITS = { SOLID: 0x2, SPAWNCEILING: 0x100, FLOAT: 0x4000, SHADOW: 0x40000, COUNTKILL: 0x400000, COUNTITEM: 0x800000 };
 const BIT_NAMES = ['SPECIAL', 'SOLID', 'SHOOTABLE', 'NOSECTOR', 'NOBLOCKMAP', 'AMBUSH', 'JUSTHIT', 'JUSTATTACKED',
   'SPAWNCEILING', 'NOGRAVITY', 'DROPOFF', 'PICKUP', 'NOCLIP', 'SLIDE', 'FLOAT', 'TELEPORT', 'MISSILE', 'DROPPED',
   'SHADOW', 'NOBLOOD', 'CORPSE', 'INFLOAT', 'COUNTKILL', 'COUNTITEM', 'SKULLFLY', 'NOTDMATCH',
@@ -176,6 +177,8 @@ export function applyDehacked(baseTypes, patch) {
       t.floats = b & BITS.FLOAT ? 1 : 0;
       t.shadow = b & BITS.SHADOW ? 1 : 0;
       t.hang = b & BITS.SPAWNCEILING ? 1 : 0;
+      t.countKill = b & BITS.COUNTKILL ? 1 : 0;
+      t.countItem = b & BITS.COUNTITEM ? 1 : 0;
       done.push('bits');
     }
     if ('id #' in f && num('id #') > 0 && t.type < 9000 && t.type !== 1) {

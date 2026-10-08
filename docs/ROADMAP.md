@@ -9,7 +9,7 @@ you find missing.
 
 - ~~**Skill levels.**~~ Done: the **Skill** setting, with spawn flags, half damage and double ammo
   on 1, and Nightmare's fast monsters, instant reactions, respawning and no cheats on 5.
-  Still missing: DOOM's dropped clips giving half ammo (`MF_DROPPED`), on any skill.
+  Dropped items give half (`MF_DROPPED`), as in vanilla.
 - ~~**Main menu, new game and episode select.**~~ Done ([src/menu.js](../src/menu.js)): the
   title loop, the main menu, episode and skill select, Options, Read This!, Quit. Still missing:
   the demo loop between the title pages (needs demo playback), the Screen Size option, and
