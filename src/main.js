@@ -13,7 +13,7 @@ import { Wad } from './wad.js';
 import { createSchema, loadResources, loadMap, setView, setRenderer } from './loader.js';
 import { Renderer } from './renderer.js';
 import { drawStatusBar, drawText, drawWeapon } from './hud.js';
-import { AM_COLORS, automapColor } from './automap.js';
+import { AM_COLORS, AM_STRINGS, AutomapView, GRID_COLOR, automapColor } from './automap.js';
 import { cheatReaders, clevMap, idmusMap } from './cheats.js';
 import { nextMap } from './progress.js';
 import { Finale, parseDehStrings, setFallbackStrings } from './finale.js';
@@ -53,6 +53,8 @@ const saveSettings = () => {
 };
 const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
 let showMap = false;
+let amView = null;                  // the automap's window: zoom, follow, grid, marks (AutomapView)
+let amMsg = null;                   // its messages ({ text, tics }), shown like the game's but kept out of Firebird
 let finale = null;                  // text screens: DOOM II's (MAP06/11/20, the secret levels, MAP30) and DOOM I's E1M8
 let finaleKey = false;              // a key went down: F_CastResponder
 let intermission = null;            // the stats screen between levels (wi_stuff.c)
@@ -126,6 +128,16 @@ window.addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (finale) finaleKey = true;
   if (e.code === 'Tab') showMap = !showMap;
+  // AM_Responder: F follow, G grid, M mark, C clear marks, 0 the whole level;
+  // = and - zoom and (follow off) the arrows pan while held – and the game
+  // doesn't see them (so F doesn't fire, nor M switch the sound off)
+  if (showMap && amView && running && !menu?.active) {
+    const said = { KeyF: () => amView.toggleFollow(), KeyG: () => amView.toggleGrid(), KeyM: () => amView.addMark(),
+      KeyC: () => amView.clearMarks(), Digit0: () => amView.toggleBig() }[e.code]?.();
+    if (said) amSay(said);
+    // (the cheat readers below still see the key, as ST_Responder does before AM_Responder)
+    if (['KeyF', 'KeyG', 'KeyM', 'KeyC', 'Digit0', 'Minus', 'Equal', 'NumpadAdd', 'NumpadSubtract'].includes(e.code)) e.preventDefault();
+  }
   // AM_Responder: the automap listens for IDDT while it's open
   if (showMap && cheats.iddt(e.key)) amCheating = (amCheating + 1) % 3;
   for (const [code, read] of cheats.fixed) {
@@ -151,7 +163,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code.startsWith('Digit')) weaponSel = Number(e.code.slice(5));
   if (e.code === 'KeyP' || e.code === 'Pause') paused = !paused;
-  if (e.code === 'KeyM') setAudio(!settings.audio);
+  if (e.code === 'KeyM' && !showMap) setAudio(!settings.audio);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 window.addEventListener('blur', () => keys.clear());
@@ -390,9 +402,11 @@ function applyDisplay() {
 
 function readInput(tics) {
   const k = (c) => keys.has(c);
-  let fwd = (k('KeyW') || k('ArrowUp') ? 1 : 0) - (k('KeyS') || k('ArrowDown') ? 1 : 0);
+  const panning = showMap && amView && !amView.follow;   // (the arrows pan the map instead)
+  const arrow = (c) => !panning && k(c);
+  let fwd = (k('KeyW') || arrow('ArrowUp') ? 1 : 0) - (k('KeyS') || arrow('ArrowDown') ? 1 : 0);
   let side = (k('KeyD') || k('Period') ? 1 : 0) - (k('KeyA') || k('Comma') ? 1 : 0);
-  const turnKeys = (k('ArrowLeft') ? 1 : 0) - (k('ArrowRight') ? 1 : 0);
+  const turnKeys = (arrow('ArrowLeft') ? 1 : 0) - (arrow('ArrowRight') ? 1 : 0);
   const run = k('ShiftLeft') || k('ShiftRight') ? 1 : 0;
   if (touch.move) {
     fwd = Math.max(-1, Math.min(1, -touch.move.dy / 40));
@@ -401,7 +415,7 @@ function readInput(tics) {
   // angleturn 640/1280 per tic in DOOM ≈ 0.061 / 0.123 rad
   const turn = turnKeys * (run ? 0.123 : 0.07) * tics + mouseTurn;
   mouseTurn = 0;
-  const fire = k('ControlLeft') || k('ControlRight') || k('KeyF') || fireClick ? 1 : 0;
+  const fire = k('ControlLeft') || k('ControlRight') || (k('KeyF') && !showMap) || fireClick ? 1 : 0;
   if (fireClick === 'tap') fireClick = false;
   const use = k('Space') || k('KeyE') || k('TapUse') ? 1 : 0;
   keys.delete('TapUse');
@@ -445,6 +459,11 @@ async function startMap(name, newGame, { skill = settings.skill, seed = null } =
   map.lines = new Map(rows.map((r) => [r[0], { fs: r[1], bs: r[2], flags: r[3], lightDelta: r[4], scroll: r[11] === 48 }]));
   map.linedefs = rows;
   map.seen = new Set();   // ML_MAPPED: every line the renderer has drawn on this level
+  // AM_LevelInit: the level's extent, the window on it, no marks
+  const xs = rows.flatMap((r) => [r[5], r[7]]);
+  const ys = rows.flatMap((r) => [r[6], r[8]]);
+  amView = new AutomapView({ minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) },
+    wad.blockmapOrigin(name) ?? undefined);
   await loadSides();
   sidesRev = -1;
   console.log(`[firebird-doom] ${name} loaded in ${(performance.now() - t0).toFixed(0)} ms`);
@@ -622,9 +641,12 @@ async function frame() {
       walls, sprites, map);
     renderer.composeView();
     if (!hud.DEAD) drawWeapon(renderer, hud);
-    if (showMap) drawAutomap();
+    if (showMap) drawAutomap(tics);
     drawStatusBar(renderer, hud);
-    if (hud.MSG && settings.messages) drawText(renderer, hud.MSG, 2, 2);
+    if (amMsg) amMsg.tics -= tics;
+    if (amMsg && amMsg.tics <= 0) amMsg = null;
+    const msg = amMsg?.text ?? hud.MSG;
+    if (msg && settings.messages) drawText(renderer, msg, 2, 2);
     if (paused) drawText(renderer, 'PAUSED', 136, 80);
     lastPalette = palette;
     renderer.present(palette);
@@ -657,15 +679,24 @@ function updateStats() {
     ` · ${presenter?.kind === 'webgl' ? 'WebGL' : '2D'}${settings.smooth ? ' smooth' : ''}`;
 }
 
-function drawAutomap() {
-  // AM_Drawer, into the 320×200 screen in palette colours; the view behind
-  // stays faintly visible, darkened through COLORMAP 24
-  const sc = 0.12;
-  const cx = 160;
-  const cy = 84;
+/** An automap message (a DEHACKED string's name), the WAD's wording or Freedoom's. */
+function amSay(key) {
+  const strings = parseDehStrings(wad.dehacked() + '\n' + (dehPatch?.text ?? ''));
+  amMsg = { text: strings.get(key) ?? AM_STRINGS[key], tics: 4 * 35 };   // (HU_MSGTIMEOUT)
+}
+
+function drawAutomap(tics = 1) {
+  // AM_Ticker, then AM_Drawer into the 320×200 screen in palette colours;
+  // the view behind stays faintly visible, darkened through COLORMAP 24
+  const k = (c) => keys.has(c);
+  amView.tick(tics, { zoomIn: k('Equal') || k('NumpadAdd'), zoomOut: k('Minus') || k('NumpadSubtract'),
+    left: k('ArrowLeft'), right: k('ArrowRight'), up: k('ArrowUp'), down: k('ArrowDown') }, { x: hud.PX, y: hud.PY });
   renderer.dim(24);
-  const tx = (x) => cx + (x - hud.PX) * sc;
-  const ty = (y) => cy - (y - hud.PY) * sc;
+  const tx = (x) => amView.toScreen(x, 0)[0];
+  const ty = (y) => amView.toScreen(0, y)[1];
+  const sc = amView.scale;
+  // AM_drawGrid: the BLOCKMAP's 128-unit cells, under everything
+  if (amView.grid) for (const [x1, y1, x2, y2] of amView.gridLines()) renderer.line(tx(x1), ty(y1), tx(x2), ty(y2), GRID_COLOR);
   for (const r of map.linedefs) {
     const [id, , bs, flags, , x1, y1, x2, y2, fsec, bsec, special] = r;
     const f = map.sectors.get(fsec);
@@ -681,15 +712,22 @@ function drawAutomap() {
     renderer.line(p[1][0], p[1][1], p[2][0], p[2][1], color);
     renderer.line(p[2][0], p[2][1], p[0][0], p[0][1], color);
   };
+  // (the arrows keep their size on screen at any zoom, as DOOM's line art does: 16 and 8 units at the start)
+  const z = Math.max(0.5, Math.min(2, sc / 0.12));
   if (map.amThings) {
     for (const [x, y, ang] of map.amThings) {
       const px = tx(x);
       const py = ty(y);
       if (px < -4 || px > 324 || py < -4 || py > 172) continue;
-      tri(px, py, ang, 3, 2.5, AM_COLORS.thing);
+      tri(px, py, ang, 3 * z, 2.5 * z, AM_COLORS.thing);
     }
   }
-  tri(cx, cy, hud.PANGLE, 6, 5, AM_COLORS.player);
+  tri(tx(hud.PX), ty(hud.PY), hud.PANGLE, 6 * z, 5 * z, AM_COLORS.player);
+  // AM_drawMarks: the numbers, AMMNUM0–9
+  amView.marks.forEach(([x, y], i) => {
+    const pic = renderer.pictureByName(`AMMNUM${i}`);
+    if (pic) renderer.patch(pic, Math.round(tx(x)), Math.round(ty(y)));
+  });
 }
 
 // ── SQL console ─────────────────────────────────────────────────────────
@@ -823,6 +861,7 @@ async function boot() {
       // to the map after the one named, as if you'd just finished it (DOOM I's
       // endings excepted: they end the game)
       get menu() { return menu; },
+      get automap() { return { view: amView, open: showMap, message: amMsg?.text ?? null }; },
       get files() { return { base: baseWad?.label, pwads: pwads.map((p) => p.name), deh: dehPatch?.name ?? null }; },
       addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await loadWads(); },
       useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await loadWads(); },

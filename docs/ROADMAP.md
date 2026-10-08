@@ -74,8 +74,8 @@ you find missing.
   PSQL), caching static per-map work, reusing the previous frame's visible set. Moving the
   per-column stepping to JS (about 3× faster walls) was considered and turned down: Firebird
   decides, JavaScript draws.
-- **Automap.** It follows you at one fixed scale. DOOM's automap zooms, pans when not following,
-  and has a grid and marks.
+- ~~**Automap.**~~ Done: zoom (= -), the whole-level view (0), follow mode and panning (F, arrows),
+  the grid (G) and marks (M, C), as `AM_Responder` and `AM_Ticker` have them.
 - **Light diminishing and colormaps.** Close to DOOM's `scalelight`/`zlight` but not
   pixel-identical. A side-by-side check against a reference port would settle it.
 - **Status bar.** No arms/frags switch for deathmatch, and the face doesn't look towards where

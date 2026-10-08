@@ -246,6 +246,23 @@ in grey (`TSWALLCOLORS`). Twice also draws every thing in the level as a green t
 its way (`AM_drawThings`), read live from `THINGS`. A third time turns it off. Like DOOM, the cheat
 prints no message and isn't stored in the database.
 
+The automap's keys are `AM_Responder`'s:
+
+- <kbd>=</kbd> and <kbd>-</kbd> zoom in and out while held, 2% a tic. The limits are the whole level and a
+  player-sized view. The map opens a little closer than the whole level, as `AM_LevelInit` does.
+- <kbd>0</kbd> shows the whole level, centred, and pressing it again puts the view back.
+- <kbd>F</kbd> turns follow mode off and on. Off, the arrow keys pan the map, 4 pixels a tic and kept
+  within the level, instead of moving you.
+- <kbd>G</kbd> draws the grid, the BLOCKMAP's 128-unit cells from its origin.
+- <kbd>M</kbd> marks the spot in the middle of the view with a number (`AMMNUM0`–`9`), ten at most, the
+  oldest replaced. <kbd>C</kbd> clears the marks.
+
+While the map is open those keys are the map's: <kbd>F</kbd> doesn't fire and <kbd>M</kbd> doesn't turn the sound
+off, but cheats still read every key, as `ST_Responder` comes first. The messages use the WAD's
+`DEHACKED` wording (`AMSTR_*`), falling back to Freedoom's. The view's state is `AutomapView`,
+tested headless by `npm run test:automap`, and it stays out of the database: a level starts with
+fresh marks.
+
 ### Sector specials
 
 Every sector type DOOM uses is handled, as in `P_SpawnSpecials` and `P_PlayerInSpecialSector`:

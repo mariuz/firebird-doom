@@ -30,7 +30,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `src/renderer.js` | The rasteriser: walls, visplanes (`R_MakeSpans`/`R_MapPlane`), sky, masked middles and sprites, fuzz, HUD patches, automap lines. **Works in palette indices.** |
 | `src/present.js` | The last step: palette indices → colours. `WebGLPresenter` (a fragment shader over a 256×14 palette texture) or `Canvas2DPresenter`. Smooth upscaling. |
 | `src/hud.js` | The status bar, the weapon sprite (with fuzz and fixed colormaps), messages. |
-| `src/automap.js` | The automap's colour rules (`AM_drawWalls`), as palette indices. |
+| `src/automap.js` | The automap's colour rules (`AM_drawWalls`), as palette indices, and `AutomapView`: its window (scale, centre, follow, grid, marks; `AM_Responder`/`AM_Ticker`). |
 | `src/intermission.js` | `wi_stuff.c`: stats, time and par, "Entering", the episode maps and their animations. |
 | `src/finale.js` | `f_finale.c`: Doom I endings with their art and the bunny scroll, Doom II text screens, the cast call. DEHACKED string parsing and the Freedoom text fallback. |
 | `src/progress.js` | `G_DoCompleted`'s next-map rules, secret exits included. |
@@ -168,6 +168,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `finale-test.mjs` | Every text screen and ending, the cast call, the bunny scroll, the id-WAD layouts and the fallback text. |
 | `intermission-test.mjs` | Pars, counting and sounds, skipping, the after-stats flow, the episode-map animations, the secret routes. |
 | `savegame-test.mjs` | Plays, saves (through JSON), plays on, loads: every saved row comes back exactly; new ids don't collide; the game runs on; other versions are refused. |
+| `automap-test.mjs` | The automap's window: opening scale and limits, following, zoom per tic, panning within the level, the whole-level view, ten marks, the grid on BLOCKMAP cells, the messages. |
 | `pwad-test.mjs` | A PWAD built in memory (map, flat, sprite, music, DEHACKED) over Freedoom: what replaces what, in the directory and in Firebird; loading twice into one database. |
 | `dehacked-test.mjs` | Freedoom's lump (pars, cheats, frame patches reported), and a patch with every kind of block: patched things and pickups, the Misc rules in play, respelt cheats, par times. |
 | `demo-test.mjs` | A recorded demo (through JSON) replays into the same game, row for row; a third run too; another seed diverges; `P_RANDOM` is repeatable and even; thing ids repeat across loads. |

@@ -222,6 +222,17 @@ export class Wad {
 
   // ── maps ───────────────────────────────────────────────────────────────
 
+  /** The map's BLOCKMAP origin (bmaporgx, bmaporgy), or null if it has none. */
+  blockmapOrigin(name) {
+    const marker = this.lump(name);
+    if (!marker) return null;
+    for (let i = marker.index + 1; i < marker.index + 12 && i < this.lumps.length; i++) {
+      const l = this.lumps[i];
+      if (l.name === 'BLOCKMAP' && l.size >= 4) { const dv = this.dv(l); return [dv.getInt16(0, true), dv.getInt16(2, true)]; }
+    }
+    return null;
+  }
+
   map(name) {
     const marker = this.lump(name);
     if (!marker) throw new Error(`map ${name} not in WAD`);
