@@ -71,6 +71,39 @@ const FUZZ_OFFSETS = [
 ];
 const FUZZ_MAP = 6 * 256;   // COLORMAP 6: what fuzz darkens through
 
+// ── R_InitLightTables / R_ExecuteSetViewSize, in DOOM's integer arithmetic ──
+// 16 light levels (LIGHTSEGSHIFT 4), 32 colormaps; each level's brightest
+// colormap is startmap = (15 - level) * 4, and distance takes it darker.
+const LIGHTLEVELS = 16;
+const NUMCOLORMAPS = 32;
+const MAXLIGHTSCALE = 48;
+const MAXLIGHTZ = 128;
+const clampMap = (level) => Math.max(0, Math.min(NUMCOLORMAPS - 1, level));
+const startMap = (lightnum) => ((LIGHTLEVELS - 1 - lightnum) * 2 * NUMCOLORMAPS) / LIGHTLEVELS;
+
+/** A sector light level (0–255) plus extralight → the light number, 0–15. */
+export function lightNum(light, extralight = 0) {
+  return Math.max(0, Math.min(LIGHTLEVELS - 1, (light >> 4) + extralight));
+}
+
+/** scalelight[lightnum][index]: walls and sprites, by their projected scale (index = scale >> 12). */
+export function scaleLight(lightnum, index) {
+  // level = startmap - j*SCREENWIDTH/(viewwidth<<detailshift)/DISTMAP, and viewwidth<<detailshift is always 320
+  const j = Math.max(0, Math.min(MAXLIGHTSCALE - 1, index));
+  return clampMap(startMap(lightnum) - Math.trunc(j / 2));
+}
+
+// zlight[lightnum][j]: scale = FixedDiv(160 << 16, (j + 1) << 20) >> 12, level = startmap - scale/DISTMAP
+const ZLIGHT = Array.from({ length: LIGHTLEVELS }, (_, i) => Array.from({ length: MAXLIGHTZ }, (__, j) => {
+  const scale = Math.trunc(Math.trunc((160 * 65536 * 65536) / ((j + 1) * 1048576)) / 4096);
+  return clampMap(startMap(i) - Math.trunc(scale / 2));
+}));
+
+/** zlight[lightnum][index]: flats, by distance (index = distance >> 20, i.e. distance / 16). */
+export function zLight(lightnum, index) {
+  return ZLIGHT[lightnum][Math.max(0, Math.min(MAXLIGHTZ - 1, index))];
+}
+
 export class Renderer {
   constructor(wad, res) {
     this.wad = wad;
@@ -160,6 +193,8 @@ export class Renderer {
     // R_SetupFrame: a fixed colormap (32, INVERSECOLORMAP, while invulnerable)
     // replaces the light levels – except on the sky, as in vanilla
     this.fixedCm = view.fixedColormap ?? null;
+    // P_PlayerThink's extralight: the muzzle flash (A_Light1/A_Light2) brightens everything a step or two
+    this.extralight = view.extralight ?? 0;
     const hh = h / 2;
     const hw = w / 2;
     const vz = view.z;
@@ -272,12 +307,20 @@ export class Renderer {
     }
   }
 
+  /** A wall's (or masked middle's) colormap: scalelight[light][rw_scale >> LIGHTSCALESHIFT]. */
   lightIndex(light, depth) {
-    // fixedcolormap (invulnerability) overrides all lighting
+    // fixedcolormap (invulnerability, the goggles) overrides all lighting
     if (this.fixedCm != null) return this.fixedCm;
-    // R_ScaleFromGlobalAngle → scalelight: startmap - scale/DISTMAP
-    const start = (15 - Math.min(15, Math.max(0, light >> 4))) * 4;
-    return Math.max(0, Math.min(31, start - Math.min(24, Math.floor(1280 / depth))));
+    // R_RenderSegLoop: rw_scale is projection / distance, and projection is
+    // half the view's columns – so in low detail it halves while scalelight
+    // doesn't, and walls come out darker at a distance (vanilla's quirk, kept)
+    return scaleLight(lightNum(light, this.extralight), Math.floor((this.proj * 16) / depth));
+  }
+
+  /** A sprite's: R_ProjectSprite shifts by LIGHTSCALESHIFT - detailshift, so detail doesn't change it. */
+  spriteLightIndex(light, depth) {
+    if (this.fixedCm != null) return this.fixedCm;
+    return scaleLight(lightNum(light, this.extralight), Math.floor(2560 / depth));
   }
 
   wallColumn(col, y0, y1, tex, u, top, depth, scale, vz, light, masked = false) {
@@ -342,8 +385,8 @@ export class Renderer {
     let wy = view.y + dist * (sa - k * ca);
     const sx = (dist * sa) / proj;
     const sy = (-dist * ca) / proj;
-    const start = (15 - Math.min(15, Math.max(0, p.light >> 4))) * 4;
-    const cm = (this.fixedCm ?? Math.max(0, Math.min(31, start - Math.floor(1280 / (dist + 16))))) * 256;
+    // R_MapPlane: zlight[light][distance >> LIGHTZSHIFT]
+    const cm = (this.fixedCm ?? zLight(lightNum(p.light, this.extralight), Math.floor(dist / 16))) * 256;
     let o = y * w + x1;
     for (let x = x1; x <= x2; x++) {
       fb[o++] = cmap[cm + flat[((Math.floor(-wy) & 63) << 6) | (Math.floor(wx) & 63)]];
@@ -373,7 +416,7 @@ export class Renderer {
     // R_DrawFuzzColumn: a shadow's pixels aren't its own – each one takes the
     // pixel just above or below it (FUZZTABLE) and darkens it (COLORMAP 6)
     const fuzz = s.fuzz === 1;
-    const cm = (s.light >= 255 ? (this.fixedCm ?? 0) : this.lightIndex(s.light, s.depth)) * 256;
+    const cm = (s.light >= 255 ? (this.fixedCm ?? 0) : this.spriteLightIndex(s.light, s.depth)) * 256;
     const xa = Math.max(0, Math.ceil(s.x1 - 0.5));
     const xb = Math.min(w - 1, Math.ceil(s.x2 - 0.5) - 1);
     const sx = pic.w / (s.x2 - s.x1);

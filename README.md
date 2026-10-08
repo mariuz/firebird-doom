@@ -137,6 +137,20 @@ linearly. `SELECT * FROM frame_visplanes` shows the current frame's planes in th
 and the stats line under the view counts them. Across Freedoom's maps the busiest frame
 needs 42, comfortably under vanilla DOOM's `MAXVISPLANES` of 128.
 
+### Light diminishing
+
+How dark a pixel gets is DOOM's own integer arithmetic ([src/renderer.js](src/renderer.js)):
+`R_InitLightTables`' `zlight` and `R_ExecuteSetViewSize`' `scalelight`, 16 light levels by 32
+colormaps. Walls and masked middles take `scalelight` by their projected scale
+(`R_RenderSegLoop`), sprites likewise (`R_ProjectSprite`), and flats take `zlight` by distance
+in 16-unit steps (`R_MapPlane`). Walls running due east–west or north–south get the fake contrast,
+a light level darker or lighter. Vanilla's low-detail quirk is kept: halving the view's columns
+halves a wall's scale but not the table, so in low detail walls come out darker at a distance,
+while sprites (whose shift accounts for detail) and flats don't change. The muzzle flash's
+`extralight` lifts every light level by one or two steps while it shows (`A_Light1`/`A_Light2`).
+`npm run test:light` re-does DOOM's arithmetic in 16.16 fixed point and checks every table entry,
+plus walls, sprites and flats at thousands of light and distance samples in both details.
+
 ### Presenting: palette indices, a WebGL shader, or Canvas 2D
 
 Like DOOM, the rasteriser works in palette indices. The 3D view and the 320×200 screen hold one

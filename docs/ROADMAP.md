@@ -76,8 +76,9 @@ you find missing.
   decides, JavaScript draws.
 - ~~**Automap.**~~ Done: zoom (= -), the whole-level view (0), follow mode and panning (F, arrows),
   the grid (G) and marks (M, C), as `AM_Responder` and `AM_Ticker` have them.
-- **Light diminishing and colormaps.** Close to DOOM's `scalelight`/`zlight` but not
-  pixel-identical. A side-by-side check against a reference port would settle it.
+- ~~**Light diminishing and colormaps.**~~ Done: the exact `scalelight`/`zlight` tables and
+  lookups, low detail's quirk, and the muzzle flash's `extralight`, checked against DOOM's fixed-point
+  arithmetic by `npm run test:light`.
 - **Status bar.** No arms/frags switch for deathmatch, and the face doesn't look towards where
   damage came from (`ST_updateFaceWidget`'s turn faces).
 - **Messages.** Pickup messages say "Picked up …". DOOM's own texts are mostly in the executable,

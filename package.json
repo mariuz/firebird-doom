@@ -22,7 +22,8 @@
     "test:demo": "node scripts/demo-test.mjs",
     "test:dehacked": "node scripts/dehacked-test.mjs",
     "test:pwad": "node scripts/pwad-test.mjs",
-    "test:automap": "node scripts/automap-test.mjs"
+    "test:automap": "node scripts/automap-test.mjs",
+    "test:light": "node scripts/light-test.mjs"
   },
   "license": "MIT",
   "dependencies": {

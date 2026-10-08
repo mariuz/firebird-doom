@@ -12,7 +12,7 @@ import renderSql from '../sql/render.sql';
 import { Wad } from './wad.js';
 import { createSchema, loadResources, loadMap, setView, setRenderer } from './loader.js';
 import { Renderer } from './renderer.js';
-import { drawStatusBar, drawText, drawWeapon } from './hud.js';
+import { drawStatusBar, drawText, drawWeapon, extraLight } from './hud.js';
 import { AM_COLORS, AM_STRINGS, AutomapView, GRID_COLOR, automapColor } from './automap.js';
 import { cheatReaders, clevMap, idmusMap } from './cheats.js';
 import { nextMap } from './progress.js';
@@ -637,7 +637,8 @@ async function frame() {
     const palette = red > 0 ? Math.min(8, (red + 7) >> 3)
       : hud.BONUS_COUNT ? Math.min(12, 8 + ((hud.BONUS_COUNT + 7) >> 3))
         : blink(hud.IRON_TICS) ? 13 : 0;
-    renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette, fixedColormap },
+    renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette, fixedColormap,
+      extralight: hud.DEAD ? 0 : extraLight(hud) },
       walls, sprites, map);
     renderer.composeView();
     if (!hud.DEAD) drawWeapon(renderer, hud);

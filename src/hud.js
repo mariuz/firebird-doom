@@ -61,7 +61,34 @@ export function drawText(renderer, text, x, y) {
   }
 }
 
+// A_Light1 / A_Light2 in each flash state: the extralight while that frame shows
+const FLASH_LIGHT = { PISFA0: 1, SHTFA0: 1, SHTFB0: 2, SHT2I0: 1, SHT2J0: 2, CHGFA0: 1, CHGFB0: 2,
+  MISFA0: 1, MISFB0: 1, MISFC0: 2, MISFD0: 2, PLSFA0: 1, PLSFB0: 1, BFGFA0: 1, BFGFB0: 2 };
+
+/** P_PlayerThink's player->extralight: 0, or 1–2 while the muzzle flash shows. */
+export function extraLight(hud) {
+  return FLASH_LIGHT[weaponFrames(hud).flash] ?? 0;
+}
+
 export function drawWeapon(renderer, hud) {
+  const { gun, flash, bob } = weaponFrames(hud);
+  // R_DrawPSprite: sx = 1, sy = WEAPONTOP (32), against a 320×200 screen.
+  // Partially invisible, the weapon is fuzz too – flickering back in the
+  // last four seconds (pw_invisibility > 4*32 || & 8)
+  const inv = hud.INVIS_TICS ?? 0;
+  // …and invulnerable, it takes the inverse colormap with the rest of the view
+  const cmap = renderer.fixedCm ?? 0;
+  const draw = inv > 4 * 32 || (inv & 8)
+    ? (pic, x, y) => renderer.patchFuzz(pic, x, y)
+    : (pic, x, y) => renderer.patch(pic, x, y, cmap);
+  const lowered = hud.WEAPON_Y ?? 0;
+  const sy = 32 + lowered + Math.abs(Math.round(bob));
+  if (flash) draw(renderer.pictureByName(flash), 1 + Math.round(bob), sy);
+  draw(renderer.pictureByName(gun), 1 + Math.round(bob), sy);
+}
+
+/** Which weapon frame and flash frame show now, and the bob. */
+function weaponFrames(hud) {
   const w = hud.WEAPON;
   const len = Math.max(1, hud.ATTACK_LEN);
   const p = hud.ATTACK_TICS > 0 ? 1 - hud.ATTACK_TICS / len : -1;
@@ -103,16 +130,5 @@ export function drawWeapon(renderer, hud) {
     if (p >= 0 && p < 0.33) flash = 'BFGFA0';
     else if (p >= 0.33 && p < 0.45) flash = 'BFGFB0';
   }
-  // R_DrawPSprite: sx = 1, sy = WEAPONTOP (32), against a 320×200 screen.
-  // Partially invisible, the weapon is fuzz too – flickering back in the
-  // last four seconds (pw_invisibility > 4*32 || & 8)
-  const inv = hud.INVIS_TICS ?? 0;
-  // …and invulnerable, it takes the inverse colormap with the rest of the view
-  const cmap = renderer.fixedCm ?? 0;
-  const draw = inv > 4 * 32 || (inv & 8)
-    ? (pic, x, y) => renderer.patchFuzz(pic, x, y)
-    : (pic, x, y) => renderer.patch(pic, x, y, cmap);
-  const sy = 32 + lowered + Math.abs(Math.round(bob));
-  if (flash) draw(renderer.pictureByName(flash), 1 + Math.round(bob), sy);
-  draw(renderer.pictureByName(gun), 1 + Math.round(bob), sy);
+  return { gun, flash, bob };
 }
