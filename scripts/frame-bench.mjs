@@ -16,12 +16,18 @@ const wad = new Wad(fs.readFileSync(process.env.WAD ?? path.join(root, 'public/w
 const res = await loadResources(db, wad);
 const maps = process.argv.slice(2).length ? process.argv.slice(2) : wad.mapNames().slice(0, 4);
 const views = Number(process.env.VIEWS ?? 8);
+const reps = Number(process.env.REPS ?? 3);   // (each frame timed this often, the fastest kept: steadier on a busy machine)
 const arr = { rowMode: 'array' };
 
-const time = async (q) => {
-  const t0 = performance.now();
-  const r = await db.query(q, [], arr);
-  return [performance.now() - t0, r.rows.length];
+const time = async (q, n = reps) => {
+  let best = Infinity;
+  let rows = 0;
+  for (let i = 0; i < n; i++) {
+    const t0 = performance.now();
+    rows = (await db.query(q, [], arr)).rows.length;
+    best = Math.min(best, performance.now() - t0);
+  }
+  return [best, rows];
 };
 
 const total = { walls: 0, sprites: 0, sectors: 0, tic: 0, n: 0, rows: 0 };
@@ -38,7 +44,7 @@ for (const name of maps) {
     for (const a of [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2]) {
       await db.exec(`UPDATE things SET x = ${s.X}, y = ${s.Y}, angle = ${a}, sector_id = sector_at(${s.X}, ${s.Y}),
           z = (SELECT floor_h FROM sectors WHERE id = sector_at(${s.X}, ${s.Y})) WHERE kind = 'player'`);
-      const [tTic] = await time('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
+      const [tTic] = await time('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)', 1);
       const [tw, rows] = await time('SELECT * FROM frame_walls');
       const [ts] = await time('SELECT * FROM frame_sprites');
       const [tsec] = await time('SELECT * FROM frame_sectors');

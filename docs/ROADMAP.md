@@ -62,9 +62,18 @@ you find missing.
 
 ## Rendering
 
-- **Performance.** `FRAME_WALLS` costs about 40–160 ms a frame, so large maps with many awake
-  monsters can drop below 10 fps. *Low* detail halves it. Ideas: cache static per-map work, cut
-  `RENDER_SLICES_BSP`'s per-column overhead, reuse the previous frame's visible set.
+- **Performance.** Measure with `node scripts/frame-bench.mjs E1M1 E1M2 …` (every monster awake,
+  eight spots per map looking four ways, the fastest of three). `DOOM_TIC` was halved by keying
+  the BLOCKMAP by cell (10 ms on average over E1M1–E1M3 and E2M2, from 22; E1M2 15 ms, from 42).
+  `FRAME_WALLS` is still about 22 ms on average, with outliers near 90 ms. About 9 ms of a typical
+  frame is the BSP walk and the solid coverage; the rest is per column: each visible column of each
+  seg is a `SUSPEND`ed row (about 1000–2000 a frame), sorted and clipped again by `RENDER_WALLS`.
+  Shaving statements off the per-column loop (hoisting the closed-seg opening, skipping covered
+  runs with `POSITION`) measured no better: the cost is per row, not per statement. Ideas left:
+  fewer rows (fold `RENDER_WALLS`' clipping into the BSP pass, needing per-column clip state in
+  PSQL), caching static per-map work, reusing the previous frame's visible set. Moving the
+  per-column stepping to JS (about 3× faster walls) was considered and turned down: Firebird
+  decides, JavaScript draws.
 - **Automap.** It follows you at one fixed scale. DOOM's automap zooms, pans when not following,
   and has a grid and marks.
 - **Light diminishing and colormaps.** Close to DOOM's `scalelight`/`zlight` but not

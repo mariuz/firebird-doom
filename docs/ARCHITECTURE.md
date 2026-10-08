@@ -173,6 +173,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `demo-test.mjs` | A recorded demo (through JSON) replays into the same game, row for row; a third run too; another seed diverges; `P_RANDOM` is repeatable and even; thing ids repeat across loads. |
 | `menu-test.mjs` | The title loop; menu navigation, remembered cursors, New Game → episode → skill, Nightmare's question, options and sliders, Load/Save, Quit, Read This!, coordinates, and every graphic present in both WADs. |
 | `compare-renderers.mjs` | BSP and brute-force renderers agree, column by column. |
+| `frame-bench.mjs [maps]` | Times `FRAME_WALLS`, `FRAME_SPRITES`, `FRAME_SECTORS` and `DOOM_TIC` with every monster awake, from eight spots per map looking four ways (`WAD=`, `VIEWS=`, `REPS=`). Not a test. |
 | `all-maps.mjs [wad]` | Loads, tics and renders every map, and checks a teleporter on each. |
 
 CI (`.github/workflows/pages.yml`) runs all of them except `all-maps`, then builds and deploys to
