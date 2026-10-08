@@ -488,6 +488,85 @@ if (sky) {
     assert(c2.DR === 0 && c2.ST === 'dead', `…and falls when it dies (${c2.DR} up, ${c2.ST})`);
     await db.exec(`DELETE FROM things WHERE id = ${caco}`);
 
+    // P_Move's MF_FLOAT: a flier blocked only by the height rises or sinks FLOATSPEED
+    // (4) where it is, and that counts as a move; MF_INFLOAT (131072) until a real step
+    const flier = await placeMon(3005, 200);
+    const walker = await placeMon(3001, 260);
+    const tryStep = async (id, dz, fl) => {
+      const t = await one(`SELECT t.x, t.y, t.z, s.floor_h fh, s.ceil_h ch FROM things t JOIN sectors s ON s.id = t.sector_id WHERE t.id = ${id}`);
+      const z = dz === 'low' ? t.FH - 40 : dz === 'high' ? t.CH - 56 + 20 : t.FH;
+      for (let d = 0; d < 8; d++) {
+        const r = await one(`EXECUTE BLOCK RETURNS (ok SMALLINT, nx DOUBLE PRECISION, ny DOUBLE PRECISION, nz DOUBLE PRECISION, sec INTEGER, bumped SMALLINT)
+          AS BEGIN EXECUTE PROCEDURE p_move(${id}, ${t.X}, ${t.Y}, ${z}, 31, 56, 8, ${fl}, 0, ${d}) RETURNING_VALUES ok, nx, ny, nz, sec, bumped; SUSPEND; END`);
+        if (r.OK === 1) return { ...r, X: t.X, Y: t.Y, Z: z };
+      }
+      return { OK: 0, Z: z };
+    };
+    const fUp = await tryStep(flier, 'low', 1);
+    const inf = (await one(`SELECT flags FROM things WHERE id = ${flier}`)).FLAGS & 131072;
+    assert(fUp.OK === 1 && fUp.NX === fUp.X && fUp.NY === fUp.Y && fUp.NZ === fUp.Z + 4 && inf !== 0,
+      `a cacodemon below where it fits rises 4 in place (${fUp.Z} → ${fUp.NZ}) and is MF_INFLOAT`);
+    const fDown = await tryStep(flier, 'high', 1);
+    assert(fDown.OK === 1 && fDown.NZ === fDown.Z - 4, `…and one too high for the ceiling sinks 4 (${fDown.Z} → ${fDown.NZ})`);
+    const fLevel = await tryStep(flier, 'level', 1);
+    assert(fLevel.OK === 1 && (fLevel.NX !== fLevel.X || fLevel.NY !== fLevel.Y)
+        && ((await one(`SELECT flags FROM things WHERE id = ${flier}`)).FLAGS & 131072) === 0,
+      'a real step clears MF_INFLOAT');
+    assert((await tryStep(walker, 'low', 0)).OK === 0, 'an imp blocked by the height just stays blocked');
+    // P_TryMove: MF_FLOAT things ignore a drop-off; walkers don't step over one
+    const ledges = (await db.query(`SELECT FIRST 40 (l.x1 + l.x2) / 2e0 mx, (l.y1 + l.y2) / 2e0 my, MAXVALUE(f.floor_h, b.floor_h) top
+        FROM linedefs l JOIN sectors f ON f.id = l.front_sector JOIN sectors b ON b.id = l.back_sector
+       WHERE ABS(f.floor_h - b.floor_h) > 24 AND l.len2 > 128 * 128 AND BIN_AND(l.flags, 3) = 0
+         AND MINVALUE(f.ceil_h, b.ceil_h) - MAXVALUE(f.floor_h, b.floor_h) >= 64 ORDER BY l.id`)).rows;
+    let ledgeHit = null;
+    for (const c of ledges) {
+      const cp = (m) => one(`EXECUTE BLOCK RETURNS (ok SMALLINT) AS DECLARE a DOUBLE PRECISION; DECLARE b DOUBLE PRECISION;
+          DECLARE c DOUBLE PRECISION; DECLARE d INTEGER; BEGIN
+          EXECUTE PROCEDURE check_position(-1, ${c.MX}, ${c.MY}, ${c.TOP}, 31, 56, ${m}) RETURNING_VALUES ok, a, b, c, d; SUSPEND; END`);
+      if ((await cp(0)).OK === 1) { ledgeHit = { walker: (await cp(1)).OK, flier: (await cp(2)).OK }; break; }
+    }
+    if (ledgeHit) assert(ledgeHit.walker === 0 && ledgeHit.flier === 1, `over a drop-off a walker is blocked (${ledgeHit.walker}), a flier isn't (${ledgeHit.flier})`);
+    else console.log('(no clear ledge on this map; skipping the drop-off check)');
+    // …and in the chase: heading into a step too high to take, it rises in place, 4 units a move
+    const steps = (await db.query(`SELECT FIRST 40 l.x1, l.y1, l.x2, l.y2, f.floor_h ff, b.floor_h bf
+        FROM linedefs l JOIN sectors f ON f.id = l.front_sector JOIN sectors b ON b.id = l.back_sector
+       WHERE ABS(f.floor_h - b.floor_h) BETWEEN 32 AND 96 AND l.len2 > 128 * 128 AND BIN_AND(l.flags, 3) = 0
+         AND (l.x1 = l.x2 OR l.y1 = l.y2)
+         AND MINVALUE(f.ceil_h, b.ceil_h) - MAXVALUE(f.floor_h, b.floor_h) >= 96 ORDER BY l.id`)).rows;
+    let climbed = null;
+    for (const c of steps) {
+      // the low side: DOOM's front is on the right of the line (x1,y1)→(x2,y2)
+      const len = Math.hypot(c.X2 - c.X1, c.Y2 - c.Y1);
+      const rx = (c.Y2 - c.Y1) / len, ry = -(c.X2 - c.X1) / len;   // towards the front
+      const s = c.FF < c.BF ? 1 : -1;                               // which side is low
+      const lx = (c.X1 + c.X2) / 2 + s * rx * 34, ly = (c.Y1 + c.Y2) / 2 + s * ry * 34;   // (radius 31: the next step reaches it)
+      const lowZ = Math.min(c.FF, c.BF);
+      const ok = await one(`EXECUTE BLOCK RETURNS (ok SMALLINT) AS DECLARE a DOUBLE PRECISION; DECLARE b DOUBLE PRECISION;
+          DECLARE c DOUBLE PRECISION; DECLARE d INTEGER; BEGIN
+          EXECUTE PROCEDURE check_position(-1, ${lx}, ${ly}, ${lowZ}, 31, 56, 2) RETURNING_VALUES ok, a, b, c, d; SUSPEND; END`);
+      if (ok.OK !== 1) continue;
+      // towards the high side: one of the four straight headings
+      const hx = -s * rx, hy = -s * ry;
+      const md = Math.abs(hx) > 0.5 ? (hx > 0 ? 0 : 4) : (hy > 0 ? 2 : 6);
+      const cid = await spawn(3005, lx, ly);
+      await db.exec(`UPDATE things SET st = 'chase', st_tics = 1, reaction = 1000, movedir = ${md}, movecount = 20,
+                       z = ${lowZ}, flags = 0, hp = 1000 WHERE id = ${cid}`);
+      let top = lowZ;
+      let moved = 0;
+      for (let i = 0; i < 24; i++) {
+        await tic();
+        const m = await one(`SELECT x, y, z, flags FROM things WHERE id = ${cid}`);
+        top = Math.max(top, m.Z);
+        if (Math.hypot(m.X - lx, m.Y - ly) > 1) { moved = 1; break; }
+      }
+      climbed = { rise: top - lowZ, moved };
+      await db.exec(`DELETE FROM things WHERE id = ${cid}`);
+      break;
+    }
+    if (climbed) assert(climbed.rise >= 8, `a chasing cacodemon at a ${'step'} it can't take floats up in place (${climbed.rise} units${climbed.moved ? ', then crosses' : ''})`);
+    else console.log('(no clear straight step on this map; skipping the chase climb)');
+    await db.exec(`DELETE FROM things WHERE id IN (${flier}, ${walker})`);
+
     // a lost soul's charge: 10 tics facing you, then 20 units a tic until it hits
     await db.exec('UPDATE player SET health = 1000, armor = 0');
     await db.exec(`DELETE FROM sound_events`);

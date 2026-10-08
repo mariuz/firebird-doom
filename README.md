@@ -791,7 +791,11 @@ heads on low ceilings, and a monster killed in mid-air falls before it lies down
 and ceiling are the highest floor and lowest ceiling within its radius (`floorz`/`ceilingz`), so
 one half over a step stays on it. Cacodemons, lost souls and pain elementals fly
 (`MF_NOGRAVITY`): they don't fall, and they drift 4 units a tic towards their target's height
-(`MF_FLOAT`) until they die, when all but the lost soul drop. Lifts carry what stands on them,
+(`MF_FLOAT`) until they die, when all but the lost soul drop. A flier that steps into a ledge
+more than 24 units up, or under a ceiling too low for it, rises or sinks 4 units where it is
+instead (`P_Move`'s `floatok`), and holds off drifting towards its target until it gets through
+(`MF_INFLOAT`, bit 131072 of `THINGS.FLAGS`). Fliers also cross drop-offs that stop a walking
+monster. Lifts carry what stands on them,
 and push up what's in the air only if the floor catches it.
 
 Crushers work. Ceiling crushers (types 6, 25, 49, 73, 77 and the silent 141) cycle between

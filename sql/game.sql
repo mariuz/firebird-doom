@@ -167,11 +167,19 @@ BEGIN
     ceil_z  = MINVALUE(ceil_z, fc, bc);
     drop_z  = MINVALUE(drop_z, ff, bf);
   END
-  IF (ceil_z - floor_z < hgt OR ceil_z - pz < hgt OR floor_z - pz > 24) THEN
+  IF (ceil_z - floor_z < hgt) THEN
   BEGIN
     ok = 0;
     EXIT;
   END
+  -- P_TryMove's floatok: it would fit, but not at this height. A floating
+  -- monster (IS_MONSTER 2) hears so as OK = 2, if no thing is in the way
+  IF (ceil_z - pz < hgt OR floor_z - pz > 24) THEN
+  BEGIN
+    ok = IIF(is_monster = 2, 2, 0);
+    IF (ok = 0) THEN EXIT;
+  END
+  -- (MF_FLOAT: fliers don't mind a drop-off)
   IF (is_monster = 1 AND floor_z - drop_z > 24) THEN
   BEGIN
     ok = 0;
@@ -2162,9 +2170,22 @@ BEGIN
                           WHEN 4 THEN -1 WHEN 5 THEN -d WHEN 6 THEN 0 ELSE d END;
   ty = y + spd * CASE dir WHEN 0 THEN 0 WHEN 1 THEN d WHEN 2 THEN 1 WHEN 3 THEN d
                           WHEN 4 THEN 0 WHEN 5 THEN -d WHEN 6 THEN -1 ELSE -d END;
-  EXECUTE PROCEDURE check_position(id, tx, ty, z, rad, hgt, 1) RETURNING_VALUES ok, fz, cz, dz, sec;
+  EXECUTE PROCEDURE check_position(id, tx, ty, z, rad, hgt, IIF(fl = 1, 2, 1)) RETURNING_VALUES ok, fz, cz, dz, sec;
+  IF (ok = 2) THEN
+  BEGIN
+    -- P_Move, MF_FLOAT and floatok: blocked only by the height, a flier rises
+    -- (or sinks) FLOATSPEED towards where it would fit, and that counts as a
+    -- move. MF_INFLOAT (131072 in THINGS.FLAGS) keeps P_ZMovement from
+    -- steering its height towards the target meanwhile
+    ok = 1;
+    nz = IIF(z < fz, z + 4, z - 4);
+    sec = NULL;
+    UPDATE things t SET flags = BIN_OR(t.flags, 131072) WHERE t.id = :id;
+    EXIT;
+  END
   IF (ok = 1) THEN
   BEGIN
+    UPDATE things t SET flags = BIN_AND(t.flags, BIN_NOT(131072)) WHERE t.id = :id AND BIN_AND(t.flags, 131072) <> 0;
     nx = tx;
     ny = ty;
     -- on the ground it steps up and down with the floor; tossed or flying,
@@ -3051,6 +3072,8 @@ BEGIN
               sec = msec;
             END
           END
+          -- (P_Move's float: up or down where it is)
+          ELSE IF (moved = 1) THEN z = fz;
         END
         ELSE IF (pdead = 0 AND reaction = 0 AND dist < 2048
             AND ((atk_kind = 'melee' AND dist < melee_range)
@@ -3112,6 +3135,8 @@ BEGIN
               sec = msec;
             END
           END
+          -- (P_Move's float: up or down where it is)
+          ELSE IF (moved = 1) THEN z = fz;
           -- A_Chase, last: the activesound, 3 times in 256
           IF (active_snd IS NOT NULL AND p_random() * 256 < 3) THEN
             EXECUTE PROCEDURE play_sound(active_snd, id, x, y);
@@ -3129,7 +3154,8 @@ BEGIN
       EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES mfz, mcz;
       grav = IIF(fl = 1 AND (st NOT IN ('dying', 'dead') OR ttype = 3006), 0, 1);
       z = z + momz;
-      IF (grav = 0 AND st IN ('chase', 'attack', 'melee', 'pain') AND pdead = 0) THEN
+      IF (grav = 0 AND st IN ('chase', 'attack', 'melee', 'pain') AND pdead = 0
+          AND BIN_AND((SELECT t.flags FROM things t WHERE t.id = :id), 131072) = 0) THEN
       BEGIN
         nz = pz + hgt / 2 - z;
         IF (nz < 0 AND dist < -nz * 3) THEN z = z - 4;

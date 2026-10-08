@@ -37,9 +37,10 @@ you find missing.
   256 per chase step that doesn't attack.
 - ~~**Monster chase details.**~~ Done: `P_NewChaseDir`/`P_TryWalk`/`P_Move` with eight headings,
   `movecount` and turnaround avoidance, the 45° turn, `MF_JUSTATTACKED`, the `movecount` gate on
-  missile attacks, `A_Look`'s 180° field of view. Still missing: monsters opening doors as they walk
-  into them (`P_Move`'s special lines), and floating monsters rising and sinking as they're
-  blocked (`MF_FLOAT`). `A_Look` still ignores the player beyond 2400 units, to save sight checks.
+  missile attacks, `A_Look`'s 180° field of view, monsters opening doors they bump into
+  (`P_Move`'s special lines), and fliers rising and sinking when only the height blocks them
+  (`MF_FLOAT`, `MF_INFLOAT`). `A_Look` still ignores the player beyond 2400 units, to save sight
+  checks.
 - ~~**Sector specials.**~~ Done: 10 and 14's timed doors, 11's exit at 10 health, and type 4's
   strobe (it was only hurting). Every type `P_SpawnSpecials` knows is handled now.
 - ~~**Linedef specials.**~~ Done: every special the player can trigger, the scrolling wall (48)
