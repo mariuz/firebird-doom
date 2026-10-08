@@ -170,9 +170,11 @@ CREATE INDEX linedefs_bsec ON linedefs (back_sector);
 CREATE TABLE line_blocks (
   bx      INTEGER NOT NULL,
   by_     INTEGER NOT NULL,
-  line_id INTEGER NOT NULL
+  line_id INTEGER NOT NULL,
+  cell    INTEGER NOT NULL                -- by_ * 4096 + bx: one key per cell, for exact lookups
 );
 CREATE INDEX line_blocks_cell ON line_blocks (bx, by_);
+CREATE INDEX line_blocks_key ON line_blocks (cell);
 
 CREATE TABLE segs (
   id      INTEGER NOT NULL PRIMARY KEY,
@@ -238,6 +240,7 @@ CREATE TABLE things (
   movedir     SMALLINT DEFAULT 8 NOT NULL,      -- P_NewChaseDir's heading: 0 east … 7 south-east (45° steps), 8 none
   movecount   INTEGER DEFAULT 0 NOT NULL,       -- chase steps before it picks a new heading
   just_attacked SMALLINT DEFAULT 0 NOT NULL,    -- MF_JUSTATTACKED
+  think_tic   INTEGER,                          -- the last tic MONSTERS_THINK went through it
   dead_tic   INTEGER,                          -- when it became a corpse
   sector_id  INTEGER,
   hp         INTEGER,

@@ -69,17 +69,35 @@ BEGIN
 END^
 
 -- BLOCKMAP lookup: every linedef in the cells overlapping a box.
+-- (This runs for every move a thing tries, so it's built for speed: the cell
+-- bounds as integers – a FLOOR() of a double against the INTEGER columns keeps
+-- the index out – and a thing-sized box, at most 2×2 cells, as exact lookups
+-- of each cell's key. Bigger boxes, a shot's say, scan the cell range.)
 CREATE OR ALTER PROCEDURE lines_in_box (
   ax DOUBLE PRECISION, ay DOUBLE PRECISION, bx DOUBLE PRECISION, bdy DOUBLE PRECISION)
 RETURNS (line_id INTEGER)
 AS
+DECLARE x0 INTEGER;
+DECLARE x1 INTEGER;
+DECLARE y0 INTEGER;
+DECLARE y1 INTEGER;
 BEGIN
-  FOR SELECT DISTINCT lb.line_id
-        FROM line_blocks lb
-       WHERE lb.bx BETWEEN FLOOR(:ax / 128) AND FLOOR(:bx / 128)
-         AND lb.by_ BETWEEN FLOOR(:ay / 128) AND FLOOR(:bdy / 128)
-        INTO line_id
-  DO SUSPEND;
+  x0 = FLOOR(ax / 128);
+  x1 = FLOOR(bx / 128);
+  y0 = FLOOR(ay / 128);
+  y1 = FLOOR(bdy / 128);
+  IF (x1 - x0 <= 1 AND y1 - y0 <= 1) THEN
+    FOR SELECT DISTINCT lb.line_id
+          FROM line_blocks lb
+         WHERE lb.cell IN (:y0 * 4096 + :x0, :y0 * 4096 + :x1, :y1 * 4096 + :x0, :y1 * 4096 + :x1)
+          INTO line_id
+    DO SUSPEND;
+  ELSE
+    FOR SELECT DISTINCT lb.line_id
+          FROM line_blocks lb
+         WHERE lb.bx BETWEEN :x0 AND :x1 AND lb.by_ BETWEEN :y0 AND :y1
+          INTO line_id
+    DO SUSPEND;
 END^
 
 -- ── collision ─────────────────────────────────────────────────────────────
@@ -220,7 +238,7 @@ BEGIN
                          ((l.x1 - :ax) * :ddy - (l.y1 - :ay) * :ddx) / (:ddx * l.dy - :ddy * l.dx) u
                     FROM line_blocks lb
                     LEFT JOIN linedefs l ON l.id = lb.line_id
-                   WHERE lb.bx = :cx AND lb.by_ = :cy AND :ddx * l.dy - :ddy * l.dx <> 0) i
+                   WHERE lb.cell = :cy * 4096 + :cx AND :ddx * l.dy - :ddy * l.dx <> 0) i
             LEFT JOIN sectors f ON f.id = i.front_sector
             LEFT JOIN sectors b ON b.id = i.back_sector
            WHERE i.s > 0 AND i.s < 1 AND i.u >= 0 AND i.u <= 1
@@ -2124,7 +2142,7 @@ BEGIN
     FOR SELECT l.id
           FROM linedefs l
          WHERE l.special = 1 AND l.back_sector IS NOT NULL AND BIN_AND(l.flags, 32) = 0
-           AND l.minx <= :tx + :rad AND l.maxx >= :tx - :rad AND l.miny <= :ty + :rad AND l.maxy >= :ty - :rad
+           AND l.minx + 0 <= :tx + :rad AND l.maxx + 0 >= :tx - :rad AND l.miny + 0 <= :ty + :rad AND l.maxy + 0 >= :ty - :rad
            AND MINVALUE(l.dx * (:ty - :rad - l.y1) - l.dy * (:tx - :rad - l.x1), l.dx * (:ty - :rad - l.y1) - l.dy * (:tx + :rad - l.x1),
                         l.dx * (:ty + :rad - l.y1) - l.dy * (:tx - :rad - l.x1), l.dx * (:ty + :rad - l.y1) - l.dy * (:tx + :rad - l.x1)) < 0
            AND MAXVALUE(l.dx * (:ty - :rad - l.y1) - l.dy * (:tx - :rad - l.x1), l.dx * (:ty - :rad - l.y1) - l.dy * (:tx + :rad - l.x1),
@@ -2154,8 +2172,9 @@ BEGIN
   FOR SELECT l.id
         FROM linedefs l
        WHERE l.special IN (39, 97, 125, 126, 4, 10, 88)
-         AND l.minx <= MAXVALUE(:ox, :x) AND l.maxx >= MINVALUE(:ox, :x)
-         AND l.miny <= MAXVALUE(:oy, :y) AND l.maxy >= MINVALUE(:oy, :y)
+         -- (the +0s keep Firebird on the SPECIAL index, not a wide MINX range)
+         AND l.minx + 0 <= MAXVALUE(:ox, :x) AND l.maxx + 0 >= MINVALUE(:ox, :x)
+         AND l.miny + 0 <= MAXVALUE(:oy, :y) AND l.maxy + 0 >= MINVALUE(:oy, :y)
          AND SIGN(l.dx * (:oy - l.y1) - l.dy * (:ox - l.x1)) <> SIGN(l.dx * (:y - l.y1) - l.dy * (:x - l.x1))
          AND SIGN((:x - :ox) * (l.y1 - :oy) - (:y - :oy) * (l.x1 - :ox))
           <> SIGN((:x - :ox) * (l.y2 - :oy) - (:y - :oy) * (l.x2 - :ox))
@@ -2398,6 +2417,9 @@ BEGIN
          AND (t.st <> 'dead' OR t.momz <> 0)          -- a corpse still falling
          AND NOT (t.kind = 'barrel' AND t.st = 'idle' AND t.momz = 0)
          AND NOT (t.st = 'idle' AND t.momz = 0 AND MOD(:tic + t.id, 8) <> 0)
+         -- a chaser on the ground between steps only counts down: done in one
+         -- UPDATE after the loop instead of a turn of its own
+         AND NOT (t.kind = 'monster' AND t.st = 'chase' AND t.st_tics > 1 AND t.momz = 0 AND tt.floats = 0)
         ORDER BY t.id                                  -- (P_RunThinkers: in spawn order, every time)
         INTO id, k, x, y, z, ang, st, st_tics, st_len, step, reaction, rad, hgt, momx, momy, owner_id, flags, frame, momz,
              spd, walk_fr, atk_fr, death_fr, atk_kind, missile_type, dmg_lo, dmg_hi, shots, sec,
@@ -3102,9 +3124,14 @@ BEGIN
          SET x = :x, y = :y, z = :z, angle = :ang, st = :st, st_tics = :st_tics, st_len = :st_len,
              step = :step, reaction = :reaction, frame = :frame, sector_id = :sec,
              target_id = :target_id, threshold = :threshold, momz = :momz,
-             movedir = :movedir, movecount = :movecount, just_attacked = :just_attacked
+             movedir = :movedir, movecount = :movecount, just_attacked = :just_attacked, think_tic = :tic
        WHERE t.id = :id;
   END
+  -- …and here they count down, those the loop left out (still chasing, on the ground)
+  UPDATE things t SET st_tics = t.st_tics - 1
+   WHERE t.kind = 'monster' AND t.st = 'chase' AND t.st_tics > 1 AND t.momz = 0
+     AND t.think_tic IS DISTINCT FROM :tic
+     AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type AND tt.floats = 1);
 END^
 
 -- P_NightmareRespawn: on Nightmare a monster's corpse that has lain 12 seconds
@@ -3402,7 +3429,7 @@ BEGIN
       WHILE (cy <= FLOOR(lmaxy / 128)) DO
       BEGIN
         IF (llen = 0 OR ABS(ldx * (cy * 128 + 64 - ly) - ldy * (cx * 128 + 64 - lx)) / llen <= 91) THEN
-          INSERT INTO line_blocks (bx, by_, line_id) VALUES (:cx, :cy, :lid);
+          INSERT INTO line_blocks (bx, by_, line_id, cell) VALUES (:cx, :cy, :lid, :cy * 4096 + :cx);
         cy = cy + 1;
       END
       cx = cx + 1;
