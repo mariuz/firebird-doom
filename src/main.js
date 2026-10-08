@@ -12,7 +12,7 @@ import renderSql from '../sql/render.sql';
 import { Wad } from './wad.js';
 import { createSchema, loadResources, loadMap, setView, setRenderer } from './loader.js';
 import { Renderer } from './renderer.js';
-import { drawStatusBar, drawText, drawWeapon, extraLight } from './hud.js';
+import { drawStatusBar, FaceWidget, drawText, drawWeapon, extraLight } from './hud.js';
 import { AM_COLORS, AM_STRINGS, AutomapView, GRID_COLOR, automapColor } from './automap.js';
 import { cheatReaders, clevMap, idmusMap } from './cheats.js';
 import { nextMap } from './progress.js';
@@ -53,6 +53,8 @@ const saveSettings = () => {
 };
 const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
 let showMap = false;
+let face = new FaceWidget();         // the status bar face (ST_updateFaceWidget), its own state
+let lastFire = false;               // the attack button, as the face sees it (player->attackdown)
 let amView = null;                  // the automap's window: zoom, follow, grid, marks (AutomapView)
 let amMsg = null;                   // its messages ({ text, tics }), shown like the game's but kept out of Firebird
 let finale = null;                  // text screens: DOOM II's (MAP06/11/20, the secret levels, MAP30) and DOOM I's E1M8
@@ -459,6 +461,7 @@ async function startMap(name, newGame, { skill = settings.skill, seed = null } =
   map.lines = new Map(rows.map((r) => [r[0], { fs: r[1], bs: r[2], flags: r[3], lightDelta: r[4], scroll: r[11] === 48 }]));
   map.linedefs = rows;
   map.seen = new Set();   // ML_MAPPED: every line the renderer has drawn on this level
+  face = new FaceWidget();   // (ST_Start: the face starts over with each level)
   // AM_LevelInit: the level's extent, the window on it, no marks
   const xs = rows.flatMap((r) => [r[5], r[7]]);
   const ys = rows.flatMap((r) => [r[6], r[8]]);
@@ -561,6 +564,7 @@ async function frame() {
       if (!args) { endPlayback('the demo is over'); nextFrame(); return; }
       readInput(tics);              // (drained, so it doesn't pile up for later)
     } else args = readInput(tics);
+    lastFire = args[4] === 1;
     recorder?.push(args);
     if (recorder && recorder.demo.calls.length % 35 === 0) setStatus(`● Recording a demo of ${map.name}: ${recorder.tics} tics`);
     hud = (await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', args, { rowMode: 'object' })).rows[0];
@@ -643,7 +647,7 @@ async function frame() {
     renderer.composeView();
     if (!hud.DEAD) drawWeapon(renderer, hud);
     if (showMap) drawAutomap(tics);
-    drawStatusBar(renderer, hud);
+    drawStatusBar(renderer, hud, face.update(hud, tics, lastFire));
     if (amMsg) amMsg.tics -= tics;
     if (amMsg && amMsg.tics <= 0) amMsg = null;
     const msg = amMsg?.text ?? hud.MSG;

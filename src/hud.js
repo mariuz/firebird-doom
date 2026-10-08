@@ -12,7 +12,101 @@ function drawNum(renderer, n, x, y, font, width = 3) {
   }
 }
 
-export function drawStatusBar(renderer, hud) {
+// ── ST_updateFaceWidget ──────────────────────────────────────────────────
+// Faces come in 5 pain levels of 8 (ST_FACESTRIDE): 3 straight, turn right,
+// turn left, ouch, evil grin, rampage; then the god face (40) and dead (41).
+const TICRATE = 35;
+const FACESTRIDE = 8;
+const TURNOFFSET = 3;
+const OUCHOFFSET = 5;
+const EVILGRINOFFSET = 6;
+const RAMPAGEOFFSET = 7;
+const GODFACE = 40;
+const DEADFACE = 41;
+const MUCHPAIN = 20;
+const ANG45 = 0x20000000;
+const ANG180 = 0x80000000;
+const bam = (rad) => (Math.round((rad / (2 * Math.PI)) * 4294967296) >>> 0);   // radians → DOOM's 32-bit angle
+
+/** The status bar face, tic by tic, as st_stuff.c keeps it (its own state, not the game's). */
+export class FaceWidget {
+  constructor(random = Math.random) {
+    this.random = random;                 // M_Random: the menu's generator, not the game's
+    this.priority = 0;
+    this.index = 0;
+    this.count = 0;
+    this.oldHealth = -1;
+    this.lastAttackDown = -1;
+    this.oldWeapons = null;
+  }
+
+  /** ST_calcPainOffset: 8 × ((100 - health) × 5 / 101), health capped at 100. */
+  static painOffset(health) {
+    const h = Math.min(100, Math.max(0, health));
+    return FACESTRIDE * Math.trunc(((100 - h) * 5) / 101);
+  }
+
+  /** ST_Ticker, `tics` times. fire: the attack button held (player->attackdown). */
+  update(hud, tics = 1, fire = false) {
+    const weapons = [hud.HAS_SHOTGUN, hud.HAS_CHAINGUN, hud.HAS_LAUNCHER, hud.HAS_PLASMA, hud.HAS_BFG, hud.HAS_CHAINSAW, hud.HAS_SSG].map((w) => w === 1);
+    if (!this.oldWeapons) this.oldWeapons = weapons;
+    const pain = FaceWidget.painOffset(hud.HEALTH);
+    for (let t = 0; t < tics; t++) {
+      const rnd = Math.floor(this.random() * 256);
+      if (this.priority < 10 && hud.HEALTH <= 0) { this.priority = 9; this.index = DEADFACE; this.count = 1; }
+      if (this.priority < 9 && hud.BONUS_COUNT) {
+        // picking up a weapon you didn't have: the evil grin
+        let grin = false;
+        weapons.forEach((w, i) => { if (w !== this.oldWeapons[i]) { grin = true; this.oldWeapons[i] = w; } });
+        if (grin) { this.priority = 8; this.count = 2 * TICRATE; this.index = pain + EVILGRINOFFSET; }
+      }
+      if (this.priority < 8 && hud.DAMAGE_COUNT && hud.ATTACKER_ANGLE != null) {
+        // being attacked: look where it came from (vanilla's test for the ouch
+        // face is backwards – health has to have gone *up* by 20 – and so kept)
+        this.priority = 7;
+        this.count = TICRATE;
+        if (hud.HEALTH - this.oldHealth > MUCHPAIN) this.index = pain + OUCHOFFSET;
+        else {
+          const bad = bam(hud.ATTACKER_ANGLE);
+          const me = bam(hud.PANGLE);
+          let diff;
+          let right;
+          if (bad > me) { diff = bad - me; right = diff > ANG180; } else { diff = me - bad; right = diff <= ANG180; }
+          this.index = pain + (diff < ANG45 ? RAMPAGEOFFSET : right ? TURNOFFSET : TURNOFFSET + 1);
+        }
+      }
+      if (this.priority < 7 && hud.DAMAGE_COUNT) {
+        // getting hurt because of your own damn stupidity (nukage, a barrel)
+        if (hud.HEALTH - this.oldHealth > MUCHPAIN) { this.priority = 7; this.count = TICRATE; this.index = pain + OUCHOFFSET; }
+        else { this.priority = 6; this.count = TICRATE; this.index = pain + RAMPAGEOFFSET; }
+      }
+      if (this.priority < 6) {
+        // holding the trigger down for two seconds: the rampage face
+        if (fire) {
+          if (this.lastAttackDown === -1) this.lastAttackDown = 2 * TICRATE;
+          else if (--this.lastAttackDown === 0) { this.priority = 5; this.index = pain + RAMPAGEOFFSET; this.count = 1; this.lastAttackDown = 1; }
+        } else this.lastAttackDown = -1;
+      }
+      if (this.priority < 5 && (hud.GOD || hud.INVULN_TICS > 0)) { this.priority = 4; this.index = GODFACE; this.count = 1; }
+      // time's up: look straight, left or right
+      if (!this.count) { this.index = pain + (rnd % 3); this.count = TICRATE / 2; this.priority = 0; }
+      this.count--;
+      this.oldHealth = hud.HEALTH;
+    }
+    return this.lump();
+  }
+
+  /** The face's graphic. */
+  lump() {
+    if (this.index === GODFACE) return 'STFGOD0';
+    if (this.index === DEADFACE) return 'STFDEAD0';
+    const level = Math.trunc(this.index / FACESTRIDE);
+    const k = this.index % FACESTRIDE;
+    return k < 3 ? `STFST${level}${k}` : [`STFTR${level}0`, `STFTL${level}0`, `STFOUCH${level}`, `STFEVL${level}`, `STFKILL${level}`][k - 3];
+  }
+}
+
+export function drawStatusBar(renderer, hud, face = null) {
   const bar = renderer.pictureByName('STBAR');
   if (!bar) return;
   renderer.patch(bar, 0, 168);
@@ -28,14 +122,10 @@ export function drawStatusBar(renderer, hud) {
   for (let i = 0; i < 6; i++) {
     renderer.patch(renderer.pictureByName(`${owned[i] ? 'STYSNUM' : 'STGNUM'}${i + 2}`), 111 + (i % 3) * 12, 172 + Math.floor(i / 3) * 10);
   }
-  // face: health band, glancing left/right with the tic, ouch when hurt
-  const band = Math.min(4, Math.floor((100 - Math.min(100, hud.HEALTH)) / 20));
-  let face = `STFST${band}${[0, 1, 2, 1][(hud.TIC >> 4) & 3]}`;
-  if (hud.DEAD) face = 'STFDEAD0';
-  else if (hud.INVULN_TICS > 0 || hud.GOD) face = 'STFGOD0';      // ST_GODFACE
-  else if (hud.DAMAGE_COUNT > 10) face = `STFOUCH${band}`;
-  else if (hud.ATTACK_TICS > 0 && hud.WEAPON > 1) face = `STFKILL${band}`;
-  renderer.patch(renderer.pictureByName(face) ?? renderer.pictureByName(`STFST${band}0`), 143, 168);
+  // the face (FaceWidget's), or for a still picture the straight one of this pain level
+  const level = FaceWidget.painOffset(hud.HEALTH) / 8;
+  const lump = typeof face === 'string' ? face : hud.DEAD ? 'STFDEAD0' : `STFST${level}0`;
+  renderer.patch(renderer.pictureByName(lump) ?? renderer.pictureByName(`STFST${level}0`), 143, 168);
   const kc = hud.KEYCARDS;
   if (kc & 1) renderer.patch(renderer.pictureByName('STKEYS0'), 239, 171);
   if (kc & 2) renderer.patch(renderer.pictureByName('STKEYS1'), 239, 181);

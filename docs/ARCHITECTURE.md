@@ -168,6 +168,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `finale-test.mjs` | Every text screen and ending, the cast call, the bunny scroll, the id-WAD layouts and the fallback text. |
 | `intermission-test.mjs` | Pars, counting and sounds, skipping, the after-stats flow, the episode-map animations, the secret routes. |
 | `savegame-test.mjs` | Plays, saves (through JSON), plays on, loads: every saved row comes back exactly; new ids don't collide; the game runs on; other versions are refused. |
+| `statusbar-test.mjs` | The face's rules (pain levels, turn faces, ouch, rampage, grin, god, dead) headless; the attacker angle and the death camera in Firebird. |
 | `light-test.mjs` | Light diminishing against DOOM's fixed-point arithmetic: every `zlight`/`scalelight` entry, walls, sprites and flats over a sweep of light levels and distances in both details, `extralight`. |
 | `automap-test.mjs` | The automap's window: opening scale and limits, following, zoom per tic, panning within the level, the whole-level view, ten marks, the grid on BLOCKMAP cells, the messages. |
 | `pwad-test.mjs` | A PWAD built in memory (map, flat, sprite, music, DEHACKED) over Freedoom: what replaces what, in the directory and in Firebird; loading twice into one database. |

@@ -307,7 +307,7 @@ BEGIN
     FROM thing_types tt WHERE tt.thing_type = :ttype;
 END^
 
-CREATE OR ALTER PROCEDURE damage_player (dmg INTEGER)
+CREATE OR ALTER PROCEDURE damage_player (dmg INTEGER, src INTEGER = NULL)
 AS
 DECLARE god SMALLINT;
 DECLARE invuln INTEGER;
@@ -335,7 +335,7 @@ BEGIN
     END
   END
   UPDATE player
-     SET armor = armor - :saved, armor_type = :arm_type,
+     SET armor = armor - :saved, armor_type = :arm_type, attacker_id = :src,   -- (player->attacker = source)
          health = health - (:dmg - :saved),
          damage_count = MINVALUE(damage_count + :dmg, 100)
    WHERE id = 1;
@@ -497,7 +497,7 @@ BEGIN
        ORDER BY t.id
         INTO vid, vk
   DO
-    IF (vk = 'player') THEN EXECUTE PROCEDURE damage_player(10000);
+    IF (vk = 'player') THEN EXECUTE PROCEDURE damage_player(10000, tid);
     ELSE EXECUTE PROCEDURE damage_thing(vid, 10000, IIF(:k = 'player', NULL, :tid));
   sec = sector_at(dx, dy);
   SELECT floor_h FROM sectors WHERE id = :sec INTO fz;
@@ -1332,7 +1332,7 @@ BEGIN
   BEGIN
     od = MAXVALUE(0, od);
     IF (od < dmg AND check_sight(bx, bdy, bz + 8, ox, oy, oz + 32) = 1) THEN
-      IF (ok = 'player') THEN EXECUTE PROCEDURE damage_player(CAST(dmg - od AS INTEGER));
+      IF (ok = 'player') THEN EXECUTE PROCEDURE damage_player(CAST(dmg - od AS INTEGER), src);
       ELSE EXECUTE PROCEDURE damage_thing(oid, CAST(dmg - od AS INTEGER), src);
   END
 END^
@@ -1507,6 +1507,7 @@ DECLARE weapon_down SMALLINT;
 DECLARE was_attacking INTEGER;
 DECLARE neww SMALLINT;
 DECLARE preact INTEGER;
+DECLARE killer_ang DOUBLE PRECISION;
 DECLARE bslope DOUBLE PRECISION;
 DECLARE mult INTEGER;
 DECLARE tries INTEGER;
@@ -1525,8 +1526,23 @@ BEGIN
 
   IF (is_dead = 1) THEN
   BEGIN
-    -- P_DeathThink: sink to the floor, wait for USE
+    -- P_DeathThink: sink to the floor, wait for USE – and turn to face your
+    -- killer, 5° a tic; until you do, the red of the damage stays
     view_h = MAXVALUE(6, view_h - 1);
+    SELECT ATAN2(a.y - :y, a.x - :x) FROM player p JOIN things a ON a.id = p.attacker_id
+     WHERE p.id = 1 AND a.id <> :tid INTO killer_ang;
+    IF (killer_ang IS NOT NULL) THEN
+    BEGIN
+      killer_ang = killer_ang - ang;
+      killer_ang = killer_ang - 2 * PI() * FLOOR((killer_ang + PI()) / (2 * PI()));   -- (to -π…π)
+      IF (ABS(killer_ang) < PI() / 36) THEN
+        UPDATE things SET angle = :ang + :killer_ang WHERE id = :tid;
+      ELSE
+      BEGIN
+        UPDATE things SET angle = :ang + IIF(:killer_ang > 0, PI() / 36, -PI() / 36) WHERE id = :tid;
+        UPDATE player SET damage_count = damage_count + 1 WHERE id = 1 AND damage_count > 0;   -- (DOOM_TIC's countdown waits)
+      END
+    END
     IF (use_key = 1 AND use_down = 0) THEN UPDATE game SET exit_kind = 3 WHERE id = 1;
     -- A_WeaponReady/A_Lower: a dead player's weapon goes down, and stays
     UPDATE player SET view_h = :view_h, view_z = :z + :view_h, use_down = :use_key, attack_tics = 0,
@@ -2051,7 +2067,7 @@ END^
 CREATE OR ALTER PROCEDURE hurt_target (tgt INTEGER, dmg INTEGER, src INTEGER)
 AS
 BEGIN
-  IF (tgt IS NULL) THEN EXECUTE PROCEDURE damage_player(dmg);
+  IF (tgt IS NULL) THEN EXECUTE PROCEDURE damage_player(dmg, src);
   ELSE EXECUTE PROCEDURE damage_thing(tgt, dmg, src);
 END^
 
@@ -2610,7 +2626,7 @@ BEGIN
           INTO hit;
       ok = 0;
       IF (hit = ptid) THEN
-        EXECUTE PROCEDURE damage_player(dmg_lo * (1 + CAST(FLOOR(p_random() * 8) AS INTEGER)));
+        EXECUTE PROCEDURE damage_player(dmg_lo * (1 + CAST(FLOOR(p_random() * 8) AS INTEGER)), id);
       ELSE IF (hit IS NOT NULL) THEN
         EXECUTE PROCEDURE damage_thing(hit, dmg_lo * (1 + CAST(FLOOR(p_random() * 8) AS INTEGER)), id);
       ELSE
@@ -2717,7 +2733,7 @@ BEGIN
         END
         IF (hit = ptid) THEN
         BEGIN
-          EXECUTE PROCEDURE damage_player(mdmg);
+          EXECUTE PROCEDURE damage_player(mdmg, owner_id);
           st = 'dying';
         END
         ELSE IF (hit IS NOT NULL) THEN
@@ -3310,7 +3326,8 @@ RETURNS (
   secrets INTEGER, total_secrets INTEGER,
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
   sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER,
-  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, weapon_y INTEGER)
+  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, weapon_y INTEGER,
+  attacker_angle DOUBLE PRECISION)
 AS
 DECLARE i INTEGER = 0;
 BEGIN
@@ -3343,7 +3360,8 @@ BEGIN
          p.max_bullets, p.max_shells, p.max_rockets, p.max_cells,
          p.attack_tics, p.attack_len, p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
          p.dead, g.exit_kind, p.kills, g.total_kills, p.items, g.total_items, p.secrets, g.total_secrets,
-         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics, p.iron_tics, p.infra_tics, p.strength_tics, p.allmap, p.god, p.weapon_y
+         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics, p.iron_tics, p.infra_tics, p.strength_tics, p.allmap, p.god, p.weapon_y,
+         (SELECT ATAN2(a.y - t.y, a.x - t.x) FROM things a WHERE a.id = p.attacker_id AND a.id <> t.id)
     FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g
    WHERE p.id = 1 AND g.id = 1
     INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards,
@@ -3351,7 +3369,8 @@ BEGIN
          max_bullets, max_shells, max_rockets, max_cells,
          attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind,
          kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z,
-         sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y;
+         sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y,
+         attacker_angle;
   SUSPEND;
 END^
 
@@ -3531,7 +3550,7 @@ BEGIN
    WHERE id = 1;
 
   -- P_SetupPsprites: every level starts with the weapon coming up
-  UPDATE player SET pending_weapon = 0, weapon_y = 90, weapon_down = 0, attack_tics = 0 WHERE id = 1;
+  UPDATE player SET pending_weapon = 0, weapon_y = 90, weapon_down = 0, attack_tics = 0, attacker_id = NULL WHERE id = 1;
   IF (new_game = 1) THEN
     UPDATE player
        SET health = (SELECT r.init_health FROM rules r WHERE r.id = 1), armor = 0, armor_type = 0, bullets = (SELECT r.init_bullets FROM rules r WHERE r.id = 1), shells = 0,

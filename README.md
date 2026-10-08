@@ -137,6 +137,27 @@ linearly. `SELECT * FROM frame_visplanes` shows the current frame's planes in th
 and the stats line under the view counts them. Across Freedoom's maps the busiest frame
 needs 42, comfortably under vanilla DOOM's `MAXVISPLANES` of 128.
 
+### The status bar face
+
+The face is `ST_updateFaceWidget`'s, tic by tic (`FaceWidget` in [src/hud.js](src/hud.js)). It has
+five pain levels by health, and in order of priority it shows:
+
+1. dead;
+2. the evil grin for two seconds after picking up a weapon you didn't have;
+3. when something hurts you, a look towards it (left, right, or the rampage face if it's within
+   45° ahead);
+4. the rampage face when the world hurts you (slime, a crusher);
+5. the rampage face after two seconds of holding the trigger;
+6. the god face, with IDDQD or invulnerability;
+7. otherwise, a glance straight, left or right every half second.
+
+Vanilla's test for the "ouch" face is backwards (health has to *rise* by more than 20 while you're
+hurt), so it hardly ever shows, and the port keeps that. `DAMAGE_PLAYER` records who hurt you
+(`PLAYER.ATTACKER_ID`, empty for the world), and `DOOM_TIC` returns the angle to them. Dead, the
+view turns to face your killer 5° a tic, and the red stays until it does (`P_DeathThink`).
+`npm run test:statusbar` tests the face's rules headless, and the attacker and the death camera
+in Firebird.
+
 ### Light diminishing
 
 How dark a pixel gets is DOOM's own integer arithmetic ([src/renderer.js](src/renderer.js)):

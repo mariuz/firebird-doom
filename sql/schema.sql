@@ -271,6 +271,7 @@ CREATE TABLE player (
   health       INTEGER DEFAULT 100 NOT NULL,
   armor        INTEGER DEFAULT 0 NOT NULL,
   armor_type   SMALLINT DEFAULT 0 NOT NULL,   -- 0 none, 1 green (absorbs 1/3), 2 blue (1/2)
+  attacker_id  INTEGER,                        -- player->attacker: who hurt you last (none: the world)
   bullets      INTEGER DEFAULT 50 NOT NULL,
   shells       INTEGER DEFAULT 0 NOT NULL,
   max_bullets  INTEGER DEFAULT 200 NOT NULL,

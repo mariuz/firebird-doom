@@ -79,8 +79,8 @@ you find missing.
 - ~~**Light diminishing and colormaps.**~~ Done: the exact `scalelight`/`zlight` tables and
   lookups, low detail's quirk, and the muzzle flash's `extralight`, checked against DOOM's fixed-point
   arithmetic by `npm run test:light`.
-- **Status bar.** No arms/frags switch for deathmatch, and the face doesn't look towards where
-  damage came from (`ST_updateFaceWidget`'s turn faces).
+- **Status bar.** No arms/frags switch for deathmatch (single player only). The face is done:
+  `ST_updateFaceWidget`'s priorities, turn faces and pain levels, plus `P_DeathThink`'s death camera.
 - **Messages.** Pickup messages say "Picked up …". DOOM's own texts are mostly in the executable,
   but Freedoom's `DEHACKED` has replacements (`GOTARMOR`, `GOTSHOTGUN`, …) that could be used,
   as the story text already is.
