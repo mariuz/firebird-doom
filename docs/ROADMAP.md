@@ -92,8 +92,8 @@ you find missing.
   animations are implemented, but only tested with stubs, because Freedoom ships them as empty
   placeholders. Check them with a real `doom.wad`: `doom.intermission('E1M3', 'E1M4')` in the
   console.
-- **Screen wipe.** DOOM melts the old screen into the new (`wipe_StartScreen`, the column melt)
-  between the game, the intermission and the endings. Cuts are instant here.
+- ~~**Screen wipe.**~~ Done ([src/wipe.js](../src/wipe.js)): the column melt between the title,
+  the game, the intermission and the endings, and on every level load.
 - **Doom I endings' text with id's WADs.** They go straight to the art. They could borrow Freedoom
   Phase 1's `E1TEXT`–`E4TEXT` the way Doom II's screens borrow Phase 2's, if that's wanted.
 

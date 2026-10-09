@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { Wad } from '../src/wad.js';
 import { Renderer } from '../src/renderer.js';
 import { Intermission, IntermissionState, levelOf, parTime } from '../src/intermission.js';
+import { Melt } from '../src/wipe.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -143,6 +144,41 @@ for (const [file, from, to] of [['freedoom1.wad', 'E1M3', 'E1M4'], ['freedoom2.w
   const lit = r.sfb.reduce((n, v) => n + (v ? 1 : 0), 0);
   assert(drew === 400 && lit > 20000 && music[0] === (from.startsWith('MAP') ? 'D_DM2INT' : 'D_INTER'),
     `${file}: ${from} → ${to} draws (${lit} pixels lit) to ${music[0]}`);
+}
+
+// the screen melt (f_wipe.c): the old screen slides down in two-pixel columns over the new one
+{
+  const old = new Uint8Array(320 * 200).fill(1);
+  const neu = new Uint8Array(320 * 200).fill(2);
+  for (let x = 0; x < 320; x++) old[x] = 3;                   // the old screen's top row
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) % 256) / 256;
+  const m = new Melt(old, neu, rnd);
+  const y0 = [...m.y];
+  const steps = y0.slice(1).map((y, i) => Math.abs(y - y0[i]));
+  assert(y0.every((y) => y <= 0 && y > -16) && Math.max(...steps) <= 1,
+    `wipe_initMelt: 160 columns start 0–15 tics late, each within a tic of its neighbour (${Math.min(...y0)}…${Math.max(...y0)})`);
+  const out = new Uint8Array(320 * 200);
+  m.draw(out);
+  const same = out.every((v, i) => v === old[i]);
+  // the earliest column, after its wait and one tic, has dropped 1 pixel: a row of the new
+  // screen over the old one's top row; a column still waiting hasn't moved
+  const lead = Math.max(...y0);
+  const c = y0.indexOf(lead);
+  const late = y0.indexOf(Math.min(...y0));
+  m.tick(1 - lead);
+  m.draw(out);
+  const moved = out[c * 2] === 2 && out[c * 2 + 1] === 2 && out[320 + c * 2] === 3 && out[late * 2] === 3;
+  let tics = 1 - lead;
+  const seen = [];
+  while (!m.tick(1)) {
+    tics++;
+    if (tics === 10) seen.push(m.draw(out).filter((v) => v === 2).length);
+  }
+  m.draw(out);
+  assert(same && moved && seen[0] > 0 && seen[0] < 320 * 200 && out.every((v) => v === 2),
+    `wipe_doMelt: it starts as the old screen, a due column drops 1 pixel, then 2, 3… then 8 a tic; done in ${tics} tics, the new screen whole`);
+  assert(tics >= 30 && tics <= 50, `…which takes about a second (${tics} tics; vanilla's is 15 + ~30)`);
 }
 
 console.log(failures ? `${failures} failure(s)` : 'intermission ok');

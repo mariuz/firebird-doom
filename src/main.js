@@ -24,6 +24,7 @@ import { Intermission, levelOf, setParOverrides } from './intermission.js';
 import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 import { createPresenter } from './present.js';
+import { Melt } from './wipe.js';
 
 const $ = (id) => document.getElementById(id);
 let canvas = $('screen');   // replaced by a fresh element when the display kind changes
@@ -71,6 +72,14 @@ let title = null;                   // the title loop (before a game, after End 
 let menuBackdrop = null;            // the screen as it was when the menu opened over the game
 let menuOpenedAt = -1e9;
 let lastPalette = 0;
+// D_Display's wipe: the screen melts (f_wipe.c) when the state changes, and on every level load
+let levelSerial = 0;                 // (G_DoLoadLevel's wipegamestate = -1: a new level always melts)
+let shownState = null;               // what the last screen presented showed
+let shownScreen = null;              // …and that screen (wipe_StartScreen)
+let melt = null;
+let meltPalette = 0;
+const meltBuf = new Uint8Array(320 * 200);
+const screenState = () => (title ? 'title' : intermission ? 'intermission' : finale ? 'finale' : `level ${levelSerial}`);
 const saves = saveStore();          // IndexedDB: six slots per WAD
 let wadKey = '';                    // which WAD the saves belong to
 let saveSlots = Array(SLOTS).fill(null);   // the slots' descriptions, for the menu
@@ -476,6 +485,7 @@ async function loadSides() {
 
 async function startMap(name, newGame, { skill = settings.skill, seed = null } = {}) {
   running = false;
+  levelSerial++;
   finale = null;
   intermission = null;
   title = null;
@@ -539,6 +549,16 @@ async function frame() {
     const tics = Math.max(1, Math.min(6, Math.round((now - lastTic) / TIC_MS)));
     lastTic += tics * TIC_MS;
     if (now - lastTic > 200) lastTic = now;
+
+    // the melt runs on its own, and nothing else does meanwhile (D_Display's wipe loop)
+    if (melt) {
+      readInput(tics);                // (what's pressed meanwhile is dropped)
+      const done = melt.tick(tics);
+      renderer.presenter?.present(melt.draw(meltBuf), meltPalette);
+      if (done) melt = null;
+      nextFrame();
+      return;
+    }
 
     if (title || menu?.active) {
       // the title loop, or the menu over a frozen game (single player waits)
@@ -861,6 +881,19 @@ async function loadWads() {
   await setRenderer(db, settings.renderer === 'bsp');
   renderer = new Renderer(wad, res);
   renderer.attach(presenter);
+  // every present goes through here: a new state melts in from the last screen shown
+  const present = renderer.present.bind(renderer);
+  shownState = null;
+  renderer.present = (palette = 0) => {
+    const state = screenState();
+    if (shownState !== null && state !== shownState && shownScreen) {
+      melt = new Melt(shownScreen, renderer.sfb);   // wipe_StartScreen, wipe_EndScreen
+      meltPalette = palette;
+      renderer.presenter?.present(melt.draw(meltBuf), palette);
+    } else present(palette);
+    shownState = state;
+    shownScreen = renderer.sfb.slice();
+  };
   audio.setWad(wad);
   // DeHackEd: the WAD's patch respells cheats and sets par times (the rest went into Firebird)
   cheats = cheatReaders(res.dehacked.cheats);
@@ -914,6 +947,7 @@ async function boot() {
       get demo() { return { recording: !!recorder, playing: !!demoPlayer, last: lastDemo }; },
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },
+      get melting() { return !!melt; },
       finale(name, secret = false) {
         if (!Finale.available(wad, name, secret)) return `no screen after ${name}${secret ? "'s secret exit" : ''} in this WAD`;
         intermission = null;

@@ -395,6 +395,20 @@ MAP15's secret exit leads to MAP31 and MAP31's to MAP32, and the normal exits of
 levels return to MAP16. A secret exit on any other map counts as a normal one. MAP30 ends the
 game with the finale below. Only a WAD without the finale's pictures goes back to MAP01.
 
+### The screen melt
+
+Whenever the screen changes from one kind to another (the title, a level, the intermission, an
+ending), it melts, as `D_Display` does with `f_wipe.c`. Every level load melts too, including
+loading a save and starting over after dying, because `G_DoLoadLevel` forces it. The old screen
+is kept (`wipe_StartScreen`), the new one drawn (`wipe_EndScreen`), and the old one slides down
+in columns two pixels wide. Each column starts up to 15 tics late, within a tic of its
+neighbour (`wipe_initMelt`), then drops 1, 2, 3… pixels a tic, and 8 a tic after the first 16
+(`wipe_doMelt`). The whole melt takes about 40 tics, a little over a second. Like vanilla's
+wipe loop, it holds everything else up while it runs: the game doesn't tick, and keys pressed
+meanwhile are dropped. Vanilla runs the game's missed tics afterwards, but here the game simply
+waits. It's done in palette indices in [src/wipe.js](src/wipe.js), and `npm run
+test:intermission` checks the start offsets, the speeds and the end.
+
 ### The intermission
 
 Between levels comes `wi_stuff.c`'s screen ([src/intermission.js](src/intermission.js)), to `D_INTER`
