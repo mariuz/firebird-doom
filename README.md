@@ -725,6 +725,9 @@ render queries. It plays the WAD's DMX sound lumps through Web Audio, on DOOM's 
   that is removed takes its sound with it (`P_RemoveMobj`'s `S_StopSound`), which cuts a
   rocket's explosion short when the explosion is gone, as in DOOM.
 
+The Spider Mastermind's and the Cyberdemon's sight and death sounds are heard at full volume
+wherever they are: `A_Look` and `A_Scream` start them with no origin for those two.
+
 `npm run test:sound` checks the distances, the priorities, the channel stealing and the following.
 
 Music comes from the WAD's `D_*` lumps (MIDI in Freedoom, MUS in the original IWADs). It plays

@@ -373,12 +373,13 @@ DECLARE satk VARCHAR(10);
 DECLARE vatk VARCHAR(10);
 DECLARE thr INTEGER;
 DECLARE count_kill SMALLINT;
+DECLARE ttype INTEGER;
 BEGIN
   SELECT t.kind, t.hp, t.st, tt.pain_chance, tt.pain_fr, tt.death_fr, tt.death_sprite, tt.drop_type, t.x, t.y,
-         tt.pain_snd, tt.death_snd, tt.count_kill
+         tt.pain_snd, tt.death_snd, tt.count_kill, t.thing_type
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
    WHERE t.id = :tid
-    INTO k, hp, st, pain_chance, pain_fr, death_fr, death_sprite, drop_type, tx, ty, pain_snd, death_snd, count_kill;
+    INTO k, hp, st, pain_chance, pain_fr, death_fr, death_sprite, drop_type, tx, ty, pain_snd, death_snd, count_kill, ttype;
   IF (k IS NULL OR k NOT IN ('monster', 'barrel', 'keen', 'brain') OR st IN ('dying', 'dead')
       OR COALESCE(dmg, 0) <= 0) THEN EXIT;
   hp = hp - dmg;
@@ -392,7 +393,10 @@ BEGIN
     -- P_KillMobj: MF_COUNTKILL things count (not lost souls, not barrels)
     IF (count_kill = 1) THEN UPDATE player SET kills = kills + 1 WHERE id = 1;
     IF (k = 'brain') THEN UPDATE things SET st_tics = 100, st_len = 100 WHERE id = :tid;   -- A_BrainScream
-    EXECUTE PROCEDURE play_sound(death_snd, tid, tx, ty);
+    -- A_Scream: the Spider Mastermind's and the Cyberdemon's death cries are
+    -- heard at full volume wherever they are (S_StartSound with no origin)
+    IF (ttype IN (7, 16)) THEN EXECUTE PROCEDURE play_sound(death_snd, NULL, NULL, NULL);
+    ELSE EXECUTE PROCEDURE play_sound(death_snd, tid, tx, ty);
     -- P_KillMobj: what it drops is MF_DROPPED (65536 in THINGS.FLAGS, above
     -- the map's flags), worth half when picked up
     IF (drop_type IS NOT NULL) THEN
@@ -2876,7 +2880,9 @@ BEGIN
         st = 'chase';
         st_tics = 0;
         reaction = IIF(skill = 5, 0, 2);   -- (Nightmare: no hesitation)
-        EXECUTE PROCEDURE play_sound(see_snd, id, x, y);
+        -- A_Look: the Spider Mastermind and the Cyberdemon are heard at full volume
+        IF (ttype IN (7, 16)) THEN EXECUTE PROCEDURE play_sound(see_snd, NULL, NULL, NULL);
+        ELSE EXECUTE PROCEDURE play_sound(see_snd, id, x, y);
       END
     END
     ELSE IF (st = 'attack') THEN

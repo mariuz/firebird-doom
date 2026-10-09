@@ -61,6 +61,26 @@ await bossTest('E4M8', 7, 'floor');
 await bossTest('MAP07', 67, 'floor');
 await bossTest('MAP07', 68, 'floor');
 
+// A_Scream: a Cyberdemon's (and a Spider Mastermind's) death is heard at full volume
+// wherever it is – no origin, no position – while an imp's comes from the imp
+{
+  const at = await one("SELECT x + 2000 x, y FROM things WHERE kind = 'player'");
+  const deathOf = async (type) => {
+    const id = (await one(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN
+        EXECUTE PROCEDURE spawn_thing(${type}, ${at.X}, ${at.Y}, NULL, 0) RETURNING_VALUES id; SUSPEND; END`)).ID;
+    await db.query(`EXECUTE PROCEDURE damage_thing(${id}, 100000)`);
+    const snd = (await one(`SELECT death_snd s FROM thing_types WHERE thing_type = ${type}`)).S;
+    const e = await one(`SELECT FIRST 1 origin, x FROM sound_events WHERE sound = '${snd}' ORDER BY id DESC`);
+    await db.exec(`DELETE FROM things WHERE id = ${id}`);
+    return { id, e };
+  };
+  const cyber = await deathOf(16);
+  const spider = await deathOf(7);
+  const imp = await deathOf(3001);
+  assert(cyber.e && cyber.e.ORIGIN === null && cyber.e.X === null && spider.e?.ORIGIN === null && imp.e?.ORIGIN === imp.id && imp.e.X !== null,
+    'boss death cries play at full volume (no origin: S_StartSound(NULL, …)); an imp\'s comes from the imp');
+}
+
 // ── Commander Keen ─────────────────────────────────────────────────────
 const keenMap = maps.find((m) => wad.map(m).things.some((t) => t.type === 72) && wad.map(m).sectors.some((s) => s.tag === 666));
 if (keenMap && wad.lump('KEENA0')) {
