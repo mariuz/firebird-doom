@@ -111,6 +111,14 @@ window.addEventListener('keydown', (e) => {
     if (!(e.key === 'Escape' && performance.now() - menuOpenedAt < 200)) menu.key(e.key);
     return;
   }
+  // M_Responder's function keys, with the menu down: F6 quicksave, F9 quickload
+  if ((e.key === 'F6' || e.key === 'F9') && menu && !demoPlayer) {
+    e.preventDefault();
+    menuBackdrop = renderer.sfb.slice();
+    keys.clear();
+    if (e.key === 'F6') menu.quickSave(); else menu.quickLoad();
+    return;
+  }
   if (title && menu) {
     e.preventDefault();
     openMenu();

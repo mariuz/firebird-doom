@@ -130,6 +130,47 @@ const keys = (m, ...ks) => ks.forEach((k) => m.key(k));
     'an existing save starts from its description; 23 characters at most; Esc cancels');
 }
 
+// F6 / F9: M_QuickSave and M_QuickLoad
+{
+  const slots = [null, null, { name: 'THE TOWER' }, null, null, null];
+  const done = { saved: [], loaded: [] };
+  const { m, log } = make();
+  Object.assign(m.actions, { slots, canSave: false, save: (i, n) => done.saved.push([i, n]), load: (i) => done.loaded.push(i) });
+  m.quickSave();
+  assert(!m.active && log.sounds.at(-1) === 'DSOOF', 'F6 outside a game: an "oof", nothing opens');
+  m.quickLoad();
+  const noSlot = m.message && !m.message.yesno && m.active;
+  keys(m, 'x');
+  assert(noSlot && !m.active, 'F9 before any quicksave: a message, and any key puts the menu back down');
+  m.actions.canSave = true;
+  m.quickSave();
+  assert(m.active && m.current.name === 'save' && m.quickSaveSlot === -2, 'the first F6 opens Save Game to pick the quicksave slot');
+  while (m.on !== 2) keys(m, 'ArrowDown');
+  keys(m, 'Enter', 'Enter');                         // keep its description
+  assert(done.saved.at(-1)?.join() === '2,THE TOWER' && m.quickSaveSlot === 2 && !m.active, '…the slot saved into becomes the quicksave slot');
+  m.quickSave();
+  const ask = m.message;
+  keys(m, 'n');
+  assert(ask?.yesno && ask.text.includes("'THE TOWER'") && done.saved.length === 1 && !m.active,
+    'the next F6 asks before writing over THE TOWER; N leaves it, and the game resumes');
+  m.quickSave();
+  keys(m, 'y');
+  assert(done.saved.length === 2 && done.saved.at(-1).join() === '2,THE TOWER' && !m.active, '…Y quicksaves into slot 3 under its name');
+  m.quickLoad();
+  keys(m, 'y');
+  assert(done.loaded.join() === '2' && !m.active, 'F9 asks, and Y loads the quicksave');
+  m.open();
+  m.quickSave();
+  assert(m.current.name === 'main' && !m.message, 'with the menu up, F6 is just a key for the menu');
+  m.close();
+  // a WAD (or patch) that has the prompts gets them, with the name filled in
+  const w = make({ strings: new Map([['QLPROMPT', 'Load "%s"?']]) });
+  Object.assign(w.m.actions, { slots, canSave: true, save: () => {}, load: () => {} });
+  w.m.quickSaveSlot = 2;
+  w.m.quickLoad();
+  assert(w.m.message?.text === 'Load "THE TOWER"?', `a DEHACKED QLPROMPT is used: ${JSON.stringify(w.m.message?.text)}`);
+}
+
 // Quit asks with the WAD's message; Read This! pages
 {
   const { m, log } = make({ strings: new Map([['QUITMSG', 'Leaving so soon?']]) });

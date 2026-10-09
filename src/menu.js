@@ -7,7 +7,8 @@
 // be sure; Options (end game, messages, detail, mouse sensitivity, sound
 // volume); Read This! (DOOM I); Quit, which here goes back to the title.
 // Load and Save: six slots in DOOM's bordered boxes; saving asks for a
-// description (typed in, as M_SaveSelect does). Everything is drawn with the WAD's
+// description (typed in, as M_SaveSelect does). F6 quicksaves and F9 quickloads
+// (M_QuickSave, M_QuickLoad): the first F6 picks the slot. Everything is drawn with the WAD's
 // own M_* graphics and HU font; the words in messages are Freedoom's where
 // its DEHACKED has them (NIGHTMARE, QUITMSG…), else our own, never id's.
 
@@ -73,6 +74,7 @@ export class Menu {
     this.on = 0;
     this.message = null;     // { text, yesno, onYes }
     this.editing = null;     // typing a save's description: { slot, text, old }
+    this.quickSaveSlot = -1; // quickSaveSlot: -1 none yet, -2 the save menu is picking it
     this.page = null;        // Read This!: the full-screen page showing
     this.chosenEpisode = 1;
     this.skullTics = 8;
@@ -80,11 +82,11 @@ export class Menu {
   }
 
   /** M_StartControlPanel */
-  open() {
+  open(silent = false) {
     if (this.active) return;
     this.active = true;
     this.go('main');
-    this.sound('DSSWTCHN');
+    if (!silent) this.sound('DSSWTCHN');
   }
 
   /** M_ClearMenus */
@@ -103,9 +105,52 @@ export class Menu {
     this.on = this.current.lastOn;
   }
 
-  /** M_StartMessage: a box of text; yes/no ones wait for Y */
+  /** M_StartMessage: a box of text; yes/no ones wait for Y. It brings the menu
+   *  up if it wasn't (messageLastMenuActive), and puts it back down after. */
   say(text, yesno = false, onYes = null) {
-    this.message = { text, yesno, onYes };
+    this.message = { text, yesno, onYes, wasActive: this.active };
+    this.active = true;
+  }
+
+  /** A WAD string with its %s filled in, or our own words. */
+  text(name, fallback, arg = '') {
+    const s = this.strings.get(name);
+    return s ? s.replace('%s', arg) : fallback;
+  }
+
+  /** M_QuickSave (F6): in a game only; the first time it opens Save Game to pick
+   *  the slot, after that it asks before writing over that slot's save. */
+  quickSave() {
+    if (this.active) return;
+    this.sound('DSSWTCHN');
+    if (!this.actions.canSave) { this.sound('DSOOF'); return; }
+    if (this.quickSaveSlot < 0) {
+      this.open(true);
+      this.go('save');
+      this.quickSaveSlot = -2;
+      return;
+    }
+    const slot = this.quickSaveSlot;
+    const name = this.actions.slots?.[slot]?.name ?? '';
+    this.say(this.text('QSPROMPT', `Quicksave over the game\n\n'${name}'?\n\n(press y or n)`, name), true, () => {
+      this.actions.save?.(slot, name);
+      this.sound('DSSWTCHX');
+    });
+  }
+
+  /** M_QuickLoad (F9): asks before loading the quicksave slot, if there is one. */
+  quickLoad() {
+    if (this.active) return;
+    this.sound('DSSWTCHN');
+    if (this.quickSaveSlot < 0) {
+      this.say(this.text('QSAVESPOT', 'No quicksave slot yet:\nF6 picks one.\n\n(press a key)'));
+      return;
+    }
+    const slot = this.quickSaveSlot;
+    const name = this.actions.slots?.[slot]?.name ?? '';
+    this.say(this.text('QLPROMPT', `Quickload the game\n\n'${name}'?\n\n(press y or n)`, name), true, () => {
+      if (this.actions.slots?.[slot]) this.actions.load?.(slot);
+    });
   }
 
   get item() { return this.current.items[this.on]; }
@@ -123,9 +168,10 @@ export class Menu {
     if (!this.active) return false;
     const k = key.length === 1 ? key.toLowerCase() : key;
     if (this.message) {
-      const { yesno, onYes } = this.message;
+      const { yesno, onYes, wasActive } = this.message;
       if (yesno && k !== 'y' && k !== 'n' && k !== 'Escape') return true;
       this.message = null;
+      if (!wasActive) this.active = false;
       this.sound('DSSWTCHX');
       if (yesno && k === 'y') onYes?.();
       return true;
@@ -136,7 +182,12 @@ export class Menu {
       if (k === 'Escape') { ed.text = ed.old; this.editing = null; }
       else if (k === 'Backspace') ed.text = ed.text.slice(0, -1);
       else if (k === 'Enter') {
-        if (ed.text) { this.close(true); this.actions.save?.(ed.slot, ed.text); }
+        if (ed.text) {
+          // M_DoSave: a save picked by the first F6 becomes the quicksave slot
+          if (this.quickSaveSlot === -2) this.quickSaveSlot = ed.slot;
+          this.close(true);
+          this.actions.save?.(ed.slot, ed.text);
+        }
       } else if (key.length === 1) {
         const ch = key.toUpperCase();
         const c = ch.charCodeAt(0);

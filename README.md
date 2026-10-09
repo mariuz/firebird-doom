@@ -558,6 +558,15 @@ keyed by its file name and map count, and they survive reloads. An E1M1 save is 
 `npm run test:savegame` plays a map, saves, plays on, loads, and checks that every saved row
 comes back exactly.
 
+<kbd>F6</kbd> quicksaves and <kbd>F9</kbd> quickloads, as `M_QuickSave` and `M_QuickLoad` do. The
+first <kbd>F6</kbd> of a session opens **Save Game**, and the slot you save into becomes the
+quicksave slot. After that, <kbd>F6</kbd> asks before writing over that slot's game under its
+description, and <kbd>F9</kbd> asks before loading it (or says there's no quicksave slot yet).
+<kbd>F6</kbd> outside a game just grunts. The questions come from the WAD's DEHACKED
+(`QSPROMPT`, `QLPROMPT`, `QSAVESPOT`) when it has them. Freedoom's doesn't, so the wording here
+is our own. Some browsers keep <kbd>F6</kbd> for the address bar when the page doesn't have
+the focus, so click the game first. `npm run test:menu` checks each step.
+
 ### Demos
 
 A demo is the input of one level (after `G_RecordDemo`/`G_DoPlayDemo`, in this port's own format,
@@ -738,7 +747,7 @@ arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd>
 <kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>7</kbd> pick weapons (fist, pistol, shotgun, chaingun, rocket
 launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggles the chainsaw and
 <kbd>3</kbd> again the super shotgun. A change takes the old weapon down and the new one up. <kbd>Tab</kbd> shows the
-automap (type IDDT on it to reveal everything), <kbd>P</kbd> pauses, and <kbd>Esc</kbd> opens the menu. Under the view you can set **Detail** (320 or 160 columns),
+automap (type IDDT on it to reveal everything), <kbd>P</kbd> pauses, <kbd>Esc</kbd> opens the menu, and <kbd>F6</kbd>/<kbd>F9</kbd> quicksave and quickload. Under the view you can set **Detail** (320 or 160 columns),
 **Renderer** (BSP + solidsegs, or brute force), **Skill** (1–5), **Display** (WebGL palette shader or Canvas 2D),
 **Smooth upscaling**, **Audio** on/off (<kbd>M</kbd>), and **Sound** and **Music** volume. These settings
 are remembered in your browser. The SQL console under the game queries the live game
