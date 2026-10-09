@@ -1518,7 +1518,7 @@ BEGIN
   EXECUTE PROCEDURE play_sound('DSTELEPT', fog, sx + 20 * COS(sa), sy + 20 * SIN(sa));
   UPDATE player p
      SET thing_id = :nid, health = (SELECT r.init_health FROM rules r WHERE r.id = 1), armor = 0, armor_type = 0,
-         dead = 0, weapon = 2, pending_weapon = 0, weapon_y = 90, weapon_down = 0, attack_tics = 0, attacker_id = NULL,
+         dead = 0, weapon = 2, pending_weapon = 0, weapon_y = 90, weapon_down = 0, attack_tics = 0, attack_len = 0, attacker_id = NULL,
          bullets = (SELECT r.init_bullets FROM rules r WHERE r.id = 1), shells = 0, rockets = 0, cells = 0,
          has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0, has_chainsaw = 0, has_ssg = 0,
          max_bullets = (SELECT r.max_bullets FROM rules r WHERE r.id = 1), max_shells = (SELECT r.max_shells FROM rules r WHERE r.id = 1),
@@ -3585,6 +3585,22 @@ BEGIN
          strength_tics = IIF(p.strength_tics > 0, p.strength_tics + 1, 0);
 END^
 
+-- A netgame's consistency check (every 35 tics each peer sends it to the
+-- host): the random state, the tic, and where every player and monster is
+-- and how it is. Peers that agree on this are playing the same game.
+CREATE OR ALTER PROCEDURE net_checksum
+RETURNS (csum VARCHAR(200))
+AS
+BEGIN
+  SELECT g.tic || ':' || g.rng || ':' ||
+         COALESCE((SELECT SUM(CAST(FLOOR((t.x * 3 + t.y * 7 + t.z * 11) * 16) AS BIGINT) + COALESCE(t.hp, 0) * 13)
+                     FROM things t WHERE t.kind IN ('player', 'monster')), 0) || ':' ||
+         COALESCE((SELECT SUM(p.health * 7 + p.bullets + p.armor * 3) FROM player p), 0)
+    FROM game g WHERE g.id = 1
+    INTO csum;
+  SUSPEND;
+END^
+
 -- One player's game: TICS tics of player 1 with these inputs, then the HUD
 -- (of VIEWCFG.PLAYER_ID, which alone is 1).
 CREATE OR ALTER PROCEDURE doom_tic (
@@ -3870,7 +3886,7 @@ BEGIN
    WHERE id = 1;
 
   -- P_SetupPsprites: every level starts with the weapon coming up
-  UPDATE player SET pending_weapon = 0, weapon_y = 90, weapon_down = 0, attack_tics = 0, attacker_id = NULL;
+  UPDATE player SET pending_weapon = 0, weapon_y = 90, weapon_down = 0, attack_tics = 0, attack_len = 0, attacker_id = NULL;
   IF (new_game = 1) THEN
     UPDATE player
        SET health = (SELECT r.init_health FROM rules r WHERE r.id = 1), armor = 0, armor_type = 0, bullets = (SELECT r.init_bullets FROM rules r WHERE r.id = 1), shells = 0,

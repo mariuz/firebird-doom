@@ -25,6 +25,7 @@ import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 import { createPresenter } from './present.js';
 import { Melt } from './wipe.js';
+import { Lockstep, createInvite, acceptInvite, MAX_PLAYERS } from './net.js';
 
 const $ = (id) => document.getElementById(id);
 let canvas = $('screen');   // replaced by a fresh element when the display kind changes
@@ -100,6 +101,11 @@ let lastSoundId = 0;
 for (const ev of ['keydown', 'pointerdown', 'touchstart']) window.addEventListener(ev, () => audio.unlock(), { capture: true });
 document.addEventListener('visibilitychange', () => audio.suspend(document.hidden));
 let lastFrame = { tic: 0, walls: 0, sprites: 0, draw: 0, rows: 0 };
+// a netgame (net.js): { me, players, ls: Lockstep, links: Map(player → link) }; null alone
+let net = null;
+// before it starts: the host's links so far and its open invite, or the guest's link
+const lobby = { role: null, links: [], invite: null, guest: null };
+let netWait = 0;                     // since when the netgame has been waiting for a tic
 
 function setStatus(msg, isError = false) {
   statusEl.textContent = msg;
@@ -127,7 +133,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   // M_Responder's function keys, with the menu down: F6 quicksave, F9 quickload
-  if ((e.key === 'F6' || e.key === 'F9') && menu && !demoPlayer) {
+  if ((e.key === 'F6' || e.key === 'F9') && menu && !demoPlayer && !net) {
     e.preventDefault();
     menuBackdrop = renderer.sfb.slice();
     keys.clear();
@@ -171,12 +177,12 @@ window.addEventListener('keydown', (e) => {
   // AM_Responder: the automap listens for IDDT while it's open
   if (showMap && cheats.iddt(e.key)) amCheating = (amCheating + 1) % 3;
   for (const [code, read] of cheats.fixed) {
-    if (recorder || demoPlayer) break;   // (a cheat isn't an input: it would desync the demo)
+    if (recorder || demoPlayer || net) break;   // (a cheat isn't an input: it would desync the demo, or the netgame)
     if (read(e.key)) db.query(`EXECUTE PROCEDURE cheat('${code}')`).catch((err) => console.error(err));
   }
   // IDMUS xy: S_ChangeMusic to another level's song, if there is such a song
   const song = cheats.idmus(e.key);
-  if (song && settings.skill !== 5) {   // (ST_Responder: not on Nightmare)
+  if (song && settings.skill !== 5 && !net) {   // (ST_Responder: not on Nightmare)
     const mapFor = idmusMap(song, wad.mapNames().some((m) => m.startsWith('MAP')));
     const lump = mapFor && musicLumpFor(mapFor);
     const ok = lump && wad.lump(lump);
@@ -187,12 +193,12 @@ window.addEventListener('keydown', (e) => {
   // IDCLEV xy: G_DeferedInitNew – a new game on that map, if this WAD has it
   const digits = cheats.idclev(e.key);
   const warp = digits && clevMap(digits, wad.mapNames());
-  if (warp && !recorder && !demoPlayer) {
+  if (warp && !recorder && !demoPlayer && !net) {
     $('map').value = warp;
     startMap(warp, true).catch((err) => setStatus(err.message, true));
   }
   if (e.code.startsWith('Digit')) weaponSel = Number(e.code.slice(5));
-  if (e.code === 'KeyP' || e.code === 'Pause') paused = !paused;
+  if ((e.code === 'KeyP' || e.code === 'Pause') && !net) paused = !paused;
   if (e.code === 'KeyM' && !showMap) setAudio(!settings.audio);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
@@ -228,6 +234,7 @@ function openMenu() {
 
 /** D_StartTitle: back to the title loop (End Game, Quit, and at boot) */
 function goTitle() {
+  if (net) leaveNet('you left the game');
   finale = null;
   intermission = null;
   menu?.close(true);
@@ -358,7 +365,7 @@ function makeMenu() {
       endGame: () => goTitle(),
       get slots() { return saveSlots; },
       // (only in a game: not on the title, the intermission or an ending)
-      get canSave() { return !!map && !title && !intermission && !finale; },
+      get canSave() { return !!map && !title && !intermission && !finale && !net; },
       save: (slot, name) => saveToSlot(slot, name).catch((err) => setStatus(`Couldn't save: ${err.message}`, true)),
       load: (slot) => loadFromSlot(slot).catch((err) => setStatus(`Couldn't load: ${err.message}`, true)),
       quit() {
@@ -484,7 +491,8 @@ async function loadSides() {
   map.sides = new Map(rows.map((r) => [r[0], { xoff: r[1], yoff: r[2], upper: r[3], lower: r[4], mid: r[5], sector: r[6] }]));
 }
 
-async function startMap(name, newGame, { skill = settings.skill, seed = null, keepDemo = false } = {}) {
+async function startMap(name, newGame, { skill = settings.skill, seed = null, keepDemo = false, netgame = false } = {}) {
+  if (net && !netgame) leaveNet('you started another game');
   running = false;
   levelSerial++;
   finale = null;
@@ -500,7 +508,8 @@ async function startMap(name, newGame, { skill = settings.skill, seed = null, ke
   if (newGame) didSecret.clear();
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
-  await loadMap(db, wad, res, name, { skill, newGame });
+  await loadMap(db, wad, res, name, { skill, newGame, players: net?.players ?? 1 });
+  await db.exec(`UPDATE viewcfg SET player_id = ${net?.me ?? 1} WHERE id = 1`);   // (consoleplayer)
   // P_RANDOM's seed: a demo's own, or a fresh one for a new game (a new level carries on)
   const s = seed ?? (newGame ? 1 + Math.floor(Math.random() * 2147483646) : null);
   if (s != null) await db.exec(`UPDATE game SET rng = ${s} WHERE id = 1`);
@@ -541,7 +550,7 @@ async function nextLevel(name, newGame) {
     else endPlayback(demoPlayer.done ? 'the demo is over' : 'it is out of step with the game');
   }
   const rec = recorder;
-  await startMap(name, newGame, { seed, keepDemo: true });
+  await startMap(name, newGame, { seed, keepDemo: true, netgame: !!net });
   rec?.push(['map', name, lastSeed, newGame ? 1 : 0]);
 }
 
@@ -552,6 +561,188 @@ function demoTake(kind) {
   if (!c) endPlayback(demoPlayer.done ? 'the demo is over' : 'it is out of step with the game');
   return c;
 }
+
+// ── co-op over the network ────────────────────────────────────────────────
+const IDLE_CMD = [0, 0, 0, 0, 0, 0, 0];
+
+/**
+ * One frame of a netgame: a command for each tic that has gone by (none while
+ * the menu is up), then every tic the lockstep has complete, through NET_TIC.
+ * False when no tic ran: nothing new to draw.
+ */
+async function netTics(tics) {
+  const [, fwd, side, turn, fire, use, w, run] = readInput(tics);
+  if (net.ls.error) return false;
+  const mine = menu?.active ? IDLE_CMD : [fwd, side, turn / tics, fire, use, w, run];
+  for (let i = 0; i < tics && net.ls.canSubmit(); i++) net.ls.submit(i === 0 ? mine : [...mine.slice(0, 5), 0, mine[6]]);
+  let ran = 0;
+  while (ran < 12) {
+    const r = net.ls.take();
+    if (!r) break;
+    // (from the network: numbers, and only numbers, go into the SQL)
+    const num = (v, lo, hi) => Math.max(lo, Math.min(hi, Number(v) || 0));
+    const rows = r.cmds.map((c, i) => [i + 1, num(c[0], -1, 1), num(c[1], -1, 1), num(c[2], -Math.PI, Math.PI),
+      num(c[3], 0, 1) | 0, num(c[4], 0, 1) | 0, num(c[5], 0, 9) | 0, num(c[6], 0, 1) | 0]);
+    await db.query(`EXECUTE BLOCK AS BEGIN DELETE FROM ticcmd;
+      ${rows.map((v) => `INSERT INTO ticcmd (player_id, fwd, side, turn, fire, use_key, weapon_sel, run) VALUES (${v.join(', ')});`).join('\n')} END`);
+    hud = (await db.query('SELECT * FROM net_tic', [], { rowMode: 'object' })).rows[0];
+    lastFire = rows[net.me - 1][4] === 1;
+    ran++;
+    // the consistency check (d_net.c's consistancy): the host compares everyone's
+    if (r.tic % 35 === 0) net.ls.report(r.tic, (await db.query('SELECT csum FROM net_checksum')).rows[0].CSUM);
+    if (hud.EXIT_KIND) break;
+  }
+  if (net.ls.error) {
+    setStatus(`Co-op stopped: ${net.ls.error}.`, true);
+    netPanel();
+    return false;
+  }
+  if (ran) {
+    if (netWait && statusEl.textContent.startsWith('Waiting')) setStatus('');
+    netWait = 0;
+  } else if (!netWait) netWait = performance.now();
+  else if (performance.now() - netWait > 1000) setStatus('Waiting for the other players…');
+  return ran > 0 && !!hud;
+}
+
+/** G_InitNew for a netgame: everyone the same map, skill and seed; me is this browser's player. */
+async function beginNet({ me, players, mapName, skill, seed }, links) {
+  if (recorder) finishRecording();
+  demoPlayer = null;
+  paused = false;
+  const send = (to, m) => {
+    if (to === 'all') for (const l of links.values()) l.send(m);
+    else links.get(to)?.send(m);
+  };
+  net = { me, players, links, ls: new Lockstep({ me, players, send }) };
+  netWait = 0;
+  for (const [pid, link] of links) {
+    link.onmessage = (m) => net?.links === links && net.ls.receive(pid, m);
+    link.onclose = () => {
+      if (net?.links !== links || net.ls.error) return;
+      const why = pid === 1 ? 'the host left' : `player ${pid} left`;
+      if (me === 1) send('all', { t: 'desync', why });
+      net.ls.fail(why);
+    };
+  }
+  settings.skill = skill;
+  $('skill').value = String(skill);
+  $('map').value = mapName;
+  await startMap(mapName, true, { skill, seed, netgame: true });
+  $('net-out').value = '';
+  $('net-in').value = '';
+  setStatus(`Co-op: you are player ${me} of ${players}.`);
+  setTimeout(() => { if (statusEl.textContent.startsWith('Co-op: you')) setStatus(''); }, 4000);
+  netPanel();
+}
+
+/** Out of the netgame (and the lobby): the links closed, back to one player at the next start. */
+function leaveNet(why) {
+  const links = net ? [...net.links.values()] : [...lobby.links.map((l) => l.link), lobby.guest].filter(Boolean);
+  if (net && !net.ls.error) for (const l of links) l.send({ t: 'desync', why: `player ${net.me} left` });
+  for (const l of links) l.close();
+  lobby.invite?.cancel();
+  Object.assign(lobby, { role: null, links: [], invite: null, guest: null });
+  if (net) console.info(`[firebird-doom] co-op over: ${why}`);
+  net = null;
+  netPanel();
+}
+
+/** The Co-op panel's buttons and words, for where things stand */
+function netPanel(say) {
+  const host = lobby.role === 'host';
+  $('net-host').disabled = !!net || lobby.role === 'guest' || !!lobby.invite || lobby.links.length >= MAX_PLAYERS - 1;
+  $('net-join').disabled = !!net || !!lobby.role;
+  $('net-start').disabled = !!net || !host || !lobby.links.length;
+  $('net-leave').disabled = !net && !lobby.role;
+  $('net-connect').disabled = !!net || !(lobby.invite || (lobby.role === 'guest' && !lobby.guest && !lobby.replied));
+  if (say !== undefined) $('net-status').textContent = say;
+  else if (net) $('net-status').textContent = net.ls.error ? `Stopped: ${net.ls.error}.` : `In the game: player ${net.me} of ${net.players}.`;
+}
+
+$('net-host').addEventListener('click', async () => {
+  try {
+    lobby.role = 'host';
+    netPanel('Making an invite…');
+    lobby.invite = await createInvite();
+    $('net-out').value = lobby.invite.code;
+    $('net-in').value = '';
+    netPanel(`Send the code above to player ${lobby.links.length + 2}, then paste their reply and press Connect.`);
+  } catch (err) { netPanel(`Couldn't make an invite: ${err.message}`); }
+});
+$('net-join').addEventListener('click', () => {
+  lobby.role = 'guest';
+  lobby.replied = false;
+  $('net-out').value = '';
+  $('net-in').value = '';
+  netPanel("Paste the host's invite below and press Connect.");
+});
+$('net-connect').addEventListener('click', async () => {
+  const code = $('net-in').value.trim();
+  if (!code) return;
+  try {
+    if (lobby.role === 'host' && lobby.invite) {
+      netPanel('Connecting…');
+      const link = await lobby.invite.accept(code);
+      lobby.invite = null;
+      const pid = lobby.links.length + 2;
+      lobby.links.push({ pid, link });
+      link.onclose = () => {
+        lobby.links = lobby.links.filter((l) => l.link !== link);
+        if (!net) netPanel(`Player ${pid} went away.`);
+      };
+      $('net-out').value = '';
+      $('net-in').value = '';
+      netPanel(`${lobby.links.length + 1} players. Invite another, or Start (${$('map').value}, skill ${settings.skill}).`);
+    } else if (lobby.role === 'guest') {
+      netPanel('Making a reply…');
+      const { reply, link } = await acceptInvite(code);
+      lobby.replied = true;
+      $('net-out').value = reply;
+      netPanel('Send the reply above to the host, and wait for them to connect and start.');
+      const l = await link;
+      lobby.guest = l;
+      netPanel(`Connected. Waiting for the host to start (load the same WAD: ${$('wadname').textContent}).`);
+      l.onmessage = (m) => {
+        if (m.t !== 'start' || net) return;
+        // (from the network: check it all before it goes anywhere near the game)
+        const ok = m.wad === wadKey && wad.mapNames().includes(m.map) && [1, 2, 3, 4, 5].includes(m.skill)
+          && Number.isInteger(m.seed) && Number.isInteger(m.you) && m.you >= 2 && m.you <= m.players && m.players <= MAX_PLAYERS;
+        if (!ok) {
+          l.send({ t: 'desync', why: `player ${m.you} has another WAD loaded` });
+          netPanel(`The host is playing ${String(m.wad).split('|')[0]}: load that, and join again.`);
+          return;
+        }
+        lobby.guest = null;
+        lobby.role = null;
+        beginNet({ me: m.you, players: m.players, mapName: m.map, skill: m.skill, seed: m.seed }, new Map([[1, l]]))
+          .catch((err) => setStatus(err.message, true));
+      };
+      l.onclose = () => { if (!net) { lobby.guest = null; lobby.role = null; netPanel('The host went away.'); } };
+    }
+  } catch (err) {
+    netPanel(`That didn't work: ${err.message}`);
+  }
+});
+$('net-start').addEventListener('click', () => {
+  if (lobby.role !== 'host' || !lobby.links.length || !db || !wad) return;
+  const players = lobby.links.length + 1;
+  const mapName = $('map').value;
+  const skill = settings.skill;
+  const seed = 1 + Math.floor(Math.random() * 2147483646);
+  const links = new Map(lobby.links.map(({ pid, link }) => [pid, link]));
+  lobby.invite?.cancel();
+  Object.assign(lobby, { role: null, links: [], invite: null, guest: null });
+  for (const [pid, link] of links) link.send({ t: 'start', you: pid, players, map: mapName, skill, seed, wad: wadKey });
+  beginNet({ me: 1, players, mapName, skill, seed }, links).catch((err) => setStatus(err.message, true));
+});
+$('net-leave').addEventListener('click', () => {
+  const was = !!net;
+  leaveNet('you left the game');
+  netPanel(was ? 'You left the game.' : '');
+  $('net-out').value = '';
+});
+netPanel();
 
 // ── the loop ─────────────────────────────────────────────────────────────
 // requestAnimationFrame, with a timer as backstop: rAF stalls in occluded
@@ -590,7 +781,7 @@ async function frame() {
       return;
     }
 
-    if (title || menu?.active) {
+    if (title || (menu?.active && !net)) {
       // the title loop, or the menu over a frozen game (single player waits)
       for (let i = 0; i < tics; i++) { title?.tick(); menu?.tick(); }
       if (title) title.draw(renderer);
@@ -652,17 +843,23 @@ async function frame() {
     }
 
     let t = performance.now();
-    // G_ReadDemoTiccmd / G_WriteDemoTiccmd
-    let args;
-    if (demoPlayer) {
-      args = demoTake('tic');
-      if (!args) { nextFrame(); return; }
-      readInput(tics);              // (drained, so it doesn't pile up for later)
-    } else args = readInput(tics);
-    lastFire = args[4] === 1;
-    recorder?.push(args);
-    if (recorder && recorder.demo.calls.length % 35 === 0) setStatus(`● Recording a demo of ${map.name}: ${recorder.tics} tics`);
-    hud = (await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', args, { rowMode: 'object' })).rows[0];
+    if (net) {
+      // a netgame: this player's commands out, everyone's tics in (TryRunTics)
+      const done = await netTics(tics);
+      if (!done) { nextFrame(); return; }
+    } else {
+      // G_ReadDemoTiccmd / G_WriteDemoTiccmd
+      let args;
+      if (demoPlayer) {
+        args = demoTake('tic');
+        if (!args) { nextFrame(); return; }
+        readInput(tics);              // (drained, so it doesn't pile up for later)
+      } else args = readInput(tics);
+      lastFire = args[4] === 1;
+      recorder?.push(args);
+      if (recorder && recorder.demo.calls.length % 35 === 0) setStatus(`● Recording a demo of ${map.name}: ${recorder.tics} tics`);
+      hud = (await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', args, { rowMode: 'object' })).rows[0];
+    }
     lastFrame.tic = performance.now() - t;
 
     if (hud.EXIT_KIND) {
@@ -707,7 +904,7 @@ async function frame() {
     });
     const [[walls, wallMs], [sectors], [sprites, spriteMs], [sounds]] = await Promise.all([
       q('SELECT * FROM frame_walls'), q('SELECT * FROM frame_sectors'), q('SELECT * FROM frame_sprites'),
-      q(`SELECT id, sound, origin, x, y FROM sound_events WHERE id > ${lastSoundId} ORDER BY id`),
+      q(`SELECT id, sound, origin, x, y FROM sound_events WHERE id > ${lastSoundId} AND COALESCE(listener, ${net?.me ?? 1}) = ${net?.me ?? 1} ORDER BY id`),
     ]);
     // the listener; on map 8 (E?M8, MAP08) S_AdjustSoundParams never quite fades a sound out
     const listener = { x: hud.PX, y: hud.PY, angle: hud.PANGLE, bossMap: /^(E\dM8|MAP08)$/.test(map.name) };
@@ -759,6 +956,10 @@ async function frame() {
     const msg = amMsg?.text ?? hud.MSG;
     if (msg && settings.messages) drawText(renderer, msg, 2, 2);
     if (paused) drawText(renderer, 'PAUSED', 136, 80);
+    if (net && menu?.active) {
+      for (let i = 0; i < tics; i++) menu.tick();
+      menu.draw(renderer);
+    }
     lastPalette = palette;
     renderer.present(palette);
     lastFrame.draw = performance.now() - t;
@@ -1008,6 +1209,7 @@ async function boot() {
       addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await reloadWads(); },
       useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await reloadWads(); },
       get demo() { return { recording: !!recorder, playing: !!demoPlayer, last: lastDemo }; },
+      get net() { return net && { me: net.me, players: net.players, tic: net.ls.executed, error: net.ls.error }; },
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },
       get melting() { return !!melt; },

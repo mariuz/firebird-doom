@@ -76,6 +76,14 @@ button:hover { border-color: var(--accent); }
 
 section { margin: 24px 0; }
 .console textarea { width: 100%; resize: vertical; }
+.net { margin: 8px 0; }
+.net summary { cursor: pointer; }
+.net p { color: var(--muted); max-width: 70ch; }
+.net-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.net-codes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+.net-codes label { display: flex; flex-direction: column; gap: 4px; }
+.net-codes textarea { width: 100%; resize: vertical; word-break: break-all; }
+.net-status { color: var(--muted); }
 .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .run { margin: 6px 0; }
 .out {

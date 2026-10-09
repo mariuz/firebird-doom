@@ -29,6 +29,7 @@
     "test:music": "node scripts/music-test.mjs",
     "test:netgame": "node scripts/netgame-test.mjs",
     "test:browser": "node scripts/browser-test.mjs",
+    "test:coop": "node scripts/coop-browser-test.mjs",
     "test:visual": "node scripts/screenshot.mjs --check"
   },
   "license": "MIT",

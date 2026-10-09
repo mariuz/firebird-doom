@@ -31,6 +31,7 @@ npm run test:sound         # the 8 sound channels: priorities, distance, followi
 npm run test:music         # the emulated OPL2, DOOM's DMX music driver, songs from both WADs
 WAD=public/wads/freedoom2.wad npm run test:netgame  # two players through NET_TIC (and without WAD=)
 npm run test:browser       # the page in headless Chromium: title → game → intermission → next map
+npm run test:coop          # co-op: two pages, a real WebRTC link, invite → reply → Start → lockstep
 npm run test:visual        # the README's pictures, pixel for pixel against docs/screenshots.json
 npm run test:renderers -- E1M1 E1M2 E1M3
 node scripts/all-maps.mjs public/wads/freedoom2.wad  # every map (the WAD is an argument here, not WAD=)
@@ -40,7 +41,7 @@ npm run screenshots        # regenerates docs/screenshot-*.png and docs/screensh
 ```
 
 Before every commit, run the smoke test, weapons/specials/physics on **both** WADs, finale,
-intermission, menu, automap, light, statusbar, sound, music, dehacked, pwad, and savegame, demo and netgame (both WADs), the visual test, the build and the browser test. A change that
+intermission, menu, automap, light, statusbar, sound, music, dehacked, pwad, and savegame, demo and netgame (both WADs), the visual test, the build, the browser test and the co-op test. A change that
 means to alter what's drawn fails the visual test: look at `screenshots-diff/`, then run `npm run
 screenshots` and commit `docs/`. All of them must pass; CI runs the same set.
 

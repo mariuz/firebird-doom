@@ -149,6 +149,9 @@ jobs:
       - name: Browser (the live frame loop's hand-offs)
         run: npm run test:browser
 
+      - name: Co-op (two pages over WebRTC, in lockstep)
+        run: npm run test:coop
+
       - name: Build site
         run: npm run build
 

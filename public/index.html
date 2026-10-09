@@ -71,11 +71,35 @@
         <span id="engine" class="pill">Firebird</span>
         <span id="mapname" class="pill"></span>
       </div>
+      <details id="net" class="net">
+        <summary>Co-op over the network <small>— up to four players, peer to peer</small></summary>
+        <p>Everyone loads the same WAD. The host presses <b>Invite a player</b> and sends the
+          code to a friend (chat, e-mail…); the friend presses <b>Join</b>, pastes it and sends back
+          the reply; the host pastes the reply and presses <b>Connect</b>. Invite up to three, then
+          <b>Start</b>: the host's map and skill. Only each player's keys cross the wire, and every
+          browser's Firebird plays the same game from them (lockstep, as DOOM did over IPX).</p>
+        <div class="net-row">
+          <button id="net-host" type="button">Invite a player</button>
+          <button id="net-join" type="button">Join</button>
+          <button id="net-start" type="button" disabled>Start</button>
+          <button id="net-leave" type="button" disabled>Leave</button>
+        </div>
+        <div class="net-codes">
+          <label>Your code: send it to the other player
+            <textarea id="net-out" rows="3" readonly placeholder="(press Invite a player, or Join)"></textarea></label>
+          <label>Their code: paste it here
+            <textarea id="net-in" rows="3" spellcheck="false"></textarea></label>
+        </div>
+        <div class="net-row">
+          <button id="net-connect" type="button" disabled>Connect</button>
+          <span id="net-status" class="net-status"></span>
+        </div>
+      </details>
       <p class="keys">Click the view to capture the mouse ·
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows move ·
         <kbd>Ctrl</kbd> or click fire · <kbd>Space</kbd>/<kbd>E</kbd> use ·
         <kbd>Shift</kbd> run · <kbd>1</kbd>–<kbd>7</kbd> weapons (1 again: chainsaw, 3 again: super shotgun) ·
-        <kbd>Esc</kbd> menu · <kbd>Tab</kbd> map (IDDT on it reveals all) · type IDDQD, IDKFA, IDFA, IDCLIP, IDCHOPPERS, IDBEHOLD<i>x</i>, IDMYPOS, IDMUS<i>xy</i> or IDCLEV<i>xy</i> to cheat · <kbd>P</kbd> pause · <kbd>M</kbd> audio on/off.
+        <kbd>Esc</kbd> menu · <kbd>Tab</kbd> map (IDDT on it reveals all) · type IDDQD, IDKFA, IDFA, IDCLIP, IDCHOPPERS, IDBEHOLD<i>x</i>, IDMYPOS, IDMUS<i>xy</i> or IDCLEV<i>xy</i> to cheat · <kbd>P</kbd> pause (not in co-op) · <kbd>M</kbd> audio on/off.
         On touch screens the left half moves, the right half turns, and a tap fires.</p>
     </section>
 

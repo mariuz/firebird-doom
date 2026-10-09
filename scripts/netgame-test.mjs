@@ -10,6 +10,7 @@ import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
 import { captureGame } from '../src/savegame.js';
+import { Lockstep } from '../src/net.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -129,6 +130,74 @@ async function play() {
 const a = await play();
 const b = await play();
 assert(a === b, `two players' 120 tics of commands, played twice from the same start, give the same game, row for row`);
+
+// ── two peers in lockstep (net.js), each with its own Firebird, linked by a
+// pretend network that delivers messages late and out of step with each other ──
+{
+  const db2 = new FirebirdBrowser('memory://net-peer2', { transport: new DirectTransport() });
+  await createSchema(db2, sql);
+  const res2 = await loadResources(db2, wad);
+  const peers = [{ db, me: 1 }, { db: db2, me: 2 }];
+  for (const p of peers) {
+    await loadMap(p.db, wad, p.me === 1 ? res : res2, map, { skill: 4, players: 2, newGame: true });
+    await p.db.exec('UPDATE game SET rng = 4321 WHERE id = 1');
+    await p.db.exec('UPDATE player SET health = 100000');
+    await p.db.exec(`UPDATE viewcfg SET player_id = ${p.me} WHERE id = 1`);
+  }
+  let rs = 11;
+  const r = () => ((rs = (rs * 48271) % 2147483647) / 2147483647);
+  const wire = [];                                       // in flight: { at, to, from, m }
+  let clock = 0;
+  const sender = (from) => (to, m) => {
+    for (const t of to === 'all' ? peers.map((p) => p.me).filter((x) => x !== from) : [to]) {
+      wire.push({ at: clock + 1 + Math.floor(r() * 6), to: t, from, m: JSON.parse(JSON.stringify(m)) });
+    }
+  };
+  for (const p of peers) p.ls = new Lockstep({ me: p.me, players: 2, send: sender(p.me), delay: 3 });
+  const ran = { 1: 0, 2: 0 };
+  let stalled = 0;
+  for (clock = 1; clock <= 400 && Math.min(ran[1], ran[2]) < 200; clock++) {
+    for (const w of wire.filter((x) => x.at <= clock)) peers[w.to - 1].ls.receive(w.from, w.m);
+    wire.splice(0, wire.length, ...wire.filter((x) => x.at > clock));
+    for (const p of peers) {
+      // player 2 goes quiet for a while: nobody may run ahead without its commands
+      const quiet = p.me === 2 && clock > 50 && clock < 80;
+      if (!quiet && p.ls.canSubmit() && p.ls.submitted < 200) {
+        p.ls.submit([r() < 0.7 ? 1 : 0, r() < 0.2 ? 1 : 0, (r() - 0.5) * 0.2, r() < 0.2 ? 1 : 0, 0, 0, r() < 0.3 ? 1 : 0]);
+      }
+      for (let t = p.ls.take(); t; t = p.ls.take()) {
+        await p.db.query(`EXECUTE BLOCK AS BEGIN DELETE FROM ticcmd;
+          ${t.cmds.map((c, i) => `INSERT INTO ticcmd (player_id, fwd, side, turn, fire, use_key, weapon_sel, run) VALUES (${i + 1}, ${c.join(', ')});`).join('\n')} END`);
+        await p.db.query('SELECT * FROM net_tic');
+        ran[p.me] = t.tic;
+        if (t.tic % 35 === 0) p.ls.report(t.tic, (await p.db.query('SELECT csum FROM net_checksum')).rows[0].CSUM);
+      }
+      if (clock === 79 && p.me === 1) stalled = ran[1];
+    }
+  }
+  const snap = async (d) => JSON.stringify((await captureGame(d)).tables);
+  const [s1, s2] = [await snap(db), await snap(db2)];
+  assert(ran[1] === 200 && ran[2] === 200 && s1 === s2 && !peers[0].ls.error,
+    `two peers in lockstep over a late, jittery link run the same ${ran[1]} tics into the same game, row for row`);
+  assert(stalled <= 50 + 3 + 12, `while player 2 is silent the host doesn't run ahead of it (it stopped at tic ${stalled})`);
+  // a peer whose game differs is caught at the next checksum
+  await db2.exec(`UPDATE things SET x = x + 1 WHERE id = (SELECT MIN(id) FROM things WHERE kind = 'monster')`);
+  for (let k = 0; k < 40; k++) {
+    for (const p of peers) {
+      if (p.ls.canSubmit()) p.ls.submit([0, 0, 0, 0, 0, 0, 0]);
+      for (const w of wire.splice(0)) peers[w.to - 1].ls.receive(w.from, w.m);
+      for (let t = p.ls.take(); t; t = p.ls.take()) {
+        await p.db.query('SELECT * FROM net_tic');
+        if (t.tic % 35 === 0) p.ls.report(t.tic, (await p.db.query('SELECT csum FROM net_checksum')).rows[0].CSUM);
+      }
+    }
+  }
+  for (const w of wire.splice(0)) peers[w.to - 1].ls.receive(w.from, w.m);
+  assert(/out of sync/.test(peers[0].ls.error ?? '') && /out of sync/.test(peers[1].ls.error ?? ''),
+    `a game that drifts apart is caught by the checksum, on both sides: "${peers[0].ls.error}"`);
+  await db2.close();
+  await db.exec('UPDATE viewcfg SET player_id = 1 WHERE id = 1');
+}
 
 // and alone it's still player 1 and DOOM_TIC
 await loadMap(db, wad, res, map, { skill: 3, players: 1 });

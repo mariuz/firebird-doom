@@ -22,7 +22,7 @@ you find missing.
   `GAME.RNG`, and thing ids restart on every load. Not possible: DOOM's own `.lmp` demos. They
   need a bit-identical simulation (fixed point, the 256-entry random table consumed in the same
   order), and this is a re-implementation. That also means the title loop has no attract demos.
-  Demos go on from level to level, as DOOM's do. Still missing: multiplayer.
+  Demos go on from level to level, as DOOM's do.
 - ~~**The end of the game.**~~ Done: as in vanilla, Doom I's E?M8 ending is the end of the game.
   Its picture stays until the menu starts a new game, and Doom II's cast call loops.
 
@@ -51,8 +51,10 @@ you find missing.
 - ~~**Telefrag.**~~ Done: the player's teleport kills what stands on the destination; monsters are
   blocked by it (except on MAP30). Teleports also leave fog at both ends and freeze the player
   for 18 tics.
-- **Multiplayer and deathmatch.** Single player only. Co-op and deathmatch starts and things are
-  skipped.
+- **Multiplayer.** Co-op is done ([src/net.js](../src/net.js), `NET_TIC`): up to four players,
+  peer to peer over WebRTC with copy-paste invite codes, in lockstep with a checksum every 35 tics.
+  Still missing: the other players' animation and colours (`R_InitTranslationTables`), deathmatch
+  (its starts, frags, `-altdeath`) and a TURN relay for players behind strict NATs.
 - ~~**DEHACKED beyond `[STRINGS]`.**~~ Done ([src/dehacked.js](../src/dehacked.js)): Thing, Ammo,
   Misc, Cheat and BEX [PARS]. Not possible: Frame, Pointer, Weapon, Sound and Text blocks need
   state tables the port doesn't have. Loading a `.deh` file comes with PWADs (the loader already

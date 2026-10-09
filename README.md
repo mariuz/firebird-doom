@@ -539,7 +539,7 @@ The game opens on the title loop (`D_DoAdvanceDemo`, [src/menu.js](src/menu.js))
 the title music (`D_INTRO`, `D_DM2TTL` on DOOM II), then the credits page, round and round.
 DOOM plays its `.lmp` demos in between, which this port can't (see Demos below). Any key
 brings up the main menu (`m_menu.c`), drawn with the WAD's own `M_*` graphics and the blinking
-skull. In play, Esc opens it, and so does letting go of the mouse. The game waits behind it, as DOOM's single player does.
+skull. In play, Esc opens it, and so does letting go of the mouse. The game waits behind it, as DOOM's single player does (in co-op it goes on).
 Arrows move, Enter chooses, Backspace goes back, Esc closes, and each menu remembers where its
 cursor was.
 
@@ -642,6 +642,47 @@ or playing, because they aren't inputs and would desync the demo. DOOM's own `.l
 played: they need DOOM's exact fixed-point simulation and random table, and this is a
 re-implementation in SQL. `npm run test:demo` replays a busy 531-tic recording and compares every
 row of the resulting game, on both WADs.
+
+### Co-op over the network
+
+Up to four players can play a level together, each in their own browser, peer to peer
+([src/net.js](src/net.js)). Open **Co-op over the network** under the view. With no server to
+introduce the players, they swap two codes by hand (a chat message will do). The host presses
+**Invite a player** and sends the code. The guest presses **Join**, pastes it and presses
+**Connect**, then sends back the reply code. The host pastes the reply and presses **Connect**.
+That makes a WebRTC data channel between the two browsers: the codes are the SDP offer and answer,
+complete with their ICE candidates, found through a public STUN server. The host can invite up to
+three players this way, then presses **Start**. Everyone loads the host's map at the host's skill,
+with the host's random seed. Everyone must have the same WAD loaded: a guest with another one is
+told which. Behind a strict NAT (some mobile networks, some offices) two browsers may not reach each
+other without a TURN relay, which this page doesn't have.
+
+It plays the way DOOM did over IPX: in lockstep (`d_net.c`). Nothing about the game crosses the
+wire but each player's ticcmd, once a tic: forward, strafe, turn, fire, use, weapon and run. The
+host gathers every player's command for a tic and sends the set to everyone, and every browser runs
+that tic through Firebird's `NET_TIC`, which runs `PLAYER_THINK` for each player and then the
+world. Every browser runs the same game from the same commands, because the simulation is
+deterministic (see Demos). Each browser looks through its own player's eyes (`VIEWCFG.PLAYER_ID`,
+DOOM's `consoleplayer`): its own view, status bar, messages and pickup sounds. Commands go out three
+tics ahead, so the host has them in time, and nobody runs ahead of a player whose commands haven't
+come. Every 35 tics each browser sends the host a checksum of its game (the tic, the random seed,
+where every player and monster is and how hurt). Any difference is a desync, and the game stops for
+everyone and says so, as DOOM's consistency check did. It also stops when a player leaves.
+
+The simulation knows about every player, after vanilla. Each starts on their own player start,
+and the things marked multiplayer-only appear. Monsters look for any player they can see
+(`P_LookForPlayers`) and go after the player whose gunfire woke them. Missiles and hitscan hit any
+player but the shooter, so friendly fire is on. Kills count for the player who made them. A dead
+player presses use to come back at their start with a pistol (`G_DoReborn`), and the level goes on.
+A level exit takes everyone to the intermission. Each player hurries their own along, and the
+next map waits for the last of them. The menu doesn't
+stop a netgame, and there's no pause, saving, cheating, demo or warping in one: none of those are
+in the ticcmds, so they would split the game in two. The other players are drawn, but standing
+still and in the same green. `npm run test:netgame` plays two players in one database, and two
+peers through a pretend network that delivers late and out of order. `npm run test:coop` connects
+two real pages over WebRTC, with the codes swapped through the panel, and plays them in lockstep
+through a level exit and the intermission into the next map.
+Not yet: deathmatch.
 
 ### Skill levels
 
