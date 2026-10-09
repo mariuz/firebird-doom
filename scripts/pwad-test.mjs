@@ -7,6 +7,7 @@ import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
 import { parseDehStrings } from '../src/finale.js';
+import { saveStore, rememberFiles, recallFiles } from '../src/savegame.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -88,6 +89,23 @@ let again = true;
 try { await loadResources(db, iwad); } catch (err) { again = err.message; }
 const rules = (await db.query('SELECT COUNT(*) n, MAX(init_health) h FROM rules')).rows[0];
 assert(again === true && rules.N === 1 && rules.H === 100, `loading again replaces the rules row (${again === true ? `${rules.N} row, health ${rules.H}` : again})`);
+
+// remembered with the main WAD (IndexedDB in the page; the memory fallback here)
+{
+  const store = saveStore();
+  const buf = pwadBytes.buffer.slice(pwadBytes.byteOffset, pwadBytes.byteOffset + pwadBytes.byteLength);
+  await rememberFiles(store, 'freedoom1.wad', [{ name: 'test.wad', buffer: buf }], { name: 'x.deh', text: 'Misc 0\nInitial Health = 123\n' });
+  const back = await recallFiles(store, 'freedoom1.wad');
+  const other = await recallFiles(store, 'freedoom2.wad');
+  assert(back?.pwads[0]?.name === 'test.wad' && back.pwads[0].buffer.byteLength === pwadBytes.byteLength && back.deh?.name === 'x.deh' && other === null,
+    'the PWADs and the patch are remembered with their main WAD (and only with it)');
+  const again = new Wad(iwadBytes, new Uint8Array(back.pwads[0].buffer));
+  assert(again.pwadMapNames().join() === 'E1M1', '…and what comes back loads as the PWAD did');
+  await rememberFiles(store, 'freedoom1.wad', [], null);
+  await store.put('files|broken.wad', { pwads: [{ name: 7 }], deh: 'no' });
+  assert(await recallFiles(store, 'freedoom1.wad') === null && await recallFiles(store, 'broken.wad') === null,
+    'with nothing over the main WAD the record is forgotten; a malformed one is ignored');
+}
 
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'pwad ok');

@@ -135,6 +135,25 @@ export async function importSaves(store, wad, file) {
   return written;
 }
 
+/**
+ * The PWADs and the patch loaded over a main WAD, remembered with it (keyed by
+ * its name) so a reload puts them back: { pwads: [{ name, buffer }], deh: { name, text } | null }.
+ * Nothing over it forgets the record.
+ */
+export async function rememberFiles(store, base, pwads, deh) {
+  const keep = pwads.length || deh;
+  await store.put(`files|${base}`, keep ? { pwads: pwads.map(({ name, buffer }) => ({ name, buffer })), deh: deh ? { name: deh.name, text: deh.text } : null } : null);
+}
+
+/** What rememberFiles kept for BASE: { pwads, deh }, or null. Anything malformed is ignored. */
+export async function recallFiles(store, base) {
+  const r = await store.get(`files|${base}`).catch(() => null);
+  if (!r || !Array.isArray(r.pwads)) return null;
+  const pwads = r.pwads.filter((p) => typeof p?.name === 'string' && p.buffer instanceof ArrayBuffer);
+  const deh = typeof r.deh?.text === 'string' ? { name: String(r.deh.name ?? 'patch.deh'), text: r.deh.text } : null;
+  return pwads.length || deh ? { pwads, deh } : null;
+}
+
 export function saveStore() {
   const memory = new Map();
   const fallback = { get: async (k) => memory.get(k) ?? null, put: async (k, v) => { memory.set(k, v); } };

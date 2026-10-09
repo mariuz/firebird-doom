@@ -480,7 +480,10 @@ needed the PWAD merged in with DeuTex for those. Every file's `DEHACKED` lump is
 order, the main WAD's first. **Patch** loads a DeHackEd file on top of all of them, as `-deh`
 does. With a PWAD loaded, the game starts on the PWAD's first map (vanilla would need `-warp`).
 The WAD label shows what's loaded, and **Clear** goes back to the main WAD alone. Picking another
-main WAD drops the PWADs and the patch. Saves and demos are kept per combination.
+main WAD drops the PWADs and the patch. The browser remembers them, though: they're kept in
+IndexedDB with the main WAD they were loaded over, so a reload (or picking that WAD again) puts them
+back, until **Clear**. Files that no longer load are forgotten, and the page says so. Saves and demos
+are kept per combination. `npm run test:pwad` and the browser test check the remembering.
 `npm run test:pwad` builds a PWAD with a map, a flat, a sprite, music and a patch, and loads it
 over Freedoom.
 

@@ -18,7 +18,7 @@ import { cheatReaders, clevMap, idmusMap } from './cheats.js';
 import { nextMap } from './progress.js';
 import { Finale, parseDehStrings, setFallbackStrings } from './finale.js';
 import { Menu, TitleLoop } from './menu.js';
-import { captureGame, restoreGame, saveStore, exportSaves, importSaves, SLOTS } from './savegame.js';
+import { captureGame, restoreGame, saveStore, exportSaves, importSaves, rememberFiles, recallFiles, SLOTS } from './savegame.js';
 import { DemoPlayer, DemoRecorder, demoProblem } from './demo.js';
 import { Intermission, levelOf, setParOverrides } from './intermission.js';
 import { THING_TYPES } from './thinginfo.js';
@@ -869,13 +869,31 @@ let baseWad = null;                 // { buffer, label }
 let pwads = [];                     // [{ buffer, name }]
 let dehPatch = null;                // { text, name }
 
-/** Load the main WAD (dropping any PWADs and patch: they belonged with the old one). */
+/** Load the main WAD, with the PWADs and patch last loaded over it (remembered in IndexedDB). */
 async function useWad(buffer, label) {
   baseWad = { buffer, label };
-  pwads = [];
-  dehPatch = null;
+  const kept = await recallFiles(saves, label);
+  pwads = kept?.pwads ?? [];
+  dehPatch = kept?.deh ?? null;
+  if (!kept) { await loadWads(); return; }
+  try {
+    await loadWads();
+  } catch (err) {
+    // (they no longer load: forget them, and start on the main WAD alone)
+    pwads = [];
+    dehPatch = null;
+    await rememberFiles(saves, label, [], null);
+    await loadWads();
+    setStatus(`The PWADs kept for ${label} didn't load (${err.message}); they're forgotten.`, true);
+  }
+}
+
+/** Remember what's over the main WAD now for next time (first: loading takes a while), and load it. */
+async function reloadWads() {
+  await rememberFiles(saves, baseWad.label, pwads, dehPatch).catch(() => {});
   await loadWads();
 }
+const forgetFailed = () => rememberFiles(saves, baseWad.label, pwads, dehPatch).catch(() => {});
 
 /** W_InitMultipleFiles: the main WAD, the PWADs over it, the patch over all; then the first map. */
 async function loadWads() {
@@ -950,8 +968,8 @@ async function boot() {
       get menu() { return menu; },
       get automap() { return { view: amView, open: showMap, message: amMsg?.text ?? null }; },
       get files() { return { base: baseWad?.label, pwads: pwads.map((p) => p.name), deh: dehPatch?.name ?? null }; },
-      addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await loadWads(); },
-      useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await loadWads(); },
+      addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await reloadWads(); },
+      useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await reloadWads(); },
       get demo() { return { recording: !!recorder, playing: !!demoPlayer, last: lastDemo }; },
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },
@@ -1002,9 +1020,10 @@ $('pwadfile').addEventListener('change', async (e) => {
   if (!files.length || !db || !baseWad) return;
   try {
     for (const f of files) pwads.push({ buffer: await f.arrayBuffer(), name: f.name });
-    await loadWads();
+    await reloadWads();
   } catch (err) {
     pwads = pwads.filter((p) => !files.some((f) => f.name === p.name));
+    forgetFailed();
     setStatus(err.message, true);
   }
   e.target.value = '';
@@ -1014,9 +1033,10 @@ $('dehfile').addEventListener('change', async (e) => {
   if (!f || !db || !baseWad) return;
   try {
     dehPatch = { text: new TextDecoder('latin1').decode(await f.arrayBuffer()), name: f.name };
-    await loadWads();
+    await reloadWads();
   } catch (err) {
     dehPatch = null;
+    forgetFailed();
     setStatus(err.message, true);
   }
   e.target.value = '';
@@ -1024,7 +1044,7 @@ $('dehfile').addEventListener('change', async (e) => {
 $('pwad-clear').addEventListener('click', async () => {
   pwads = [];
   dehPatch = null;
-  try { await loadWads(); } catch (err) { setStatus(err.message, true); }
+  try { await reloadWads(); } catch (err) { setStatus(err.message, true); }
 });
 $('game').value = settings.game;
 $('game').addEventListener('change', async (e) => {

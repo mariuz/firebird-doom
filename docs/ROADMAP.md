@@ -58,8 +58,8 @@ you find missing.
   state tables the port doesn't have. Loading a `.deh` file comes with PWADs (the loader already
   takes the text: `loadResources(db, wad, { dehacked })`).
 - ~~**PWADs.**~~ Done: PWADs on top of the main WAD (`-file`, with flats and sprites merged as
-  `-merge` does), and a `.deh` patch (`-deh`). Still missing: remembering them across reloads (the
-  files aren't kept).
+  `-merge` does), and a `.deh` patch (`-deh`). They're remembered across reloads too (IndexedDB, with
+  their main WAD).
 
 ## Rendering
 

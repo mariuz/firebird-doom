@@ -2,7 +2,7 @@
 // main.js's frame loop that the headless tests can't reach. Title → menu →
 // E1M1 (with the melt), quicksave and quickload, a level exit → the
 // intermission → E1M2, the screen size keys, the automap, an ending, End Game → the
-// title. Any page error fails it.
+// title, and a patch remembered across a reload. Any page error fails it.
 //
 //   npm run test:browser
 //
@@ -113,6 +113,20 @@ try {
   await key('y', 0);
   await until(() => window.doom.screen === 'title', null, 30000);
   assert(true, 'End Game asks, and Y goes back to the title');
+
+  // a .deh patch over the main WAD is remembered across a reload, and forgotten when cleared
+  await doom(() => window.doom.useDeh('Patch File for DeHackEd v3.0\n\n[STRINGS]\nGOTARMOR = Browser test armour.\n', 'test.deh'));
+  await page.reload();
+  await until(() => window.doom?.title);
+  const kept = await doom(() => window.doom.files.deh);
+  const label = await doom(() => window.doom.sql('SELECT label FROM thing_types WHERE thing_type = 2018').then((r) => r[0].LABEL));
+  assert(kept === 'test.deh' && label === 'Browser test armour.', `after a reload the patch is back (${kept}: "${label}")`);
+  await page.locator('#pwad-clear').dispatchEvent('click');
+  await until(() => window.doom.files.deh === null);
+  await page.waitForTimeout(500);
+  await page.reload();
+  await until(() => window.doom?.title);
+  assert(await doom(() => window.doom.files.deh) === null, '…and once cleared, a reload leaves it off');
 
   assert(errors.length === 0, `no page errors${errors.length ? `: ${errors.join('; ')}` : ''}`);
 } catch (err) {
