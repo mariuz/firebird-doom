@@ -17,9 +17,18 @@
 //
 // DOOM's own .lmp demos can't be played: they need DOOM's exact simulation
 // (fixed point, its random table consumed in the same order), and this one is
-// a re-implementation in SQL that is faithful but not bit-identical.
+// a re-implementation in SQL that is faithful but not bit-identical. So the
+// demos the title loop plays between its pages (DEMO1–3, DOOM II's DEMO4) are
+// the port's own, recorded by a scripted player (scripts/record-attract.mjs)
+// and shipped in public/demos/ for the bundled WADs.
 
 export const DEMO_VERSION = 2;
+
+/** how many attract demos each bundled WAD has (as many as its title loop plays) */
+export const ATTRACT_DEMOS = { 'freedoom1.wad': 3, 'freedoom2.wad': 4 };
+
+/** the file an attract demo lives in, for WAD label and demo number: freedoom1-demo1.json */
+export const attractDemoFile = (label, n) => `${label.replace(/\.wad$/i, '')}-demo${n}.json`;
 
 export class DemoRecorder {
   /** @param start { wad, map, skill, seed } */

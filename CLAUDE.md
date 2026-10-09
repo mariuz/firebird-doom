@@ -21,7 +21,8 @@ npm test                   # SQL smoke test
 WAD=public/wads/freedoom2.wad npm run test:weapons   # weapons/specials/physics take WAD=: run both WADs
 npm run test:finale && npm run test:intermission && npm run test:menu
 WAD=public/wads/freedoom2.wad npm run test:savegame  # (and without WAD=)
-WAD=public/wads/freedoom2.wad npm run test:demo      # determinism (and without WAD=)
+npm run test:demo      # determinism (and without WAD=)
+npm run test:attract       # the title loop's demos (public/demos/) replay to their checksums; npm run attract records them
 npm run test:dehacked      # DeHackEd patches
 npm run test:pwad          # PWADs over the IWAD
 npm run test:automap       # the automap's zoom, follow, grid, marks
@@ -41,9 +42,10 @@ npm run screenshots        # regenerates docs/screenshot-*.png and docs/screensh
 ```
 
 Before every commit, run the smoke test, weapons/specials/physics on **both** WADs, finale,
-intermission, menu, automap, light, statusbar, sound, music, dehacked, pwad, and savegame, demo and netgame (both WADs), the visual test, the build, the browser test and the co-op test. A change that
+intermission, menu, automap, light, statusbar, sound, music, dehacked, pwad, and savegame, demo and netgame (both WADs), attract, the visual test, the build, the browser test and the co-op test. A change that
 means to alter what's drawn fails the visual test: look at `screenshots-diff/`, then run `npm run
-screenshots` and commit `docs/`. All of them must pass; CI runs the same set.
+screenshots` and commit `docs/`. A change to the simulation fails the attract test: run `npm run
+attract` and commit `public/demos/`. All of them must pass; CI runs the same set.
 
 ## How the user likes it
 
@@ -123,6 +125,6 @@ screenshots` and commit `docs/`. All of them must pass; CI runs the same set.
 | Cheats | SQL `CHEAT` procedure; readers in `src/cheats.js`; key handling in `main.js` |
 | Save and load | `src/savegame.js` (what's saved: its `WHOLE`/`MOVING` lists; **add a column there if the simulation starts changing a new one**), `saveToSlot`/`loadFromSlot` in `main.js` |
 | DeHackEd, rules a patch can change | `src/dehacked.js`, the `RULES` table (SQL reads it instead of hard-coding those numbers) |
-| Demos | `src/demo.js`; recording and playback in `main.js` (`startRecording`, `playDemo`, the frame loop) |
+| Demos | `src/demo.js`; recording and playback in `main.js` (`startRecording`, `playDemo`, the frame loop); the title loop's in `scripts/record-attract.mjs` (`startAttract` in `main.js`) |
 | Title screen, menus, options | `src/menu.js`; the actions (new game, settings) are wired in `main.js`'s `makeMenu` |
 | Previewing screens in the browser | `doom.finale('E3M8')`, `doom.intermission('E2M3', 'E2M4')` in the console |

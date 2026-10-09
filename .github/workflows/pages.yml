@@ -117,6 +117,9 @@ jobs:
       - name: Music (the OPL2 emulator and the DMX driver)
         run: npm run test:music
 
+      - name: Attract demos (the title loop's, replayed against their checksums)
+        run: npm run test:attract
+
       - name: Netgame, Phase 1 (two players in Firebird)
         run: npm run test:netgame
 

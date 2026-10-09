@@ -12,8 +12,9 @@ you find missing.
   Dropped items give half (`MF_DROPPED`), as in vanilla.
 - ~~**Main menu, new game and episode select.**~~ Done ([src/menu.js](../src/menu.js)): the
   title loop, the main menu, episode and skill select, Options, Read This!, Quit. Screen Size and
-  Load/Save are done too. Still missing: the demo loop between the title pages (DOOM's attract
-  demos are `.lmp` files, which this re-implementation can't replay; see Demos).
+  Load/Save are done too, and the demos between the title pages (`D_DoAdvanceDemo`): DOOM's own
+  `.lmp` files can't be replayed (see Demos), so the port plays its own, recorded by a scripted
+  player (`npm run attract`) for the bundled WADs.
 - ~~**Save and load.**~~ Done ([src/savegame.js](../src/savegame.js)): six IndexedDB slots per WAD
   from the menu. A save is a JSON snapshot of the live tables. Quicksave and quickload
   (F6/F9) too, and exporting and importing a WAD's saves as a file.
@@ -21,7 +22,7 @@ you find missing.
   or load it as a JSON file. The simulation is deterministic: `P_RANDOM` is seeded from
   `GAME.RNG`, and thing ids restart on every load. Not possible: DOOM's own `.lmp` demos. They
   need a bit-identical simulation (fixed point, the 256-entry random table consumed in the same
-  order), and this is a re-implementation. That also means the title loop has no attract demos.
+  order), and this is a re-implementation. The title loop plays the port's own demos instead.
   Demos go on from level to level, as DOOM's do.
 - ~~**The end of the game.**~~ Done: as in vanilla, Doom I's E?M8 ending is the end of the game.
   Its picture stays until the menu starts a new game, and Doom II's cast call loops.

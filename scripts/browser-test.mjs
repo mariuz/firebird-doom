@@ -194,6 +194,24 @@ try {
   await until(() => window.doom?.title);
   assert(await doom(() => window.doom.files.deh) === null, '…and once cleared, a reload leaves it off');
 
+  // D_DoAdvanceDemo: after TITLEPIC the first attract demo plays, through the
+  // game loop; a key brings up the menu over it and it goes on; when it ends,
+  // the credits page
+  await until(() => window.doom.demo.attract === 1 && window.doom.screen === 'level' && !window.doom.melting, null, 30000);
+  const a0 = await tic();
+  await page.waitForTimeout(1000);
+  const a1 = await tic();
+  await key('x');
+  const a2 = await tic();
+  await page.waitForTimeout(1000);
+  const menuUp = await doom(() => window.doom.menu.active && window.doom.demo.attract === 1);
+  const a3 = await tic();
+  assert(a1 > a0 && menuUp && a3 > a2, `the title loop plays DEMO1 (tic ${a0} → ${a1}); a key opens the menu over it, and it goes on (${a2} → ${a3})`);
+  await key('Escape');
+  await until(() => window.doom.screen === 'title', null, 60000);
+  assert(await doom(() => window.doom.title.page === 'CREDIT' && !window.doom.demo.attract && !window.doom.demo.playing),
+    `when the demo is over, the credits page (${await doom(() => window.doom.title.page)})`);
+
   assert(errors.length === 0, `no page errors${errors.length ? `: ${errors.join('; ')}` : ''}`);
 } catch (err) {
   console.log(`FAIL ${err.message}`);

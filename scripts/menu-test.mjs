@@ -238,11 +238,19 @@ const keys = (m, ...ks) => ks.forEach((k) => m.key(k));
   const music = [];
   const t = new TitleLoop(false, true, (m) => music.push(m));
   const seen = [t.page];
-  for (let i = 0; i < 170 + 200 + 200 + 1; i++) { t.tick(); if (seen.at(-1) !== t.page) seen.push(t.page); }
-  assert(seen.join() === 'TITLEPIC,CREDIT,TITLEPIC' && music.join() === 'D_INTRO,D_INTRO',
-    `DOOM I's title loop: ${seen.join(' → ')}, the title music each time round`);
+  let waited = 0;
+  for (let i = 0; i < 170 + 200 + 200 + 1; i++) {
+    // (a demo page waits for the page: ticks don't move it; advance() when the demo's over)
+    if (t.demo) { t.tick(); waited++; t.advance(); }
+    t.tick();
+    if (seen.at(-1) !== t.page) seen.push(t.page);
+  }
+  assert(seen.join() === 'TITLEPIC,DEMO1,CREDIT,DEMO2,CREDIT,DEMO3,TITLEPIC' && music.join() === 'D_INTRO,D_INTRO' && waited === 3,
+    `DOOM I's title loop (D_DoAdvanceDemo): ${seen.join(' → ')}, the title music each time round, the demos waited for`);
   const t2 = new TitleLoop(true, false, (m) => music.push(m));
-  assert(t2.page === 'TITLEPIC' && t2.tics === 385 && music.at(-1) === 'D_DM2TTL', 'DOOM II: TITLEPIC for 11 seconds, to D_DM2TTL');
+  assert(t2.page === 'TITLEPIC' && t2.tics === 385 && music.at(-1) === 'D_DM2TTL'
+    && t2.pages.map((p) => p[0]).join() === 'TITLEPIC,DEMO1,CREDIT,DEMO2,TITLEPIC,DEMO3,DEMO4',
+    'DOOM II: TITLEPIC for 11 seconds, to D_DM2TTL; four demos, the title again before the third');
 }
 
 // with the real WADs: every graphic the menus draw is there, and the strings

@@ -536,9 +536,18 @@ after DOOM I's endings, which end the game.
 ### The title screen and the menus
 
 The game opens on the title loop (`D_DoAdvanceDemo`, [src/menu.js](src/menu.js)): `TITLEPIC` to
-the title music (`D_INTRO`, `D_DM2TTL` on DOOM II), then the credits page, round and round.
-DOOM plays its `.lmp` demos in between, which this port can't (see Demos below). Any key
-brings up the main menu (`m_menu.c`), drawn with the WAD's own `M_*` graphics and the blinking
+the title music (`D_INTRO`, `D_DM2TTL` on DOOM II), a demo, the credits page, a demo, the
+credits again (`HELP2` on a three-episode WAD; DOOM II shows `TITLEPIC` again), a demo, round
+and round – DOOM II has a fourth demo after the third. DOOM's demos are its `.lmp` files, which
+this port can't play (see Demos below), so these are its own: for each Freedoom WAD a scripted
+player (`npm run attract`, [scripts/record-attract.mjs](scripts/record-attract.mjs)) runs the
+first maps for twenty seconds, shooting what it sees, and the recordings ship in
+[public/demos/](public/demos/). The demo plays through the game loop like any other, melting in
+and out; any key brings up the menu over it while it goes on, as DOOM's `G_Responder` has it;
+starting a game ends it. A WAD of your own has no demos, and its title loop skips them (DOOM would
+stop for the missing lump). `npm run test:attract` replays each demo against the checksum stored
+in it, so a change to the simulation that alters how they play out is caught, and they're recorded
+again. Any key brings up the main menu (`m_menu.c`), drawn with the WAD's own `M_*` graphics and the blinking
 skull. In play, Esc opens it, and so does letting go of the mouse. The game waits behind it, as DOOM's single player does (in co-op it goes on).
 Arrows move, Enter chooses, Backspace goes back, Esc closes, and each menu remembers where its
 cursor was.
@@ -633,7 +642,8 @@ includes the restart after a death, which starts with a fresh seed the demo keep
 the same game unfolds, screens and all. If the game ever takes a different turn from the
 recording, playback stops and says it's out of step. Esc stops it. **Download** saves the demo as
 JSON, and **Load…** plays one from a file. One-level demos from before (version 1) still play.
-The last demo of each WAD is kept in the browser.
+The last demo of each WAD is kept in the browser. Playback runs in the game's own time: as many
+of the recorded calls as the tics gone by cover, whatever frame rate the recording was made at.
 
 That works because the game is deterministic. Every chance in `sql/game.sql` goes through
 `P_RANDOM()`, a linear congruential generator whose state is the `GAME.RNG` column (so a save

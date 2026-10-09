@@ -381,12 +381,17 @@ export class Menu {
 }
 
 /** D_DoAdvanceDemo without the demos: the title, then the credits, round again. */
+/**
+ * D_DoAdvanceDemo: the pages and the demos between them. On a demo page
+ * (DEMO1–3, DOOM II's DEMO4; `demo` is its number) the loop waits: the page
+ * plays the demo, or none exists, and calls advance() when it's over.
+ */
 export class TitleLoop {
   constructor(doom2, retail, playMusic = () => {}) {
     this.playMusic = playMusic;
     this.pages = doom2
-      ? [['TITLEPIC', 35 * 11, 'D_DM2TTL'], ['CREDIT', 200, null]]
-      : [['TITLEPIC', 170, 'D_INTRO'], ['CREDIT', 200, null], [retail ? 'CREDIT' : 'HELP2', 200, null]];
+      ? [['TITLEPIC', 35 * 11, 'D_DM2TTL'], ['DEMO1'], ['CREDIT', 200, null], ['DEMO2'], ['TITLEPIC', 35 * 11, 'D_DM2TTL'], ['DEMO3'], ['DEMO4']]
+      : [['TITLEPIC', 170, 'D_INTRO'], ['DEMO1'], ['CREDIT', 200, null], ['DEMO2'], [retail ? 'CREDIT' : 'HELP2', 200, null], ['DEMO3']];
     this.index = -1;
     this.advance();
   }
@@ -395,11 +400,12 @@ export class TitleLoop {
     this.index = (this.index + 1) % this.pages.length;
     const [page, tics, music] = this.pages[this.index];
     this.page = page;
-    this.tics = tics;
+    this.demo = page.startsWith('DEMO') ? Number(page.slice(4)) : 0;
+    this.tics = tics ?? Infinity;
     if (music) this.playMusic(music);
   }
 
-  tick() { if (--this.tics <= 0) this.advance(); }
+  tick() { if (!this.demo && --this.tics <= 0) this.advance(); }
 
-  draw(r) { r.patch(r.pictureByName(this.page), 0, 0); }
+  draw(r) { if (!this.demo) r.patch(r.pictureByName(this.page), 0, 0); }
 }
