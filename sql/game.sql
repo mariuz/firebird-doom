@@ -369,6 +369,12 @@ BEGIN
          health = health - (:dmg - :saved),
          damage_count = MINVALUE(damage_count + :dmg, 100)
    WHERE id = :pid;
+  -- the player's sprite: S_PLAY_PAIN (a player's painchance is 255), or
+  -- P_KillMobj's deathstate – xdeathstate below -spawnhealth (the counter in ST_TICS)
+  UPDATE things t
+     SET frame = (SELECT IIF(p.health > 0, 'G', IIF(p.health < -100, 'O', 'H')) FROM player p WHERE p.id = :pid),
+         st_tics = (SELECT IIF(p.health > 0, 4, 0) FROM player p WHERE p.id = :pid)
+   WHERE t.id = :ptid;
   UPDATE player SET dead = 1, health = 0, msg = 'You died. Press USE to ' || IIF((SELECT g.players FROM game g WHERE g.id = 1) > 1, 'respawn.', 'restart.'), msg_tics = 100000
    WHERE id = :pid AND health <= 0;
   -- (from the player: for whoever's playing it, full volume in the middle)
@@ -1511,9 +1517,10 @@ BEGIN
   END
   IF (sx IS NULL) THEN EXIT;
   -- the old body: a corpse like any other
-  UPDATE things t SET kind = 'decor', solid = 0, st = 'dead' WHERE t.id = :old;
+  UPDATE things t SET kind = 'decor', solid = 0, st = 'dead', frame = IIF(t.frame BETWEEN 'O' AND 'W', 'W', 'N')
+   WHERE t.id = :old;
   EXECUTE PROCEDURE spawn_thing(1, sx, sy, NULL, sa) RETURNING_VALUES nid;
-  UPDATE things t SET flags = 0 WHERE t.id = :nid;
+  UPDATE things t SET flags = 0, translation = :pid - 1, frame = 'A' WHERE t.id = :nid;
   EXECUTE PROCEDURE spawn_thing(9016, sx + 20 * COS(sa), sy + 20 * SIN(sa), NULL, 0) RETURNING_VALUES fog;
   EXECUTE PROCEDURE play_sound('DSTELEPT', fog, sx + 20 * COS(sa), sy + 20 * SIN(sa));
   UPDATE player p
@@ -1946,6 +1953,7 @@ BEGIN
       cells = cells - (SELECT r.bfg_cells FROM rules r WHERE r.id = 1);
     END
     attack_tics = attack_len;
+    UPDATE things SET frame = 'F', st_tics = 18 WHERE id = :tid;
     EXECUTE PROCEDURE play_sound(CASE weapon WHEN 1 THEN 'DSPUNCH' WHEN 3 THEN 'DSSHOTGN' WHEN 5 THEN 'DSRLAUNC'
                                              WHEN 6 THEN 'DSPLASMA' WHEN 7 THEN 'DSBFG'
                                              WHEN 8 THEN IIF(shot_hit = 1, 'DSSAWHIT', 'DSSAWFUL')
@@ -3585,6 +3593,44 @@ BEGIN
          strength_tics = IIF(p.strength_tics > 0, p.strength_tics + 1, 0);
 END^
 
+-- How another player looks (info.c's S_PLAY… states), one tic on: standing
+-- (A), running (A B C D, 4 tics each, while it moves faster than STOPSPEED),
+-- the shot (F for 6 tics, then E for 12), pain (G for 4), dying (H…N, 10
+-- tics each) or gibbed (O…W, 5 each). ST_TICS counts the state's tics: down,
+-- or up from the death. (Alone you never see yourself: DOOM_TIC skips this.)
+CREATE OR ALTER PROCEDURE player_anim (pid SMALLINT, tic INTEGER)
+AS
+DECLARE tid INTEGER;
+DECLARE fr CHAR(1);
+DECLARE n INTEGER;
+DECLARE is_dead SMALLINT;
+DECLARE moving SMALLINT;
+BEGIN
+  SELECT p.thing_id, p.dead, t.frame, COALESCE(t.st_tics, 0),
+         IIF(ABS(t.momx) > 0.0625e0 OR ABS(t.momy) > 0.0625e0, 1, 0)
+    FROM player p JOIN things t ON t.id = p.thing_id
+   WHERE p.id = :pid
+    INTO tid, is_dead, fr, n, moving;
+  IF (tid IS NULL) THEN EXIT;
+  IF (is_dead = 1) THEN
+  BEGIN
+    n = n + 1;
+    IF (fr BETWEEN 'O' AND 'W') THEN fr = SUBSTRING('OPQRSTUVW' FROM 1 + MINVALUE(8, n / 5) FOR 1);
+    ELSE fr = SUBSTRING('HIJKLMN' FROM 1 + MINVALUE(6, n / 10) FOR 1);
+  END
+  ELSE IF (fr IN ('E', 'F', 'G') AND n > 1) THEN
+  BEGIN
+    n = n - 1;
+    IF (fr <> 'G') THEN fr = IIF(n > 12, 'F', 'E');
+  END
+  ELSE
+  BEGIN
+    n = 0;
+    fr = IIF(moving = 1, SUBSTRING('ABCD' FROM 1 + MOD(tic / 4, 4) FOR 1), 'A');
+  END
+  UPDATE things SET frame = :fr, st_tics = :n WHERE id = :tid;
+END^
+
 -- A netgame's consistency check (every 35 tics each peer sends it to the
 -- host): the random state, the tic, and where every player and monster is
 -- and how it is. Peers that agree on this are playing the same game.
@@ -3675,7 +3721,11 @@ BEGIN
         FROM player p LEFT JOIN ticcmd c ON c.player_id = p.id
        ORDER BY p.id
         INTO pid, c_fwd, c_side, c_turn, c_fire, c_use, c_weapon, c_run
-  DO EXECUTE PROCEDURE player_think(pid, c_fwd, c_side, c_turn, c_fire, c_use, c_weapon, c_run, tic);
+  DO
+  BEGIN
+    EXECUTE PROCEDURE player_anim(pid, tic);
+    EXECUTE PROCEDURE player_think(pid, c_fwd, c_side, c_turn, c_fire, c_use, c_weapon, c_run, tic);
+  END
   EXECUTE PROCEDURE world_tic(tic);
   FOR SELECT tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle FROM hud_row((SELECT vc.player_id FROM viewcfg vc WHERE vc.id = 1))
       INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle
@@ -3851,8 +3901,8 @@ BEGIN
       py = py + 40 * (i - 1) * SIN(pa + PI() / 2);
     END
     tid = NEXT VALUE FOR thing_seq;
-    INSERT INTO things (id, thing_type, kind, x, y, angle, hp, radius, height, solid, st)
-    VALUES (:tid, 1, 'player', :px, :py, :pa, 100, 16, 56, 1, 'idle');
+    INSERT INTO things (id, thing_type, kind, x, y, angle, hp, radius, height, solid, st, frame, translation)
+    VALUES (:tid, 1, 'player', :px, :py, :pa, 100, 16, 56, 1, 'idle', 'A', :i - 1);
     UPDATE player SET thing_id = :tid WHERE id = :i;
     i = i + 1;
   END

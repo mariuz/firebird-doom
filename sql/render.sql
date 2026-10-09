@@ -427,7 +427,7 @@ END^
 CREATE OR ALTER PROCEDURE render_sprites
 RETURNS (id INTEGER, depth DOUBLE PRECISION, lump INTEGER, flip SMALLINT,
          x1 DOUBLE PRECISION, x2 DOUBLE PRECISION, y1 DOUBLE PRECISION, y2 DOUBLE PRECISION,
-         light INTEGER, fuzz SMALLINT)
+         light INTEGER, fuzz SMALLINT, tr SMALLINT)
 AS
 DECLARE px DOUBLE PRECISION;
 DECLARE py DOUBLE PRECISION;
@@ -471,11 +471,11 @@ BEGIN
   sa = SIN(pa);
 
   FOR SELECT th.id, th.x, th.y, th.z, th.angle, th.kind, th.frame, COALESCE(th.sprite, tt.sprite),
-             th.sector_id, tt.walk_fr, tt.bright, COALESCE(tt.shadow, 0)
+             th.sector_id, tt.walk_fr, tt.bright, COALESCE(tt.shadow, 0), th.translation
         FROM things th
         LEFT JOIN thing_types tt ON tt.thing_type = th.thing_type
        WHERE th.kind NOT IN ('marker', 'shooter') AND th.id <> :me   -- (every player but the one looking)
-        INTO id, tx, ty, tz, tang, kind, fr, spr, sec, walk_fr, bright, fuzz
+        INTO id, tx, ty, tz, tang, kind, fr, spr, sec, walk_fr, bright, fuzz, tr
   DO
   BEGIN
     depth = (tx - px) * ca + (ty - py) * sa;

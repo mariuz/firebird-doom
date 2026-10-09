@@ -645,6 +645,8 @@ row of the resulting game, on both WADs.
 
 ### Co-op over the network
 
+![Players 2, 3 and 4 seen by player 1 on E1M1: grey, brown and red, the one in the middle shooting](docs/screenshot-coop.png)
+
 Up to four players can play a level together, each in their own browser, peer to peer
 ([src/net.js](src/net.js)). Open **Co-op over the network** under the view. With no server to
 introduce the players, they swap two codes by hand (a chat message will do). The host presses
@@ -675,14 +677,21 @@ and the things marked multiplayer-only appear. Monsters look for any player they
 player but the shooter, so friendly fire is on. Kills count for the player who made them. A dead
 player presses use to come back at their start with a pistol (`G_DoReborn`), and the level goes on.
 A level exit takes everyone to the intermission. Each player hurries their own along, and the
-next map waits for the last of them. The menu doesn't
-stop a netgame, and there's no pause, saving, cheating, demo or warping in one: none of those are
-in the ticcmds, so they would split the game in two. The other players are drawn, but standing
-still and in the same green. `npm run test:netgame` plays two players in one database, and two
-peers through a pretend network that delivers late and out of order. `npm run test:coop` connects
-two real pages over WebRTC, with the codes swapped through the panel, and plays them in lockstep
-through a level exit and the intermission into the next map.
-Not yet: deathmatch.
+next map waits for the last of them. The menu doesn't stop a netgame, and there's no pause,
+saving, cheating, demo or warping in one: none of those are in the ticcmds, so they would split
+the game in two. `npm run test:netgame` plays two players in one database, and two peers through a
+pretend network that delivers late and out of order. `npm run test:coop` connects two real pages
+over WebRTC, with the codes swapped through the panel, and plays them in lockstep through a level
+exit and the intermission into the next map. Not yet: deathmatch.
+
+The others look as they did in DOOM. Each player's sprite goes through `info.c`'s `S_PLAY` states,
+moved on a tic at a time by `PLAYER_ANIM`: standing (A), running (A to D, 4 tics a frame), a shot
+(F, the muzzle flash, for 6 tics, then E for 12), pain (G), dying (H to N) or, below -100 health,
+gibbed (O to W). The body stays where they fell when they come back. Players 2, 3 and 4 wear
+player 1's green in other colours (`R_InitTranslationTables`): palette entries 0x70–0x7F become
+0x60–0x6F (DOOM's "indigo", a grey), 0x40–0x4F (brown) and 0x20–0x2F (red). `THINGS.TRANSLATION`
+says which, `FRAME_SPRITES` passes it on, and the rasteriser looks each pixel up in the table
+before the light (`R_DrawTranslatedColumn`).
 
 ### Skill levels
 

@@ -71,6 +71,16 @@ const FUZZ_OFFSETS = [
 ];
 const FUZZ_MAP = 6 * 256;   // COLORMAP 6: what fuzz darkens through
 
+/**
+ * R_InitTranslationTables: players 2, 3 and 4 wear player 1's green ramp
+ * (palette 0x70–0x7F) as indigo (0x60), brown (0x40) and red (0x20).
+ */
+export const TRANSLATIONS = [0x60, 0x40, 0x20].map((base) => {
+  const t = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) t[i] = i >= 0x70 && i <= 0x7f ? base + (i & 0xf) : i;
+  return t;
+});
+
 // ── R_InitLightTables / R_ExecuteSetViewSize, in DOOM's integer arithmetic ──
 // 16 light levels (LIGHTSEGSHIFT 4), 32 colormaps; each level's brightest
 // colormap is startmap = (15 - level) * 4, and distance takes it darker.
@@ -211,7 +221,7 @@ export class Renderer {
    *   view:    { x, y, z, angle, tic, fixedColormap }
    *   walls:   FRAME_WALLS rows [col, depth, u, line, backView, openTop, openBot, clipTop, clipBot,
    *                               fsec, cTop, cBot, fTop, fBot]  (the last four: visplane rows)
-   *   sprites: FRAME_SPRITES rows [id, depth, lump, flip, x1, x2, y1, y2, light, fuzz]
+   *   sprites: FRAME_SPRITES rows [id, depth, lump, flip, x1, x2, y1, y2, light, fuzz, tr]
    *   map:     { lines: Map, sides: Map, sectors: Map, skyTex }
    */
   drawView(view, walls, sprites, map) {
@@ -322,7 +332,7 @@ export class Renderer {
 
     // Masked middles and sprites, far to near, clipped by the walls in front.
     const items = masked.map((m) => ({ ...m, kind: 0 }));
-    for (const s of sprites) items.push({ kind: 1, depth: s[1], lump: s[2], flip: s[3], x1: s[4], x2: s[5], y1: s[6], y2: s[7], light: s[8], fuzz: s[9] });
+    for (const s of sprites) items.push({ kind: 1, depth: s[1], lump: s[2], flip: s[3], x1: s[4], x2: s[5], y1: s[6], y2: s[7], light: s[8], fuzz: s[9], tr: s[10] });
     items.sort((a, b) => b.depth - a.depth);
     for (const it of items) {
       if (it.kind === 0) {
@@ -443,6 +453,7 @@ export class Renderer {
     // R_DrawFuzzColumn: a shadow's pixels aren't its own – each one takes the
     // pixel just above or below it (FUZZTABLE) and darkens it (COLORMAP 6)
     const fuzz = s.fuzz === 1;
+    const tr = s.tr ? TRANSLATIONS[s.tr - 1] : null;   // (R_DrawTranslatedColumn: another player's colours)
     const cm = (s.light >= 255 ? (this.fixedCm ?? 0) : this.spriteLightIndex(s.light, s.depth)) * 256;
     const xa = Math.max(0, Math.ceil(s.x1 - 0.5));
     const xb = Math.min(w - 1, Math.ceil(s.x2 - 0.5) - 1);
@@ -471,7 +482,7 @@ export class Renderer {
           const fy = Math.min(h - 1, Math.max(0, y + FUZZ_OFFSETS[this.fuzzPos]));
           this.fuzzPos = (this.fuzzPos + 1) % FUZZ_OFFSETS.length;
           fb[y * w + x] = cmap[FUZZ_MAP + fb[fy * w + x]];
-        } else fb[y * w + x] = cmap[cm + pic.pix[off + py]];
+        } else fb[y * w + x] = cmap[cm + (tr ? tr[pic.pix[off + py]] : pic.pix[off + py])];
       }
     }
   }

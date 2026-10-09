@@ -53,8 +53,9 @@ you find missing.
   for 18 tics.
 - **Multiplayer.** Co-op is done ([src/net.js](../src/net.js), `NET_TIC`): up to four players,
   peer to peer over WebRTC with copy-paste invite codes, in lockstep with a checksum every 35 tics.
-  Still missing: the other players' animation and colours (`R_InitTranslationTables`), deathmatch
-  (its starts, frags, `-altdeath`) and a TURN relay for players behind strict NATs.
+  The other players are animated (`S_PLAY…`) and coloured (`R_InitTranslationTables`). Still
+  missing: deathmatch (its starts, frags, `-altdeath`) and a TURN relay for players behind strict
+  NATs.
 - ~~**DEHACKED beyond `[STRINGS]`.**~~ Done ([src/dehacked.js](../src/dehacked.js)): Thing, Ammo,
   Misc, Cheat and BEX [PARS]. Not possible: Frame, Pointer, Weapon, Sound and Text blocks need
   state tables the port doesn't have. Loading a `.deh` file comes with PWADs (the loader already

@@ -197,6 +197,23 @@ await shoot(map, 'screenshot-e1m2.png');
   }
 }
 
+// co-op: players 2, 3 and 4 in their colours (indigo, brown, red), seen by player 1 on E1M1
+{
+  await loadMap(db, wad, res, 'E1M1', { players: 4 });
+  const map = await mapState('E1M1');
+  const me = (await db.query('SELECT t.x, t.y, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1')).rows[0];
+  const c = Math.cos(me.ANGLE);
+  const s = Math.sin(me.ANGLE);
+  // side by side 130 units ahead, turned towards player 1 at different angles: one shooting, one running
+  for (const [pid, side, turn, frame] of [[2, -56, 0.5, 'A'], [3, 0, 0, 'F'], [4, 56, -0.7, 'B']]) {
+    await db.exec(`UPDATE things t SET x = ${me.X + c * 130 - s * side}, y = ${me.Y + s * 130 + c * side},
+      angle = ${me.ANGLE + Math.PI + turn}, frame = '${frame}', st_tics = 0
+      WHERE t.id = (SELECT p.thing_id FROM player p WHERE p.id = ${pid})`);
+  }
+  await shoot(map, 'screenshot-coop.png');
+  await loadMap(db, wad, res, 'E1M1', { players: 1 });
+}
+
 // the intermission after E1M2 (example numbers), fully counted
 {
   const wi = new Intermission(renderer, { playMusic() {}, playEvents() {} }, wad, 'E1M2', 'E1M3',

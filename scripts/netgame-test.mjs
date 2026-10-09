@@ -11,6 +11,7 @@ import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
 import { captureGame } from '../src/savegame.js';
 import { Lockstep } from '../src/net.js';
+import { TRANSLATIONS } from '../src/renderer.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -115,6 +116,63 @@ assert(dead.DEAD === 1 && back.DEAD === 0 && back.THING_ID !== dead.THING_ID && 
     && back.HEALTH === 100 && back.BULLETS === 50 && back.HAS_SHOTGUN === 0 && back.KEYCARDS === 0 && back.KILLS === 3
     && body.KIND === 'decor' && exitKind === 0,
   'dead player 2 presses use: back at their start with the pistol and 50 bullets, kills kept, the body left behind, the level goes on');
+
+// how player 2 looks to player 1 (S_PLAY…, in player 2's colours): player 2 put in front of
+// player 1, facing away
+{
+  const me = await thing(1);
+  const other = (await thing(2)).ID;
+  await db.exec(`UPDATE things SET x = ${me.X + Math.cos(me.ANGLE) * 160}, y = ${me.Y + Math.sin(me.ANGLE) * 160},
+    angle = ${me.ANGLE}, momx = 0, momy = 0 WHERE id = ${other}`);
+  const look = async () => one(`SELECT TRIM(t.frame) frame, t.translation, (SELECT FIRST 1 s.tr FROM frame_sprites s WHERE s.id = t.id) tr,
+    (SELECT FIRST 1 sf.sprite || sf.frame FROM frame_sprites s JOIN sprite_frames sf ON sf.lump = s.lump WHERE s.id = t.id) pic
+    FROM things t WHERE t.id = ${other}`);
+  await tic([IDLE, IDLE]);
+  const stand = await look();
+  const p1tr = (await one('SELECT t.translation FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1')).TRANSLATION;
+  assert(stand.FRAME === 'A' && stand.PIC === 'PLAYA' && stand.TR === 1 && p1tr === 0,
+    `standing, player 2 is PLAYA to player 1, drawn through translation ${stand.TR} (indigo; player 1's is ${p1tr}, green)`);
+  const seen = new Set();
+  for (let i = 0; i < 16; i++) { await tic([IDLE, [1, 0, 0, 0, 0, 0, 0]]); seen.add((await look()).FRAME); }
+  for (let i = 0; i < 70; i++) await tic([IDLE, IDLE]);   // (friction: until it's slower than STOPSPEED)
+  const stopped = (await look()).FRAME;
+  assert([...seen].every((f) => 'ABCD'.includes(f)) && seen.size === 4 && stopped === 'A',
+    `running, player 2 goes through ${[...seen].sort().join('')} (S_PLAY_RUN1–4), and stands (A) once stopped`);
+  await tic([IDLE, [0, 0, 0, 1, 0, 0, 0]]);
+  const shot = (await look()).FRAME;
+  for (let i = 0; i < 8; i++) await tic([IDLE, IDLE]);
+  const after = (await look()).FRAME;
+  for (let i = 0; i < 14; i++) await tic([IDLE, IDLE]);
+  const done = (await look()).FRAME;
+  assert(shot === 'F' && after === 'E' && done === 'A', `a shot: ${shot} (the flash, S_PLAY_ATK2), then ${after} (S_PLAY_ATK1), then ${done}`);
+  await db.exec('EXECUTE PROCEDURE damage_player(5, NULL, 2)');
+  const pain = (await look()).FRAME;
+  for (let i = 0; i < 6; i++) await tic([IDLE, IDLE]);
+  assert(pain === 'G' && (await look()).FRAME === 'A', `hurt: ${pain} (S_PLAY_PAIN), then A again`);
+  await db.exec('UPDATE player SET armor = 0, health = 100 WHERE id = 2');
+  await db.exec('EXECUTE PROCEDURE damage_player(110, NULL, 2)');
+  const dying = (await look()).FRAME;
+  for (let i = 0; i < 80; i++) await tic([IDLE, IDLE]);
+  const dead2 = (await look()).FRAME;
+  await tic([IDLE, [0, 0, 0, 0, 1, 0, 0]]);
+  const body = await one(`SELECT kind, TRIM(frame) frame, translation FROM things WHERE id = ${other}`);
+  const reborn = await one('SELECT TRIM(t.frame) frame, t.translation FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2');
+  assert(dying === 'H' && dead2 === 'N' && body.KIND === 'decor' && body.FRAME === 'N' && body.TRANSLATION === 1
+    && reborn.FRAME === 'A' && reborn.TRANSLATION === 1,
+    `killed: ${dying}…${dead2} (S_PLAY_DIE1–7); the body stays, indigo, and player 2 comes back indigo`);
+  await db.exec(`UPDATE things SET x = ${me.X + Math.cos(me.ANGLE) * 160}, y = ${me.Y + Math.sin(me.ANGLE) * 160} WHERE id = ${(await thing(2)).ID}`);
+  await db.exec('UPDATE player SET armor = 0, health = 100 WHERE id = 2');
+  await db.exec('EXECUTE PROCEDURE damage_player(250, NULL, 2)');
+  const gib = (await one(`SELECT TRIM(t.frame) frame FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2`)).FRAME;
+  for (let i = 0; i < 60; i++) await tic([IDLE, IDLE]);
+  const gibbed = (await one(`SELECT TRIM(t.frame) frame FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2`)).FRAME;
+  await tic([IDLE, [0, 0, 0, 0, 1, 0, 0]]);
+  assert(gib === 'O' && gibbed === 'W', `below -100 health: ${gib}…${gibbed} (S_PLAY_XDIE1–9)`);
+}
+// R_InitTranslationTables: the green ramp, and only it, becomes indigo, brown or red
+assert(TRANSLATIONS.length === 3 && TRANSLATIONS[0][0x70] === 0x60 && TRANSLATIONS[1][0x7f] === 0x4f
+  && TRANSLATIONS[2][0x75] === 0x25 && TRANSLATIONS[0][0x6f] === 0x6f && TRANSLATIONS[2][0x80] === 0x80,
+  'the translation tables: 0x70–0x7F to 0x60, 0x40 and 0x20 for players 2, 3 and 4');
 
 // determinism: the same start and the same two command streams, the same game
 let s = 3;
