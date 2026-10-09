@@ -224,6 +224,20 @@ await shoot(map, 'screenshot-e1m2.png');
   console.log('docs/screenshot-intermission.png');
 }
 
+// the deathmatch intermission after E1M1 (example numbers): the frag matrix, seen by player 2
+{
+  const players = [
+    { kills: 0, items: 0, secrets: 0, frags: [1, 4, 2, 3] }, { kills: 0, items: 0, secrets: 0, frags: [3, 0, 5, 1] },
+    { kills: 0, items: 0, secrets: 0, frags: [2, 2, 2, 6] }, { kills: 0, items: 0, secrets: 0, frags: [0, 1, 0, 0] },
+  ];
+  const wi = new Intermission(renderer, { playMusic() {}, playEvents() {} }, wad, 'E1M1', 'E1M2',
+    { kills: 0, totalKills: 1, items: 0, totalItems: 1, secrets: 0, totalSecrets: 1, time: 0, players, me: 2, deathmatch: 1 });
+  for (let i = 0; i < 400; i++) wi.tick(false);
+  wi.draw();
+  emit('screenshot-deathmatch.png');
+  console.log('docs/screenshot-deathmatch.png');
+}
+
 // the main menu over the title screen
 {
   const strings = parseDehStrings(new TextDecoder('latin1').decode(wad.data(wad.lump('DEHACKED'))));

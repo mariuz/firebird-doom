@@ -80,6 +80,8 @@ section { margin: 24px 0; }
 .net summary { cursor: pointer; }
 .net p { color: var(--muted); max-width: 70ch; }
 .net-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.net-row label { display: inline-flex; gap: 6px; align-items: center; }
+.net-row input[type=number] { width: 4em; }
 .net-codes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
 .net-codes label { display: flex; flex-direction: column; gap: 4px; }
 .net-codes textarea { width: 100%; resize: vertical; word-break: break-all; }

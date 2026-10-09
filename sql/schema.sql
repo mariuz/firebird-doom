@@ -20,7 +20,28 @@ CREATE TABLE game (
   total_secrets INTEGER DEFAULT 0 NOT NULL,
   rng           BIGINT DEFAULT 1 NOT NULL,      -- P_RANDOM's state: the same seed, the same game
   skill         SMALLINT DEFAULT 3 NOT NULL,    -- 1 (easiest) … 5 (nightmare: fast, respawning)
-  players       SMALLINT DEFAULT 1 NOT NULL     -- players in the game (netgame: more than 1); ids 1…players
+  players       SMALLINT DEFAULT 1 NOT NULL,    -- players in the game (netgame: more than 1); ids 1…players
+  deathmatch    SMALLINT DEFAULT 0 NOT NULL,    -- 0 single player or co-op, 1 deathmatch, 2 -altdeath (items respawn)
+  time_limit    INTEGER DEFAULT 0 NOT NULL      -- -timer: minutes until the level ends on its own (0: never)
+);
+
+-- player->frags[]: who killed whom this level (a player's own row and column
+-- is a suicide, counted against them)
+CREATE TABLE frags (
+  killer SMALLINT NOT NULL,
+  victim SMALLINT NOT NULL,
+  n      INTEGER DEFAULT 0 NOT NULL,
+  PRIMARY KEY (killer, victim)
+);
+
+-- itemrespawnque: in -altdeath, what was picked up comes back 30 seconds later
+CREATE TABLE respawn_queue (
+  id    INTEGER NOT NULL PRIMARY KEY,
+  ttype INTEGER NOT NULL,
+  x     DOUBLE PRECISION NOT NULL,
+  y     DOUBLE PRECISION NOT NULL,
+  angle DOUBLE PRECISION NOT NULL,
+  tic   INTEGER NOT NULL                        -- when it went
 );
 
 CREATE TABLE viewcfg (

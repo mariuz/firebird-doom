@@ -334,6 +334,7 @@ END^
 CREATE OR ALTER PROCEDURE damage_player (dmg INTEGER, src INTEGER = NULL, pid SMALLINT = 1)
 AS
 DECLARE god SMALLINT;
+DECLARE killed INTEGER;
 DECLARE ptid INTEGER;
 DECLARE px DOUBLE PRECISION;
 DECLARE py DOUBLE PRECISION;
@@ -377,8 +378,14 @@ BEGIN
    WHERE t.id = :ptid;
   UPDATE player SET dead = 1, health = 0, msg = 'You died. Press USE to ' || IIF((SELECT g.players FROM game g WHERE g.id = 1) > 1, 'respawn.', 'restart.'), msg_tics = 100000
    WHERE id = :pid AND health <= 0;
+  killed = ROW_COUNT;
+  -- P_KillMobj: source->player->frags[target->player]++ – a player's kill of a
+  -- player, their own self included (the status bar counts that one against them)
+  IF (killed > 0) THEN
+    UPDATE frags f SET f.n = f.n + 1
+     WHERE f.victim = :pid AND f.killer = (SELECT p.id FROM player p WHERE p.thing_id = :src);
   -- (from the player: for whoever's playing it, full volume in the middle)
-  EXECUTE PROCEDURE play_sound(IIF(ROW_COUNT > 0, 'DSPLDETH', 'DSPLPAIN'), ptid, px, py);
+  EXECUTE PROCEDURE play_sound(IIF(killed > 0, 'DSPLDETH', 'DSPLPAIN'), ptid, px, py);
 END^
 
 -- P_DamageMobj. SRC is who did it (NULL: the world – crushers, slime).
@@ -1493,6 +1500,39 @@ END^
 
 -- ── the player ────────────────────────────────────────────────────────────
 -- G_DoReborn in a netgame (P_SpawnPlayer, G_PlayerReborn): a dead player
+-- G_DeathMatchSpawnPlayer: one of the deathmatch starts (type 11) at random,
+-- up to twenty tries for one nobody stands on (G_CheckSpot); failing that, the
+-- player's own start. DOOM refuses a map with fewer than four deathmatch
+-- starts; here one without any falls back to the player starts instead.
+CREATE OR ALTER PROCEDURE deathmatch_spot (pid SMALLINT, old INTEGER)
+RETURNS (sx DOUBLE PRECISION, sy DOUBLE PRECISION, sa DOUBLE PRECISION)
+AS
+DECLARE n INTEGER;
+DECLARE k INTEGER;
+DECLARE tries INTEGER;
+BEGIN
+  SELECT COUNT(*) FROM map_things m WHERE m.ttype = 11 INTO n;
+  tries = 0;
+  WHILE (n > 0 AND tries < 20) DO
+  BEGIN
+    k = FLOOR(p_random() * 256);
+    k = MOD(k, n);
+    SELECT FIRST 1 SKIP (:k) m.x, m.y, m.angle * PI() / 180 FROM map_things m WHERE m.ttype = 11 ORDER BY m.id
+      INTO sx, sy, sa;
+    IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.solid = 1 AND t.id <> COALESCE(:old, -1)
+                     AND ABS(t.x - :sx) < t.radius + 16 AND ABS(t.y - :sy) < t.radius + 16)) THEN
+    BEGIN
+      SUSPEND;
+      EXIT;
+    END
+    tries = tries + 1;
+  END
+  sx = NULL;
+  SELECT FIRST 1 m.x, m.y, m.angle * PI() / 180 FROM map_things m WHERE m.ttype BETWEEN 1 AND 4
+   ORDER BY IIF(m.ttype = :pid, 0, 1), m.ttype INTO sx, sy, sa;
+  SUSPEND;
+END^
+
 -- comes back at their own start (another player's if theirs is taken, as
 -- G_CheckSpot has it), in a flash of teleport fog, with the pistol, 50 bullets
 -- and nothing else; kills, items and secrets stay. The body stays behind.
@@ -1506,6 +1546,9 @@ DECLARE nid INTEGER;
 DECLARE fog INTEGER;
 BEGIN
   SELECT p.thing_id FROM player p WHERE p.id = :pid INTO old;
+  IF ((SELECT g.deathmatch FROM game g WHERE g.id = 1) > 0) THEN
+    SELECT d.sx, d.sy, d.sa FROM deathmatch_spot(:pid, :old) d INTO sx, sy, sa;
+  ELSE
   FOR SELECT m.x, m.y, m.angle * PI() / 180 FROM map_things m
        WHERE m.ttype BETWEEN 1 AND 4
        ORDER BY IIF(m.ttype = :pid, 0, 1), m.ttype
@@ -1530,7 +1573,8 @@ BEGIN
          has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0, has_chainsaw = 0, has_ssg = 0,
          max_bullets = (SELECT r.max_bullets FROM rules r WHERE r.id = 1), max_shells = (SELECT r.max_shells FROM rules r WHERE r.id = 1),
          max_rockets = (SELECT r.max_rockets FROM rules r WHERE r.id = 1), max_cells = (SELECT r.max_cells FROM rules r WHERE r.id = 1),
-         keycards = 0, damage_count = 0, bonus_count = 0, msg = NULL, msg_tics = 0, view_h = 41,
+         keycards = IIF((SELECT g.deathmatch FROM game g WHERE g.id = 1) > 0, 7, 0),   -- (P_SpawnPlayer: every card in deathmatch)
+         damage_count = 0, bonus_count = 0, msg = NULL, msg_tics = 0, view_h = 41,
          view_z = (SELECT t.z FROM things t WHERE t.id = :nid) + 41, use_down = 1,
          invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0, strength_tics = 0, allmap = 0
    WHERE p.id = :pid;
@@ -1610,6 +1654,10 @@ DECLARE preact INTEGER;
 DECLARE killer_ang DOUBLE PRECISION;
 DECLARE bslope DOUBLE PRECISION;
 DECLARE mult INTEGER;
+DECLARE np SMALLINT;
+DECLARE dm SMALLINT;
+DECLARE gave SMALLINT;
+DECLARE qn INTEGER;
 DECLARE tries INTEGER;
 DECLARE noclip SMALLINT;
 BEGIN
@@ -1980,7 +2028,7 @@ BEGIN
    WHERE id = :pid;
 
   -- P_GiveAmmo: twice the ammo on the easiest skill and on Nightmare
-  mult = IIF((SELECT g.skill FROM game g WHERE g.id = 1) IN (1, 5), 2, 1);
+  SELECT IIF(g.skill IN (1, 5), 2, 1), g.players, g.deathmatch FROM game g WHERE g.id = 1 INTO mult, np, dm;
   -- P_TouchSpecialThing: pick up anything we overlap
   FOR SELECT t.id, tt.pickup, tt.amount, tt.label, IIF(BIN_AND(t.flags, 65536) <> 0, 1, 0), tt.count_item
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
@@ -1997,6 +2045,51 @@ BEGIN
            rockets, cells, maxr, maxc, has_rl, has_pl, has_bfg;
     SELECT p.has_chainsaw, p.has_ssg FROM player p WHERE p.id = :pid INTO has_saw, has_ssg;
     took = 1;
+    -- P_GiveWeapon: "leave placed weapons forever on net games" (not in
+    -- -altdeath, where they respawn instead): the first time you get the
+    -- weapon, and every time five clips of its ammo, with the sound for you
+    -- alone and no message; a weapon you have with full ammo does nothing
+    IF (np > 1 AND dm <> 2 AND dropped = 0 AND pk IN ('shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'chainsaw', 'ssg')) THEN
+    BEGIN
+      gave = 0;
+      IF (pk = 'shotgun' AND has_sg = 0) THEN BEGIN has_sg = 1; pending = 3; gave = 1; END
+      IF (pk = 'chaingun' AND has_cg = 0) THEN BEGIN has_cg = 1; pending = 4; gave = 1; END
+      IF (pk = 'launcher' AND has_rl = 0) THEN BEGIN has_rl = 1; pending = 5; gave = 1; END
+      IF (pk = 'plasma' AND has_pl = 0) THEN BEGIN has_pl = 1; pending = 6; gave = 1; END
+      IF (pk = 'bfg' AND has_bfg = 0) THEN BEGIN has_bfg = 1; pending = 7; gave = 1; END
+      IF (pk = 'chainsaw' AND has_saw = 0) THEN BEGIN has_saw = 1; pending = 8; gave = 1; END
+      IF (pk = 'ssg' AND has_ssg = 0) THEN BEGIN has_ssg = 1; pending = 9; gave = 1; END
+      IF (pk IN ('shotgun', 'ssg') AND shells < maxs) THEN
+      BEGIN
+        shells = MINVALUE(maxs, shells + 5 * (SELECT r.clip_shells FROM rules r WHERE r.id = 1) * mult);
+        gave = 1;
+      END
+      IF (pk = 'chaingun' AND bullets < maxb) THEN
+      BEGIN
+        bullets = MINVALUE(maxb, bullets + 5 * (SELECT r.clip_bullets FROM rules r WHERE r.id = 1) * mult);
+        gave = 1;
+      END
+      IF (pk = 'launcher' AND rockets < maxr) THEN
+      BEGIN
+        rockets = MINVALUE(maxr, rockets + 5 * (SELECT r.clip_rockets FROM rules r WHERE r.id = 1) * mult);
+        gave = 1;
+      END
+      IF (pk IN ('plasma', 'bfg') AND cells < maxc) THEN
+      BEGIN
+        cells = MINVALUE(maxc, cells + 5 * (SELECT r.clip_cells FROM rules r WHERE r.id = 1) * mult);
+        gave = 1;
+      END
+      IF (gave = 1) THEN
+      BEGIN
+        UPDATE player
+           SET bullets = :bullets, shells = :shells, rockets = :rockets, cells = :cells,
+               has_shotgun = :has_sg, has_chaingun = :has_cg, has_launcher = :has_rl, has_plasma = :has_pl,
+               has_bfg = :has_bfg, has_chainsaw = :has_saw, has_ssg = :has_ssg, pending_weapon = :pending
+         WHERE id = :pid;
+        EXECUTE PROCEDURE play_sound('DSWPNUP', NULL, NULL, NULL, pid);
+      END
+      CONTINUE;
+    END
     -- MF_DROPPED: a clip a zombie dropped is half a clip (P_GiveAmmo(…, 0)),
     -- a dropped weapon one clip instead of two (P_GiveWeapon's dropped)
     IF (dropped = 1 AND pk IN ('bullets', 'shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'ssg')) THEN
@@ -2112,6 +2205,14 @@ BEGIN
     END
     IF (took = 1) THEN
     BEGIN
+      -- P_RemoveMobj: in -altdeath what you took goes on the respawn queue
+      -- (not what a monster dropped, nor the two spheres)
+      IF (dm = 2 AND dropped = 0 AND pk NOT IN ('invuln', 'invis')) THEN
+      BEGIN
+        SELECT COALESCE(MAX(q.id), 0) + 1 FROM respawn_queue q INTO qn;
+        INSERT INTO respawn_queue (id, ttype, x, y, angle, tic)
+        SELECT :qn, t.thing_type, t.x, t.y, t.angle, :tic FROM things t WHERE t.id = :iid;
+      END
       DELETE FROM things WHERE id = :iid;
       UPDATE player
          SET health = :health, armor = :armor, armor_type = :armor_type, bullets = :bullets, shells = :shells,
@@ -3550,7 +3651,7 @@ RETURNS (
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
   sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER,
   iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, weapon_y INTEGER,
-  attacker_angle DOUBLE PRECISION)
+  attacker_angle DOUBLE PRECISION, frags INTEGER, deathmatch SMALLINT)
 AS
 BEGIN
   SELECT g.tic, p.health, p.armor, p.bullets, p.shells, p.weapon, p.has_shotgun, p.has_chaingun, p.keycards,
@@ -3559,7 +3660,9 @@ BEGIN
          p.attack_tics, p.attack_len, p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
          p.dead, g.exit_kind, p.kills, g.total_kills, p.items, g.total_items, p.secrets, g.total_secrets,
          t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics, p.iron_tics, p.infra_tics, p.strength_tics, p.allmap, p.god, p.weapon_y,
-         (SELECT ATAN2(a.y - t.y, a.x - t.x) FROM things a WHERE a.id = p.attacker_id AND a.id <> t.id)
+         (SELECT ATAN2(a.y - t.y, a.x - t.x) FROM things a WHERE a.id = p.attacker_id AND a.id <> t.id),
+         -- ST_updateWidgets' st_fragscount: the others you killed, less the times you killed yourself
+         COALESCE((SELECT SUM(IIF(f.victim = :pid, -f.n, f.n)) FROM frags f WHERE f.killer = :pid), 0), g.deathmatch
     FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g
    WHERE p.id = :pid AND g.id = 1
     INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards,
@@ -3568,8 +3671,31 @@ BEGIN
          attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind,
          kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z,
          sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y,
-         attacker_angle;
+         attacker_angle, frags, deathmatch;
   SUSPEND;
+END^
+
+-- P_RespawnSpecials: in -altdeath the oldest thing picked up comes back where
+-- it was once 30 seconds have passed, in a puff of fog (IFOG) with its sound –
+-- one a tic at most.
+CREATE OR ALTER PROCEDURE respawn_specials (tic INTEGER)
+AS
+DECLARE qid INTEGER;
+DECLARE ttype INTEGER;
+DECLARE qx DOUBLE PRECISION;
+DECLARE qy DOUBLE PRECISION;
+DECLARE qa DOUBLE PRECISION;
+DECLARE went INTEGER;
+DECLARE fog INTEGER;
+DECLARE nid INTEGER;
+BEGIN
+  SELECT FIRST 1 q.id, q.ttype, q.x, q.y, q.angle, q.tic FROM respawn_queue q ORDER BY q.id
+    INTO qid, ttype, qx, qy, qa, went;
+  IF (qid IS NULL OR tic - went < 30 * 35) THEN EXIT;
+  EXECUTE PROCEDURE spawn_thing(9017, qx, qy, NULL, 0) RETURNING_VALUES fog;
+  EXECUTE PROCEDURE play_sound('DSITMBK', fog, qx, qy);
+  EXECUTE PROCEDURE spawn_thing(ttype, qx, qy, NULL, qa) RETURNING_VALUES nid;
+  DELETE FROM respawn_queue q WHERE q.id = :qid;
 END^
 
 -- The world's half of a tic (P_Ticker after the players): movers, monsters,
@@ -3582,6 +3708,10 @@ BEGIN
   IF (MOD(tic, 32) = 0 AND (SELECT g.skill FROM game g WHERE g.id = 1) = 5) THEN
     EXECUTE PROCEDURE nightmare_respawn(tic);
   IF (MOD(tic, 2) = 0) THEN EXECUTE PROCEDURE lights_think(tic);
+  IF ((SELECT g.deathmatch FROM game g WHERE g.id = 1) = 2) THEN EXECUTE PROCEDURE respawn_specials(tic);
+  -- -timer: the level ends after that many minutes
+  UPDATE game g SET exit_kind = 1
+   WHERE g.id = 1 AND g.exit_kind = 0 AND g.time_limit > 0 AND :tic >= g.time_limit * 35 * 60;
   UPDATE player p
      SET damage_count = MAXVALUE(0, p.damage_count - 1),
          bonus_count = MAXVALUE(0, p.bonus_count - 1),
@@ -3665,7 +3795,7 @@ RETURNS (
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
   sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER,
   iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, weapon_y INTEGER,
-  attacker_angle DOUBLE PRECISION)
+  attacker_angle DOUBLE PRECISION, frags INTEGER, deathmatch SMALLINT)
 AS
 DECLARE i INTEGER = 0;
 BEGIN
@@ -3679,8 +3809,8 @@ BEGIN
     EXECUTE PROCEDURE world_tic(tic);
     i = i + 1;
   END
-  FOR SELECT tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle FROM hud_row((SELECT vc.player_id FROM viewcfg vc WHERE vc.id = 1))
-      INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle
+  FOR SELECT tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle, frags, deathmatch FROM hud_row((SELECT vc.player_id FROM viewcfg vc WHERE vc.id = 1))
+      INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle, frags, deathmatch
   DO SUSPEND;
 END^
 
@@ -3701,7 +3831,7 @@ RETURNS (
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
   sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER,
   iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, weapon_y INTEGER,
-  attacker_angle DOUBLE PRECISION)
+  attacker_angle DOUBLE PRECISION, frags INTEGER, deathmatch SMALLINT)
 AS
 DECLARE pid SMALLINT;
 DECLARE c_fwd DOUBLE PRECISION;
@@ -3727,8 +3857,8 @@ BEGIN
     EXECUTE PROCEDURE player_think(pid, c_fwd, c_side, c_turn, c_fire, c_use, c_weapon, c_run, tic);
   END
   EXECUTE PROCEDURE world_tic(tic);
-  FOR SELECT tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle FROM hud_row((SELECT vc.player_id FROM viewcfg vc WHERE vc.id = 1))
-      INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle
+  FOR SELECT tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle, frags, deathmatch FROM hud_row((SELECT vc.player_id FROM viewcfg vc WHERE vc.id = 1))
+      INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle, frags, deathmatch
   DO SUSPEND;
 END^
 
@@ -3757,6 +3887,7 @@ END^
 CREATE OR ALTER PROCEDURE init_map (map_name VARCHAR(8), skill_bit INTEGER, new_game SMALLINT, skill SMALLINT = 3)
 AS
 DECLARE np SMALLINT;
+DECLARE dm SMALLINT;
 DECLARE i SMALLINT;
 DECLARE tid INTEGER;
 DECLARE sid INTEGER;
@@ -3866,7 +3997,7 @@ BEGIN
   EXECUTE PROCEDURE spawn_door_specials;
 
   -- the players in the game: rows 1…GAME.PLAYERS
-  SELECT g.players FROM game g WHERE g.id = 1 INTO np;
+  SELECT g.players, g.deathmatch FROM game g WHERE g.id = 1 INTO np, dm;
   DELETE FROM player p WHERE p.id > :np;
   i = 1;
   WHILE (i <= np) DO
@@ -3885,15 +4016,26 @@ BEGIN
          IIF(:skill = 5, 0, 2)
     FROM map_things m JOIN thing_types tt ON tt.thing_type = m.ttype
    WHERE (BIN_AND(m.flags, 16) = 0 OR :np > 1) AND BIN_AND(m.flags, :skill_bit) <> 0 AND tt.kind <> 'player'
+     AND NOT (:dm > 0 AND tt.pickup = 'key')            -- (MF_NOTDMATCH: no keys in deathmatch)
    ORDER BY m.id;                                       -- (the same ids on every load)
+  DELETE FROM respawn_queue;
+  -- G_DoLoadLevel: the frags start over with the level
+  DELETE FROM frags;
+  i = 1;
+  WHILE (i <= np) DO
+  BEGIN
+    INSERT INTO frags (killer, victim, n) SELECT :i, p.id, 0 FROM player p WHERE p.id <= :np;
+    i = i + 1;
+  END
 
   -- P_SpawnPlayer: each player at their own start (types 1–4); without one,
-  -- beside player 1's
+  -- beside player 1's. In deathmatch, each at a deathmatch start, at random.
   i = 1;
   WHILE (i <= np) DO
   BEGIN
     px = NULL;
-    SELECT FIRST 1 x, y, angle * PI() / 180 FROM map_things WHERE ttype = :i INTO px, py, pa;
+    IF (dm > 0) THEN SELECT d.sx, d.sy, d.sa FROM deathmatch_spot(:i, NULL) d INTO px, py, pa;
+    ELSE SELECT FIRST 1 x, y, angle * PI() / 180 FROM map_things WHERE ttype = :i INTO px, py, pa;
     IF (px IS NULL) THEN
     BEGIN
       SELECT FIRST 1 x, y, angle * PI() / 180 FROM map_things WHERE ttype = 1 INTO px, py, pa;
@@ -3945,7 +4087,7 @@ BEGIN
            has_chainsaw = 0, has_ssg = 0,
            rockets = 0, cells = 0, max_rockets = (SELECT r.max_rockets FROM rules r WHERE r.id = 1), max_cells = (SELECT r.max_cells FROM rules r WHERE r.id = 1), god = 0, noclip = 0;
   UPDATE player
-     SET keycards = 0, kills = 0, items = 0, secrets = 0, dead = 0, attack_tics = 0,
+     SET keycards = IIF(:dm > 0, 7, 0), kills = 0, items = 0, secrets = 0, dead = 0, attack_tics = 0,
          damage_count = 0, bonus_count = 0, view_h = 41, use_down = 0, invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0, strength_tics = 0, allmap = 0,
          msg = :map_name, msg_tics = 105;
   UPDATE player p SET view_z = (SELECT z FROM things t WHERE t.id = p.thing_id) + 41;

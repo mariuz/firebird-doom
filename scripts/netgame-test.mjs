@@ -257,6 +257,111 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   await db.exec('UPDATE viewcfg SET player_id = 1 WHERE id = 1');
 }
 
+// ── deathmatch ──
+{
+  const dmStarts = await all('SELECT x, y FROM map_things WHERE ttype = 11');
+  const keysOnMap = (await one("SELECT COUNT(*) n FROM map_things m JOIN thing_types tt ON tt.thing_type = m.ttype WHERE tt.pickup = 'key'")).N;
+  await loadMap(db, wad, res, map, { skill: 3, players: 2, deathmatch: 1 });
+  await db.exec('UPDATE game SET rng = 99 WHERE id = 1');
+  const at = await all('SELECT p.id, p.keycards, t.x, t.y FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id');
+  const onStart = (q) => dmStarts.some((d) => d.X === q.X && d.Y === q.Y);
+  const keys = (await one("SELECT COUNT(*) n FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE tt.pickup = 'key'")).N;
+  assert(dmStarts.length >= 4 && at.every(onStart) && !(at[0].X === at[1].X && at[0].Y === at[1].Y),
+    `${map} deathmatch: both players on deathmatch starts (${dmStarts.length} of them), not the same one (G_DeathMatchSpawnPlayer)`);
+  assert(keys === 0 && at.every((p) => p.KEYCARDS === 7),
+    `no keys on the map (MF_NOTDMATCH, ${keysOnMap} left out), every card in each player's pocket (P_SpawnPlayer)`);
+  const d2 = await thing(2);
+  // P_GiveWeapon in a netgame: a placed weapon stays, and gives five clips
+  const sg = await spawn(2001, d2.X, d2.Y);
+  await db.exec('UPDATE player SET shells = 0, has_shotgun = 0 WHERE id = 2');
+  await db.exec('DELETE FROM sound_events');
+  await tic([IDLE, IDLE]);
+  const got = await one('SELECT has_shotgun, shells, pending_weapon, msg_tics FROM player WHERE id = 2');
+  const still = await one(`SELECT COUNT(*) n FROM things WHERE id = ${sg}`);
+  const wsnd = await one("SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSWPNUP' AND listener = 2");   // (player 1 may stand on a weapon too)
+  assert(got.HAS_SHOTGUN === 1 && got.SHELLS === 20 && got.PENDING_WEAPON === 3 && still.N === 1 && wsnd.N === 1,
+    `player 2 walks over a shotgun: has it, 20 shells (five clips), it stays on the map, the sound for player 2 alone`);
+  await db.exec('UPDATE player SET shells = 50 WHERE id = 2');
+  await db.exec('DELETE FROM sound_events');
+  await tic([IDLE, IDLE]);
+  const again = await one("SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSWPNUP' AND listener = 2");
+  assert((await one('SELECT shells FROM player WHERE id = 2')).SHELLS === 50 && again.N === 0, 'with it and full shells: nothing, not even the sound');
+  await db.exec(`DELETE FROM things WHERE id = ${sg}`);
+  // frags: player 2 kills player 1, player 1 kills themself
+  const t1 = await thing(1);
+  await db.exec(`EXECUTE PROCEDURE damage_player(1000, ${d2.ID}, 1)`);
+  const f1 = await all('SELECT killer, victim, n FROM frags WHERE n > 0 ORDER BY killer, victim');
+  const h2 = await tic([IDLE, IDLE], 2);
+  const h1 = await tic([IDLE, IDLE], 1);
+  assert(f1.length === 1 && f1[0].KILLER === 2 && f1[0].VICTIM === 1 && f1[0].N === 1 && h2.FRAGS === 1 && h1.FRAGS === 0 && h1.DEATHMATCH === 1,
+    `player 2 kills player 1: frags[2][1] = 1; the status bar says 1 for player 2, 0 for player 1`);
+  for (let i = 0; i < 4; i++) await tic([IDLE, IDLE]);
+  await tic([[0, 0, 0, 0, 1, 0, 0], IDLE]);
+  const back = await one('SELECT p.keycards, p.dead, t.x, t.y, t.id FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1');
+  assert(back.DEAD === 0 && back.ID !== t1.ID && onStart(back) && back.KEYCARDS === 7, 'reborn: at a deathmatch start, with every card again');
+  await db.exec(`EXECUTE PROCEDURE damage_player(1000, ${back.ID}, 1)`);
+  const h1b = await tic([IDLE, IDLE], 1);
+  assert((await one('SELECT n FROM frags WHERE killer = 1 AND victim = 1')).N === 1 && h1b.FRAGS === -1, 'player 1 blows themself up: frags[1][1] = 1, and the status bar says -1');
+  await db.exec('EXECUTE PROCEDURE damage_player(1000, NULL, 2)');
+  const h2b = await tic([IDLE, IDLE], 2);
+  assert(h2b.FRAGS === 1 && (await one('SELECT SUM(n) s FROM frags')).S === 2, "the world (slime, a crusher) killing player 2 is nobody's frag");
+  // -timer: the level ends after a minute
+  await db.exec('UPDATE game SET time_limit = 1 WHERE id = 1');
+  await db.exec('UPDATE game SET tic = 2098 WHERE id = 1');
+  await tic([IDLE, IDLE]);
+  const e0 = (await one('SELECT exit_kind FROM game')).EXIT_KIND;
+  await tic([IDLE, IDLE]);
+  const e1 = (await one('SELECT exit_kind, tic FROM game'));
+  assert(e0 === 0 && e1.EXIT_KIND === 1 && e1.TIC === 2100, '-timer 1: the level exits at tic 2100, a minute in');
+
+  // -altdeath: what's picked up comes back 30 seconds later, in a puff of fog
+  await loadMap(db, wad, res, map, { skill: 3, players: 2, deathmatch: 2 });
+  await db.exec('UPDATE game SET rng = 99 WHERE id = 1');
+  const a2 = await thing(2);
+  await db.exec('UPDATE player SET health = 50, armor = 0, shells = 0, has_shotgun = 0');
+  const medi = await spawn(2012, a2.X, a2.Y);
+  const sg2 = await spawn(2001, a2.X + 1, a2.Y);
+  const sphere = await spawn(2022, a2.X, a2.Y + 1);
+  const clip = await spawn(2007, a2.X + 1, a2.Y + 1);
+  await db.exec(`UPDATE things SET flags = BIN_OR(flags, 65536) WHERE id = ${clip}`);   // (MF_DROPPED: as a zombie drops it)
+  await db.exec('UPDATE player SET bullets = 0');
+  await tic([IDLE, IDLE]);
+  const gone = (await one(`SELECT COUNT(*) n FROM things WHERE id IN (${medi}, ${sg2}, ${sphere}, ${clip})`)).N;
+  const queue = await all('SELECT id, ttype, tic FROM respawn_queue ORDER BY id');   // (plus whatever lay on that start)
+  const p2 = await one('SELECT health, has_shotgun, shells, invuln_tics, bullets FROM player WHERE id = 2');
+  const queued = (t) => queue.some((q) => q.TTYPE === t);
+  assert(gone === 0 && p2.HEALTH === 75 && p2.HAS_SHOTGUN === 1 && p2.SHELLS >= 8 && p2.INVULN_TICS > 0 && p2.BULLETS === 5
+    && queued(2012) && queued(2001) && !queued(2022) && !queued(2007),
+    `altdeath: a medikit, shotgun, invulnerability and a dropped clip are all taken (the shotgun like in single player); the first two queue to respawn (${queue.length} things do), the sphere and the dropped clip never`);
+  // (both players out of the way: whoever stands on the spot would take it right back, as in DOOM)
+  await db.exec("UPDATE things SET x = x + 300, y = y + 300 WHERE kind = 'player'");
+  for (let i = 0; i < 30 * 35 - 1; i++) await tic([IDLE, IDLE]);
+  const early = (await one('SELECT COUNT(*) n FROM respawn_queue')).N;
+  const perTic = [];
+  for (let k = 0; k < queue.length; k++) {
+    await tic([IDLE, IDLE]);
+    perTic.push((await one('SELECT COUNT(*) n FROM respawn_queue')).N);
+  }
+  const backMedi = await one(`SELECT COUNT(*) n FROM things WHERE thing_type = 2012 AND x = ${a2.X} AND y = ${a2.Y}`);
+  const backSg = await one(`SELECT COUNT(*) n FROM things WHERE thing_type = 2001 AND x = ${a2.X + 1} AND y = ${a2.Y}`);
+  const fog = await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9017');
+  const itmbk = await one("SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSITMBK'");
+  assert(early === queue.length && perTic.every((n, k) => n === queue.length - k - 1) && backMedi.N === 1 && backSg.N === 1
+    && fog.N === queue.length && itmbk.N === queue.length,
+    `P_RespawnSpecials: 30 seconds on they come back where they were, one a tic (${perTic.join(', ')} left), each in fog with its sound`);
+  // co-op (no deathmatch): placed weapons stay too, but the keys are there and the players at their own starts
+  await loadMap(db, wad, res, map, { skill: 3, players: 2, deathmatch: 0, timer: 0 });
+  const c2 = await thing(2);
+  const coopKeys = (await one("SELECT COUNT(*) n FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE tt.pickup = 'key'")).N;
+  const sg3 = await spawn(2001, c2.X, c2.Y);
+  await db.exec('UPDATE player SET shells = 0, has_shotgun = 0, keycards = 0');
+  await tic([IDLE, IDLE]);
+  const coop = await one('SELECT has_shotgun, shells, keycards FROM player WHERE id = 2');
+  assert(coopKeys === keysOnMap && c2.X === starts[1].X && coop.HAS_SHOTGUN === 1 && coop.SHELLS === 20 && coop.KEYCARDS === 0
+    && (await one(`SELECT COUNT(*) n FROM things WHERE id = ${sg3}`)).N === 1,
+    'co-op: keys on the map, no cards given, players at their own starts; a placed shotgun stays and gives five clips here too');
+}
+
 // and alone it's still player 1 and DOOM_TIC
 await loadMap(db, wad, res, map, { skill: 3, players: 1 });
 const n = (await one('SELECT COUNT(*) n FROM player')).N;

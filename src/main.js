@@ -101,7 +101,7 @@ let lastSoundId = 0;
 for (const ev of ['keydown', 'pointerdown', 'touchstart']) window.addEventListener(ev, () => audio.unlock(), { capture: true });
 document.addEventListener('visibilitychange', () => audio.suspend(document.hidden));
 let lastFrame = { tic: 0, walls: 0, sprites: 0, draw: 0, rows: 0 };
-// a netgame (net.js): { me, players, ls: Lockstep, links: Map(player → link) }; null alone
+// a netgame (net.js): { me, players, deathmatch, timer, ls: Lockstep, links: Map(player → link) }; null alone
 let net = null;
 // before it starts: the host's links so far and its open invite, or the guest's link
 const lobby = { role: null, links: [], invite: null, guest: null };
@@ -508,11 +508,10 @@ async function startMap(name, newGame, { skill = settings.skill, seed = null, ke
   if (newGame) didSecret.clear();
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
-  await loadMap(db, wad, res, name, { skill, newGame, players: net?.players ?? 1 });
-  await db.exec(`UPDATE viewcfg SET player_id = ${net?.me ?? 1} WHERE id = 1`);   // (consoleplayer)
   // P_RANDOM's seed: a demo's own, or a fresh one for a new game (a new level carries on)
   const s = seed ?? (newGame ? 1 + Math.floor(Math.random() * 2147483646) : null);
-  if (s != null) await db.exec(`UPDATE game SET rng = ${s} WHERE id = 1`);
+  await loadMap(db, wad, res, name, { skill, newGame, players: net?.players ?? 1, deathmatch: net?.deathmatch ?? 0, timer: net?.timer ?? 0, seed: s });
+  await db.exec(`UPDATE viewcfg SET player_id = ${net?.me ?? 1} WHERE id = 1`);   // (consoleplayer)
   lastSeed = s;
   map = { name, skyTex: skyFor(name) };
   const { rows } = await db.query(
@@ -610,8 +609,18 @@ async function netTics(tics) {
   return ran > 0 && !!hud;
 }
 
+/** WI_Start's wbs->plyr[]: every player's kills, items, secrets and frags, for the netgame screens */
+async function netStats() {
+  const arr = { rowMode: 'array' };
+  const rows = (await db.query('SELECT p.id, p.kills, p.items, p.secrets FROM player p ORDER BY p.id', [], arr)).rows;
+  const frags = (await db.query('SELECT killer, victim, n FROM frags', [], arr)).rows;
+  const players = rows.map((r) => ({ kills: r[1], items: r[2], secrets: r[3], frags: rows.map(() => 0) }));
+  for (const [k, v, n] of frags) if (players[k - 1] && v <= players.length) players[k - 1].frags[v - 1] = n;
+  return { players, me: net.me, deathmatch: net.deathmatch };
+}
+
 /** G_InitNew for a netgame: everyone the same map, skill and seed; me is this browser's player. */
-async function beginNet({ me, players, mapName, skill, seed }, links) {
+async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, timer = 0 }, links) {
   if (recorder) finishRecording();
   demoPlayer = null;
   paused = false;
@@ -619,7 +628,7 @@ async function beginNet({ me, players, mapName, skill, seed }, links) {
     if (to === 'all') for (const l of links.values()) l.send(m);
     else links.get(to)?.send(m);
   };
-  net = { me, players, links, ls: new Lockstep({ me, players, send }), sums: new Map() };
+  net = { me, players, deathmatch, timer, links, ls: new Lockstep({ me, players, send }), sums: new Map() };
   netWait = 0;
   for (const [pid, link] of links) {
     link.onmessage = (m) => net?.links === links && net.ls.receive(pid, m);
@@ -636,8 +645,8 @@ async function beginNet({ me, players, mapName, skill, seed }, links) {
   await startMap(mapName, true, { skill, seed, netgame: true });
   $('net-out').value = '';
   $('net-in').value = '';
-  setStatus(`Co-op: you are player ${me} of ${players}.`);
-  setTimeout(() => { if (statusEl.textContent.startsWith('Co-op: you')) setStatus(''); }, 4000);
+  setStatus(`${deathmatch ? 'Deathmatch' : 'Co-op'}: you are player ${me} of ${players}.`);
+  setTimeout(() => { if (/^(Co-op|Deathmatch): you/.test(statusEl.textContent)) setStatus(''); }, 4000);
   netPanel();
 }
 
@@ -662,7 +671,7 @@ function netPanel(say) {
   $('net-leave').disabled = !net && !lobby.role;
   $('net-connect').disabled = !!net || !(lobby.invite || (lobby.role === 'guest' && !lobby.guest && !lobby.replied));
   if (say !== undefined) $('net-status').textContent = say;
-  else if (net) $('net-status').textContent = net.ls.error ? `Stopped: ${net.ls.error}.` : `In the game: player ${net.me} of ${net.players}.`;
+  else if (net) $('net-status').textContent = net.ls.error ? `Stopped: ${net.ls.error}.` : `In the ${net.deathmatch ? 'deathmatch' : 'game'}: player ${net.me} of ${net.players}.`;
 }
 
 $('net-host').addEventListener('click', async () => {
@@ -712,7 +721,8 @@ $('net-connect').addEventListener('click', async () => {
         if (m.t !== 'start' || net) return;
         // (from the network: check it all before it goes anywhere near the game)
         const ok = m.wad === wadKey && wad.mapNames().includes(m.map) && [1, 2, 3, 4, 5].includes(m.skill)
-          && Number.isInteger(m.seed) && Number.isInteger(m.you) && m.you >= 2 && m.you <= m.players && m.players <= MAX_PLAYERS;
+          && Number.isInteger(m.seed) && Number.isInteger(m.you) && m.you >= 2 && m.you <= m.players && m.players <= MAX_PLAYERS
+          && [0, 1, 2].includes(m.dm) && Number.isInteger(m.timer) && m.timer >= 0 && m.timer < 1000;
         if (!ok) {
           l.send({ t: 'desync', why: `player ${m.you} has another WAD loaded` });
           netPanel(`The host is playing ${String(m.wad).split('|')[0]}: load that, and join again.`);
@@ -720,7 +730,9 @@ $('net-connect').addEventListener('click', async () => {
         }
         lobby.guest = null;
         lobby.role = null;
-        beginNet({ me: m.you, players: m.players, mapName: m.map, skill: m.skill, seed: m.seed }, new Map([[1, l]]))
+        $('net-mode').value = String(m.dm);
+        $('net-timer').value = String(m.timer);
+        beginNet({ me: m.you, players: m.players, mapName: m.map, skill: m.skill, seed: m.seed, deathmatch: m.dm, timer: m.timer }, new Map([[1, l]]))
           .catch((err) => setStatus(err.message, true));
       };
       l.onclose = () => { if (!net) { lobby.guest = null; lobby.role = null; netPanel('The host went away.'); } };
@@ -735,11 +747,13 @@ $('net-start').addEventListener('click', () => {
   const mapName = $('map').value;
   const skill = settings.skill;
   const seed = 1 + Math.floor(Math.random() * 2147483646);
+  const dm = Number($('net-mode').value) || 0;
+  const timer = Math.max(0, Math.min(999, Number($('net-timer').value) || 0));
   const links = new Map(lobby.links.map(({ pid, link }) => [pid, link]));
   lobby.invite?.cancel();
   Object.assign(lobby, { role: null, links: [], invite: null, guest: null });
-  for (const [pid, link] of links) link.send({ t: 'start', you: pid, players, map: mapName, skill, seed, wad: wadKey });
-  beginNet({ me: 1, players, mapName, skill, seed }, links).catch((err) => setStatus(err.message, true));
+  for (const [pid, link] of links) link.send({ t: 'start', you: pid, players, map: mapName, skill, seed, wad: wadKey, dm, timer });
+  beginNet({ me: 1, players, mapName, skill, seed, deathmatch: dm, timer }, links).catch((err) => setStatus(err.message, true));
 });
 $('net-leave').addEventListener('click', () => {
   const was = !!net;
@@ -886,6 +900,7 @@ async function frame() {
           intermission = new Intermission(renderer, audio, wad, map.name, nextMap(map.name, secret, wad.mapNames()), {
             kills: hud.KILLS, totalKills: hud.TOTAL_KILLS, items: hud.ITEMS, totalItems: hud.TOTAL_ITEMS,
             secrets: hud.SECRETS, totalSecrets: hud.TOTAL_SECRETS, time: hud.TIC,
+            ...(net ? await netStats() : {}),
           }, didSecret.has(level.episode));
           intermission.secret = secret;
           wiButtons = true;   // (the button that pulled the switch doesn't count)
@@ -955,7 +970,7 @@ async function frame() {
     // (the face still keeps its time with the bar off: ST_Ticker runs regardless)
     const faceNow = face.update(hud, tics, lastFire);
     // ST_Drawer: full screen (11) has no status bar, except over the automap
-    if (settings.screenSize < 11 || showMap) drawStatusBar(renderer, hud, faceNow);
+    if (settings.screenSize < 11 || showMap) drawStatusBar(renderer, hud, faceNow, net?.me ?? 0);
     if (amMsg) amMsg.tics -= tics;
     if (amMsg && amMsg.tics <= 0) amMsg = null;
     const msg = amMsg?.text ?? hud.MSG;
@@ -1214,7 +1229,7 @@ async function boot() {
       addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await reloadWads(); },
       useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await reloadWads(); },
       get demo() { return { recording: !!recorder, playing: !!demoPlayer, last: lastDemo }; },
-      get net() { return net && { me: net.me, players: net.players, tic: net.ls.executed, error: net.ls.error, sums: Object.fromEntries(net.sums) }; },
+      get net() { return net && { me: net.me, players: net.players, deathmatch: net.deathmatch, timer: net.timer, tic: net.ls.executed, error: net.ls.error, sums: Object.fromEntries(net.sums) }; },
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },
       get melting() { return !!melt; },

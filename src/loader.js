@@ -159,10 +159,14 @@ export async function setRenderer(db, useBsp) {
 /**
  * P_SetupLevel: map NAME into Firebird. PLAYERS (a netgame: 2–4) sets how
  * many players the game has; left out, it keeps what the game had (1 to start).
+ * DEATHMATCH (0 co-op, 1, 2 for -altdeath) and TIMER (-timer, minutes) likewise.
+ * SEED sets P_RANDOM's state before the map loads (left out: it carries on).
  */
-export async function loadMap(db, wad, res, name, { skill = 3, newGame = true, players = null } = {}) {
+export async function loadMap(db, wad, res, name, { skill = 3, newGame = true, players = null, deathmatch = null, timer = null, seed = null } = {}) {
   const m = wad.map(name);
   if (players != null) await db.exec(`UPDATE game SET players = ${Math.max(1, Math.min(4, players | 0))} WHERE id = 1`);
+  if (deathmatch != null) await db.exec(`UPDATE game SET deathmatch = ${Math.max(0, Math.min(2, deathmatch | 0))} WHERE id = 1`);
+  if (timer != null) await db.exec(`UPDATE game SET time_limit = ${Math.max(0, timer | 0)} WHERE id = 1`);
   const tex = (n) => (n && n !== '-' ? res.texId.get(n) ?? 0 : 0);
   const flat = (n) => res.flatId.get(n) ?? null;
 
@@ -199,6 +203,9 @@ export async function loadMap(db, wad, res, name, { skill = 3, newGame = true, p
   const skillBit = skill <= 2 ? 1 : skill === 3 ? 2 : 4;
   // the same thing ids on every load, so a level always starts identical (demos)
   await db.exec('ALTER SEQUENCE thing_seq RESTART WITH 1');   // (from 1: origin 0 means the player's own sounds)
+  // P_RANDOM's seed goes in first (G_InitNew's M_ClearRandom comes before the
+  // level): a deathmatch's starts are drawn from it as the map loads
+  if (seed != null) await db.exec(`UPDATE game SET rng = ${seed} WHERE id = 1`);
   await db.exec(`EXECUTE PROCEDURE init_map('${name}', ${skillBit}, ${newGame ? 1 : 0}, ${skill})`);
   return m;
 }

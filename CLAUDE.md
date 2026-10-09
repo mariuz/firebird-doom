@@ -29,9 +29,9 @@ npm run test:light         # light diminishing vs DOOM's fixed point
 npm run test:statusbar     # the status bar face, the attacker, the death camera
 npm run test:sound         # the 8 sound channels: priorities, distance, following the source
 npm run test:music         # the emulated OPL2, DOOM's DMX music driver, songs from both WADs
-WAD=public/wads/freedoom2.wad npm run test:netgame  # two players through NET_TIC (and without WAD=)
+WAD=public/wads/freedoom2.wad npm run test:netgame  # two players through NET_TIC, co-op and deathmatch (and without WAD=)
 npm run test:browser       # the page in headless Chromium: title → game → intermission → next map
-npm run test:coop          # co-op: two pages, a real WebRTC link, invite → reply → Start → lockstep
+npm run test:coop          # co-op and deathmatch: two pages, a real WebRTC link, invite → reply → Start → lockstep
 npm run test:visual        # the README's pictures, pixel for pixel against docs/screenshots.json
 npm run test:renderers -- E1M1 E1M2 E1M3
 node scripts/all-maps.mjs public/wads/freedoom2.wad  # every map (the WAD is an argument here, not WAD=)
@@ -101,6 +101,8 @@ screenshots` and commit `docs/`. All of them must pass; CI runs the same set.
   (`lastOn`), so scripted key sequences must allow for it.
 - **Determinism:** use `p_random()`, never `RAND()`, in game SQL. Anything random or
   time-dependent outside `DOOM_TIC`'s inputs breaks demos (`npm run test:demo` catches it).
+  `INIT_MAP` draws on `p_random()` too (deathmatch starts), so a seed goes in through `loadMap`'s
+  `seed`, before the map loads, never with an `UPDATE` after it: two peers once spawned apart.
   Row order counts too: every `FOR SELECT` whose order affects state needs an `ORDER BY`, and
   never call `p_random()` in a multi-row `UPDATE`. Physical row order changes when a reload
   reuses pages, so a replay drifts only sometimes (it failed on CI, not locally).

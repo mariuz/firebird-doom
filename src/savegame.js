@@ -13,7 +13,7 @@ export const SAVE_VERSION = 1;
 export const SLOTS = 6;
 
 // tables saved whole, and the columns that change in the rest
-const WHOLE = ['game', 'player', 'things', 'movers'];
+const WHOLE = ['game', 'player', 'things', 'movers', 'frags', 'respawn_queue'];
 const MOVING = {
   sectors: ['floor_h', 'ceil_h', 'light', 'special', 'sound_heard', 'floor_flat', 'base_light', 'min_light'],
   sidedefs: ['upper_tex', 'mid_tex', 'lower_tex'],
@@ -89,7 +89,7 @@ export async function restoreGame(db, save) {
   if (save?.version !== SAVE_VERSION) throw new Error(`unknown save version ${save?.version}`);
   for (const t of WHOLE) {
     await db.exec(`DELETE FROM ${t}`);
-    const { cols, rows } = save.tables[t];
+    const { cols, rows } = save.tables[t] ?? { cols: [], rows: [] };   // (older saves: no frags, no respawn queue)
     await perRow(db, rows, 10, (p) => `INSERT INTO ${t} (${cols.join(', ')}) VALUES (${p.join(', ')});`);
   }
   for (const t of Object.keys(MOVING)) {

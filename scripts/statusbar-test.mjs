@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
-import { FaceWidget } from '../src/hud.js';
+import { FaceWidget, drawStatusBar } from '../src/hud.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -58,6 +58,28 @@ const dead = new FaceWidget(fixed(0)).update({ ...base, HEALTH: 0 }, 1);
 assert(slime === 'STFKILL0' && god === 'STFGOD0' && early !== 'STFKILL0' && rampage === 'STFKILL0'
     && grin === 'STFEVL0' && grinLater === 'STFEVL0' && stillGrin !== 'STFEVL0' && dead === 'STFDEAD0',
   `slime: ${slime}; god mode: ${god}; firing, the rampage face at two seconds (${rampage}); a new weapon: the evil grin for two seconds (${grin}, ${grinLater} 69 tics on, then ${stillGrin}); dead: ${dead}`);
+
+// ── ST_Drawer in a netgame: the face on your colour, the frags in place of the arms ──
+{
+  const drawn = (hud, netPlayer) => {
+    const calls = [];
+    const stub = { pictureByName: (n) => ({ name: n, w: n.startsWith('STTNUM') || n === 'STTMINUS' ? 14 : 10, h: 10, left: 0, top: 0 }), patch: (p, x, y) => calls.push(`${p?.name}@${x},${y}`) };
+    drawStatusBar(stub, { HEALTH: 100, ARMOR: 0, WEAPON: 2, BULLETS: 50, KEYCARDS: 0, ...hud }, null, netPlayer);
+    return calls;
+  };
+  const alone = drawn({}, 0);
+  const coop = drawn({}, 3);
+  const dm = drawn({ DEATHMATCH: 1, FRAGS: 7 }, 1);
+  const dmNeg = drawn({ DEATHMATCH: 1, FRAGS: -12 }, 2);
+  const has = (calls, n) => calls.filter((c) => c.startsWith(n + '@')).map((c) => c.split('@')[1]);
+  assert(!alone.some((c) => c.startsWith('STFB')) && has(coop, 'STFB2')[0] === '143,168' && has(coop, 'STARMS').length === 1,
+    `co-op, player 3: STFB2 behind the face at 143,168 (none alone); the arms as ever`);
+  assert(has(dm, 'STARMS').length === 0 && !dm.some((c) => /^ST[YG]NUM[2-7]@1[1-3]\d,1[78]\d/.test(c)) && has(dm, 'STFB0')[0] === '143,168'
+    && has(dm, 'STTNUM7').includes('124,171'),
+    `deathmatch: no arms, the frags (7) right-aligned at ST_FRAGSX 138 instead (${has(dm, 'STTNUM7').join(' ')})`);
+  assert(has(dmNeg, 'STTNUM9').includes('124,171') && has(dmNeg, 'STTMINUS')[0] === '116,171' && !dmNeg.some((c) => c.startsWith('STTNUM1@1')),
+    `-12 frags in two digits: -9 at most (STlib_drawNum), the minus 8 to the left (${has(dmNeg, 'STTMINUS')[0]})`);
+}
 
 // ── what Firebird tells it ───────────────────────────────────────────────
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));

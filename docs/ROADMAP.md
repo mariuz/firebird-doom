@@ -51,11 +51,12 @@ you find missing.
 - ~~**Telefrag.**~~ Done: the player's teleport kills what stands on the destination; monsters are
   blocked by it (except on MAP30). Teleports also leave fog at both ends and freeze the player
   for 18 tics.
-- **Multiplayer.** Co-op is done ([src/net.js](../src/net.js), `NET_TIC`): up to four players,
-  peer to peer over WebRTC with copy-paste invite codes, in lockstep with a checksum every 35 tics.
-  The other players are animated (`S_PLAY…`) and coloured (`R_InitTranslationTables`). Still
-  missing: deathmatch (its starts, frags, `-altdeath`) and a TURN relay for players behind strict
-  NATs.
+- ~~**Multiplayer.**~~ Done ([src/net.js](../src/net.js), `NET_TIC`): co-op and deathmatch for
+  up to four players, peer to peer over WebRTC with copy-paste invite codes, in lockstep with a
+  checksum every 35 tics. The other players are animated (`S_PLAY…`) and coloured
+  (`R_InitTranslationTables`); deathmatch has its starts, frags, `-altdeath`'s respawning items,
+  `-timer`, the status bar's frag count and the frag matrix at the intermission; co-op the per-player
+  intermission. Still missing: a TURN relay for players behind strict NATs.
 - ~~**DEHACKED beyond `[STRINGS]`.**~~ Done ([src/dehacked.js](../src/dehacked.js)): Thing, Ammo,
   Misc, Cheat and BEX [PARS]. Not possible: Frame, Pointer, Weapon, Sound and Text blocks need
   state tables the port doesn't have. Loading a `.deh` file comes with PWADs (the loader already
@@ -89,7 +90,7 @@ you find missing.
 - ~~**Light diminishing and colormaps.**~~ Done: the exact `scalelight`/`zlight` tables and
   lookups, low detail's quirk, and the muzzle flash's `extralight`, checked against DOOM's fixed-point
   arithmetic by `npm run test:light`.
-- **Status bar.** No arms/frags switch for deathmatch (single player only). The face is done:
+- **Status bar.** Done, frags in deathmatch included. The face is done:
   `ST_updateFaceWidget`'s priorities, turn faces and pain levels, plus `P_DeathThink`'s death camera.
 - ~~**Messages.**~~ Done: each pickup shows the WAD's `DEHACKED` string (`GOTARMOR`,
   `GOTSHOTGUN`, …: Freedoom has them all, and a PWAD or `.deh` can replace them), else plain words

@@ -643,18 +643,19 @@ played: they need DOOM's exact fixed-point simulation and random table, and this
 re-implementation in SQL. `npm run test:demo` replays a busy 531-tic recording and compares every
 row of the resulting game, on both WADs.
 
-### Co-op over the network
+### Co-op and deathmatch over the network
 
 ![Players 2, 3 and 4 seen by player 1 on E1M1: grey, brown and red, the one in the middle shooting](docs/screenshot-coop.png)
 
-Up to four players can play a level together, each in their own browser, peer to peer
-([src/net.js](src/net.js)). Open **Co-op over the network** under the view. With no server to
+Up to four players can play a level together, or against each other, each in their own browser,
+peer to peer ([src/net.js](src/net.js)). Open **Play over the network** under the view. With no server to
 introduce the players, they swap two codes by hand (a chat message will do). The host presses
 **Invite a player** and sends the code. The guest presses **Join**, pastes it and presses
 **Connect**, then sends back the reply code. The host pastes the reply and presses **Connect**.
 That makes a WebRTC data channel between the two browsers: the codes are the SDP offer and answer,
 complete with their ICE candidates, found through a public STUN server. The host can invite up to
-three players this way, then presses **Start**. Everyone loads the host's map at the host's skill,
+three players this way, picks **Co-op**, **Deathmatch** or **Deathmatch 2** and a **Timer**, then presses
+**Start**. Everyone loads the host's map at the host's skill,
 with the host's random seed. Everyone must have the same WAD loaded: a guest with another one is
 told which. Behind a strict NAT (some mobile networks, some offices) two browsers may not reach each
 other without a TURN relay, which this page doesn't have.
@@ -682,7 +683,29 @@ saving, cheating, demo or warping in one: none of those are in the ticcmds, so t
 the game in two. `npm run test:netgame` plays two players in one database, and two peers through a
 pretend network that delivers late and out of order. `npm run test:coop` connects two real pages
 over WebRTC, with the codes swapped through the panel, and plays them in lockstep through a level
-exit and the intermission into the next map. Not yet: deathmatch.
+exit and the intermission into the next map, then a deathmatch.
+
+![The deathmatch intermission: killers down the side, victims along the top, each player's frags of each other and their totals](docs/screenshot-deathmatch.png)
+
+**Deathmatch** plays by `g_game.c` and `p_inter.c`. Everyone starts on one of the map's deathmatch
+starts, picked at random (`G_DeathMatchSpawnPlayer`: up to twenty tries for a free one, then your own
+player start), and comes back on another after each death. Keys aren't placed (`MF_NOTDMATCH`) and
+everyone carries all of them (`P_SpawnPlayer`). A placed weapon stays where it lies in any netgame
+(`P_GiveWeapon`: "leave placed weapons forever on net games"), giving the weapon the first time and
+five clips of its ammo every time, with the pickup sound for you alone and no message; co-op has that
+too. Killing a player is a frag (`P_KillMobj`), and killing yourself counts against you: the status
+bar's arms give way to your frag count (`st_fragson`), the others you killed less the times you
+killed yourself (`ST_updateWidgets`). In any netgame your face sits on your colour (`STFB0`–`3`).
+The frags of the level end on the deathmatch intermission: the frag matrix, killers down the side
+and victims along the top, with each player's total (`WI_drawDeathmatchStats`), the counts going
+up one a tic. Co-op has its own screen too: a row per player with their kills, items and secrets,
+and their frags if there were any (`WI_drawNetgameStats`). **Deathmatch 2** is `-altdeath`: weapons
+are taken like any other item, and whatever is picked up comes back where it was thirty seconds
+later in a puff of fog (`P_RespawnSpecials`, one a tic), except the invulnerability and the
+invisibility spheres and what a monster dropped. The **Timer** is `-timer`: the level ends after
+that many minutes, through the intermission to the next map. The frags start over with each level,
+as in DOOM. Not in DOOM, and not here: a frag limit, and an obituary when someone dies. No deathmatch
+starts in a map means the player starts instead (DOOM refuses a map with fewer than four).
 
 The others look as they did in DOOM. Each player's sprite goes through `info.c`'s `S_PLAY` states,
 moved on a tic at a time by `PLAYER_ANIM`: standing (A), running (A to D, 4 tics a frame), a shot

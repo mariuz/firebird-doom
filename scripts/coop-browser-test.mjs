@@ -3,7 +3,8 @@
 // the Co-op panel, Start, both browsers in the same game (each through its
 // own player's eyes), the guest's keys moving the guest on both screens, the
 // consistency checks agreeing for hundreds of tics, and the host told when
-// the guest leaves.
+// the guest leaves. Then a deathmatch: the mode and timer from the panel,
+// the players at deathmatch starts with every key, a frag in both games.
 //
 //   npm run test:coop
 //
@@ -193,6 +194,43 @@ try {
   await guest.evaluate(() => document.getElementById('net-leave').click());   // (the page reflows as it plays: no pointer)
   await until(host, () => window.doom.net?.error, null, 30000);
   assert(/player 2 left/.test((await host.evaluate(() => window.doom.net.error))), `the guest leaves: the host's game stops ("${await host.evaluate(() => window.doom.net.error)}")`);
+
+  // again, as a deathmatch with a timer: the host's choice reaches the guest
+  await host.evaluate(() => document.getElementById('net-leave').click());
+  await host.evaluate(() => document.getElementById('net-host').click());
+  await until(host, () => document.getElementById('net-out').value.length > 50);
+  await guest.evaluate(() => document.getElementById('net-join').click());
+  await guest.fill('#net-in', await value(host, 'net-out'));
+  await guest.evaluate(() => document.getElementById('net-connect').click());
+  await until(guest, () => document.getElementById('net-out').value.length > 50);
+  await host.fill('#net-in', await value(guest, 'net-out'));
+  await host.evaluate(() => document.getElementById('net-connect').click());
+  await until(host, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 30000);
+  await host.selectOption('#net-mode', '1');
+  await host.fill('#net-timer', '5');
+  await host.evaluate(() => document.getElementById('net-start').click());
+  for (const p of [host, guest]) {
+    await until(p, () => window.doom.net?.tic > 10 && window.doom.screen === 'level' && !window.doom.melting);
+  }
+  const dm = await Promise.all([host, guest].map((p) => p.evaluate(async () => ({
+    net: window.doom.net,
+    game: (await window.doom.sql('SELECT deathmatch, time_limit, map_name FROM game'))[0],
+    players: await window.doom.sql('SELECT p.id, p.keycards, t.x, t.y FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id'),
+    starts: await window.doom.sql('SELECT x, y FROM map_things WHERE ttype = 11'),
+    mode: document.getElementById('net-mode').value, timer: document.getElementById('net-timer').value,
+  }))));
+  const onStart = (d) => d.players.every((p) => d.starts.some((s) => s.X === p.X && s.Y === p.Y));
+  assert(dm.every((d) => d.net.deathmatch === 1 && d.net.timer === 5 && d.game.DEATHMATCH === 1 && d.game.TIME_LIMIT === 5 && d.mode === '1' && d.timer === '5'
+    && onStart(d) && d.players.every((p) => p.KEYCARDS === 7)) && JSON.stringify(dm[0].players) === JSON.stringify(dm[1].players),
+    `a deathmatch with a 5-minute timer: both pages in it, the players on deathmatch starts with every key (${JSON.stringify(dm[0].players.map((p) => [p.X, p.Y]))})`);
+  // the guest kills the host: a frag for player 2, on both status bars' numbers
+  await guest.evaluate(() => window.doom.sql('EXECUTE PROCEDURE damage_player(1000, (SELECT thing_id FROM player WHERE id = 2), 1)'));
+  await host.evaluate(() => window.doom.sql('EXECUTE PROCEDURE damage_player(1000, (SELECT thing_id FROM player WHERE id = 2), 1)'));
+  await host.waitForTimeout(1500);
+  const fr = await Promise.all([host, guest].map((p) => p.evaluate(() => window.doom.sql('SELECT killer, victim, n FROM frags WHERE n > 0'))));
+  assert(fr.every((f) => f.length === 1 && f[0].KILLER === 2 && f[0].VICTIM === 1 && f[0].N === 1),
+    `player 2 kills player 1: frags[2][1] = 1 in both games`);
+  await guest.evaluate(() => document.getElementById('net-leave').click());
 } catch (err) {
   console.error(err);
   failures++;

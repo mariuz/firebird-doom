@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Wad } from '../src/wad.js';
 import { Renderer } from '../src/renderer.js';
-import { Intermission, IntermissionState, levelOf, parTime } from '../src/intermission.js';
+import { Intermission, IntermissionState, NetgameState, DeathmatchState, fragSum, levelOf, parTime } from '../src/intermission.js';
 import { Melt } from '../src/wipe.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -49,6 +49,74 @@ s2.tick(true);
 assert(mid > 0 && mid < 75 && s2.cnt.kills === 75 && s2.cnt.time === 95 && s2.sp === 10, `fire mid-count (kills at ${mid}%) shows the final numbers at once`);
 s2.tick(true);
 assert(s2.stage === 'next', 'and another press moves on');
+
+// a netgame's screens: co-op's rows of players (WI_updateNetgameStats) and the
+// deathmatch frag matrix (WI_updateDeathmatchStats)
+{
+  // three players: 10/20 kills, 5/20, 20/20; player 1 killed player 2 twice and themself once, player 3 killed player 1
+  const players = [
+    { kills: 10, items: 5, secrets: 0, frags: [1, 2, 0] },
+    { kills: 5, items: 10, secrets: 2, frags: [0, 0, 0] },
+    { kills: 20, items: 0, secrets: 4, frags: [1, 0, 0] },
+  ];
+  const sums = players.map((_, i) => fragSum(players, i));
+  assert(sums.join() === '1,0,1', `WI_fragSum: others killed less yourself: ${sums.join(' ')}`);
+  const ngSounds = [];
+  const ng = new NetgameState({ ...stats, totalKills: 20, totalItems: 20, totalSecrets: 4, players, me: 2 }, false, (x) => ngSounds.push(x));
+  let t = 0;
+  while (ng.ng !== 10 && t++ < 2000) ng.tick(false);
+  const rows = ng.cnt.map((c) => `${c.kills}/${c.items}/${c.secret}/${c.frags}`);
+  assert(ng.kind === 'coop' && ng.dofrags && rows.join(' ') === '50/25/0/1 25/50/50/0 100/0/100/1' && ngSounds.filter((x) => x === 'DSBAREXP').length === 3
+    && ngSounds.at(-1) === 'DSPLDETH' && t > 35 * 4,
+    `co-op: every player's kills, items and secrets count up together, then the frags (${rows.join('  ')}; ${t} tics, the frags end with a death cry)`);
+  const ng0 = new NetgameState({ ...stats, players: players.map((p) => ({ ...p, frags: [0, 0, 0] })) }, false, () => {});
+  t = 0;
+  while (ng0.ng !== 10 && t++ < 2000) ng0.tick(false);
+  assert(!ng0.dofrags && ng0.cnt.every((c) => c.frags === 0), 'without a frag between them, no frags column (dofrags)');
+  ng.tick(true);
+  assert(ng.stage === 'next', 'a press once it is all there: the episode map');
+  const ng2 = new NetgameState({ ...stats, players }, true, () => {});
+  ng2.tick(true);
+  assert(ng2.ng === 10 && ng2.cnt[0].kills === ng2.final[0].kills, 'a press mid-count: the final numbers at once');
+
+  const dmSounds = [];
+  const dm = new DeathmatchState({ players, me: 1 }, false, (x) => dmSounds.push(x));
+  t = 0;
+  while (dm.dm !== 4 && t++ < 2000) dm.tick(false);
+  assert(dm.kind === 'dm' && dm.frags.map((r) => r.join('')).join(' ') === '120 000 100' && dm.totals.join() === '1,0,1'
+    && dmSounds.filter((x) => x === 'DSBAREXP').length === 1 && t > 35 * 2,
+    `deathmatch: the frag matrix counts up one a tic (${dm.frags.map((r) => r.join(' ')).join(' | ')}), the totals with it (${dm.totals.join(' ')})`);
+  dm.tick(true);
+  assert(dm.stage === 'next' && dmSounds.at(-1) === 'DSSLOP', 'a press: a splat, and on');
+  const big = new DeathmatchState({ players: [{ frags: [0, 150] }, { frags: [120, 0] }] }, true, () => {});
+  big.tick(true);
+  assert(big.frags[0][1] === 150 && big.totals[0] === 150, 'a press mid-count shows the real numbers');
+  const neg = new DeathmatchState({ players: [{ frags: [3, 0] }, { frags: [0, 0] }] }, true, () => {});
+  t = 0;
+  while (neg.dm !== 4 && t++ < 2000) neg.tick(false);
+  assert(neg.totals[0] === -3 && neg.frags[0][0] === 3, `three suicides: 3 in your own square, a total of ${neg.totals[0]}`);
+
+  // drawn where vanilla draws them
+  const calls = [];
+  const stub = { pictureByName: (n) => ({ name: n, w: 10, h: 10, left: 0, top: 0 }), patch: (p, x, y) => calls.push(`${p?.name}@${x},${y}`), present() {}, sfb: new Uint8Array(64000) };
+  const audio = { playMusic() {}, playEvents() {} };
+  const wi = new Intermission(stub, audio, { lump: () => null }, 'MAP02', 'MAP03', { ...stats, players, me: 2 });
+  for (let i = 0; i < 400; i++) wi.tick(false);
+  wi.draw();
+  const at = (n) => calls.filter((c) => c.startsWith(n + '@')).map((c) => c.split('@')[1]);
+  // NG_STATSX = 32 + star.w/2 = 37 with frags: titles right-aligned at 37 + 64k, player 2's face (STPB1) with the star
+  assert(wi.state.kind === 'coop' && at('WIOSTK')[0] === '91,50' && at('WIOSTI')[0] === '155,50' && at('WIOSTS')[0] === '219,50' && at('WIFRGS')[0] === '283,50'
+    && at('STPB0')[0] === '27,60' && at('STPB1')[0] === '27,93' && at('STFST01')[0] === '27,93' && at('WIPCNT').length === 9 && at('WINUM1').length >= 2,
+    `co-op's screen: the titles along the top (kills at ${at('WIOSTK')[0]}, frags at ${at('WIFRGS')[0]}), a row per player 33 apart, the star on player 2`);
+  calls.length = 0;
+  const wd = new Intermission(stub, audio, { lump: () => null }, 'E1M1', 'E1M2', { ...stats, players, me: 1, deathmatch: 1 });
+  for (let i = 0; i < 400; i++) wd.tick(false);
+  wd.draw();
+  assert(wd.state.kind === 'dm' && at('WIKILRS')[0] === '10,100' && at('WIVCTMS')[0] === '5,50' && at('WIMSTT')[0] === '264,45'
+    && at('STPB0').join(' ') === '77,35 37,68' && at('STPB2').join(' ') === '157,35 37,134' && at('STFDEAD0')[0] === '77,35' && at('STFST01')[0] === '37,68'
+    && at('WINUM2')[0] === '122,78' && at('WINUM1').includes('269,78'),
+    `deathmatch's screen: killers down the side, victims along the top, each player's face both ways (the dead one over your column), the matrix 40 apart (player 1's 2 kills of player 2 at ${at('WINUM2')[0]}), the totals at 269`);
+}
 
 // DOOM II: no episode map, a moment of "Entering", then on; nothing to count is 0%
 const s3 = new IntermissionState({ ...stats, totalKills: 0, kills: 0 }, true, () => {});

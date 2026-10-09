@@ -2,14 +2,19 @@
 // onto the renderer's 320×200 screen buffer (palette indices; the palette is
 // applied when the screen is presented). `hud` is a DOOM_TIC result row.
 function drawNum(renderer, n, x, y, font, width = 3) {
-  // right-aligned at x, like st_lib.c STlib_drawNum
-  const s = String(Math.max(0, n)).slice(-width);
+  // right-aligned at x, like st_lib.c STlib_drawNum; a negative number (the
+  // frags) fits its minus in: -9 at most in two digits, -99 in three
+  const neg = n < 0;
+  const v = neg ? Math.min(-n, width === 2 ? 9 : width === 3 ? 99 : -n) : n;
+  const s = String(v).slice(-width);
   const digit = renderer.pictureByName(`${font}0`);
   if (!digit) return;
-  for (let i = s.length - 1, cx = x; i >= 0; i--) {
+  let cx = x;
+  for (let i = s.length - 1; i >= 0; i--) {
     cx -= digit.w;
     renderer.patch(renderer.pictureByName(`${font}${s[i]}`), cx, y);
   }
+  if (neg) renderer.patch(renderer.pictureByName(`${font === 'STTNUM' ? 'STT' : font.slice(0, 3)}MINUS`), cx - 8, y);
 }
 
 // ── ST_updateFaceWidget ──────────────────────────────────────────────────
@@ -106,21 +111,32 @@ export class FaceWidget {
   }
 }
 
-export function drawStatusBar(renderer, hud, face = null) {
+/**
+ * ST_Drawer. In a netgame NETPLAYER (1–4) is this browser's player, whose
+ * colour backs the face (STFB0–3, ST_refreshBackground); in deathmatch
+ * (hud.DEATHMATCH) the frag count replaces the arms (st_fragson, st_armson).
+ */
+export function drawStatusBar(renderer, hud, face = null, netPlayer = 0) {
   const bar = renderer.pictureByName('STBAR');
   if (!bar) return;
   renderer.patch(bar, 0, 168);
+  if (netPlayer) renderer.patch(renderer.pictureByName(`STFB${netPlayer - 1}`), 143, 168);   // ST_FX
   const ammo = { 1: null, 2: hud.BULLETS, 3: hud.SHELLS, 4: hud.BULLETS, 5: hud.ROCKETS, 6: hud.CELLS, 7: hud.CELLS, 8: null, 9: hud.SHELLS }[hud.WEAPON] ?? null;
   if (ammo !== null) drawNum(renderer, ammo, 44, 171, 'STTNUM');
   drawNum(renderer, hud.HEALTH, 90, 171, 'STTNUM');
   renderer.patch(renderer.pictureByName('STTPRCNT'), 90, 171);
   drawNum(renderer, hud.ARMOR, 221, 171, 'STTNUM');
   renderer.patch(renderer.pictureByName('STTPRCNT'), 221, 171);
-  renderer.patch(renderer.pictureByName('STARMS'), 104, 168);
-  // arms: weapons 2..7
-  const owned = [true, hud.HAS_SHOTGUN === 1 || hud.HAS_SSG === 1, hud.HAS_CHAINGUN === 1, hud.HAS_LAUNCHER === 1, hud.HAS_PLASMA === 1, hud.HAS_BFG === 1];
-  for (let i = 0; i < 6; i++) {
-    renderer.patch(renderer.pictureByName(`${owned[i] ? 'STYSNUM' : 'STGNUM'}${i + 2}`), 111 + (i % 3) * 12, 172 + Math.floor(i / 3) * 10);
+  if (hud.DEATHMATCH) {
+    // ST_FRAGSX/Y: the others you killed, less the times you killed yourself (ST_updateWidgets)
+    drawNum(renderer, hud.FRAGS ?? 0, 138, 171, 'STTNUM', 2);
+  } else {
+    renderer.patch(renderer.pictureByName('STARMS'), 104, 168);
+    // arms: weapons 2..7
+    const owned = [true, hud.HAS_SHOTGUN === 1 || hud.HAS_SSG === 1, hud.HAS_CHAINGUN === 1, hud.HAS_LAUNCHER === 1, hud.HAS_PLASMA === 1, hud.HAS_BFG === 1];
+    for (let i = 0; i < 6; i++) {
+      renderer.patch(renderer.pictureByName(`${owned[i] ? 'STYSNUM' : 'STGNUM'}${i + 2}`), 111 + (i % 3) * 12, 172 + Math.floor(i / 3) * 10);
+    }
   }
   // the face (FaceWidget's), or for a still picture the straight one of this pain level
   const level = FaceWidget.painOffset(hud.HEALTH) / 8;

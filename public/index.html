@@ -72,15 +72,22 @@
         <span id="mapname" class="pill"></span>
       </div>
       <details id="net" class="net">
-        <summary>Co-op over the network <small>— up to four players, peer to peer</small></summary>
+        <summary>Play over the network <small>— co-op or deathmatch, up to four players, peer to peer</small></summary>
         <p>Everyone loads the same WAD. The host presses <b>Invite a player</b> and sends the
           code to a friend (chat, e-mail…); the friend presses <b>Join</b>, pastes it and sends back
-          the reply; the host pastes the reply and presses <b>Connect</b>. Invite up to three, then
-          <b>Start</b>: the host's map and skill. Only each player's keys cross the wire, and every
-          browser's Firebird plays the same game from them (lockstep, as DOOM did over IPX).</p>
+          the reply; the host pastes the reply and presses <b>Connect</b>. Invite up to three, pick
+          the game, then <b>Start</b>: the host's map and skill. Only each player's keys cross the
+          wire, and every browser's Firebird plays the same game from them (lockstep, as DOOM did
+          over IPX).</p>
         <div class="net-row">
           <button id="net-host" type="button">Invite a player</button>
           <button id="net-join" type="button">Join</button>
+          <label title="Co-op: everyone against the monsters. Deathmatch: against each other, from the deathmatch starts, weapons staying where they lie. Deathmatch 2 (-altdeath): what's picked up comes back 30 seconds later">Game <select id="net-mode">
+            <option value="0">Co-op</option>
+            <option value="1">Deathmatch</option>
+            <option value="2">Deathmatch 2 (items respawn)</option>
+          </select></label>
+          <label title="-timer: the level ends after this many minutes (0: never)">Timer <input id="net-timer" type="number" min="0" max="999" value="0" size="3"> min</label>
           <button id="net-start" type="button" disabled>Start</button>
           <button id="net-leave" type="button" disabled>Leave</button>
         </div>
