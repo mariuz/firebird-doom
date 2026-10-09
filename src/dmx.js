@@ -12,11 +12,17 @@
 //     their fixed note
 //   - pitch from DMX's frequency table, in 1/32 semitone steps, which pitch
 //     bend moves (±2 semitones)
-// Panning is OPL3-only and DOOM's driver ran the OPL2 in mono, so it's ignored.
+// With an OPL3 (DMX's -opl3 option, the Sound Blaster 16's chip) there are
+// 18 voices, the second nine on the chip's second register array, and each
+// voice goes to the left, the right or both by its channel's pan (CC 10) –
+// with DMX's sides the wrong way round (Chocolate Doom keeps that too, as the
+// default: the right-hand pan drives the left output). On the OPL2 there's
+// no pan: DMX drove it in mono.
 
 import { Opl, OPL_RATE } from './opl.js';
 
 const VOICES = 9;
+const PAN_BOTH = 0x30;
 const MOD_OFF = [0x00, 0x01, 0x02, 0x08, 0x09, 0x0a, 0x10, 0x11, 0x12];   // each channel's modulator
 const GENMIDI_FIXED = 0x0001;
 const GENMIDI_2VOICE = 0x0004;
@@ -58,11 +64,17 @@ export function parseGenmidiRaw(d) {
 }
 
 export class Dmx {
-  /** @param bank parseGenmidiRaw(GENMIDI) · @param opl an Opl (or anything with write(reg, val)) */
-  constructor(bank, opl = new Opl()) {
+  /**
+   * @param bank parseGenmidiRaw(GENMIDI) · @param opl an Opl (or anything with write(reg, val))
+   * @param opl3 drive it as an OPL3: 18 voices, stereo
+   */
+  constructor(bank, opl = new Opl(), { opl3 = false } = {}) {
     this.bank = bank;
     this.opl = opl;
-    this.voices = Array.from({ length: VOICES }, (_, i) => ({ index: i, channel: null, key: 0, note: 0, instr: null, instrVoice: 0, noteVolume: 0, freq: 0, carVolume: 0, modVolume: 0 }));
+    this.opl3 = opl3;
+    // (the second nine voices live on the chip's second array: registers | 0x100)
+    this.voices = Array.from({ length: opl3 ? 2 * VOICES : VOICES }, (_, i) => ({ index: i % VOICES, array: i < VOICES ? 0 : 0x100,
+      channel: null, key: 0, note: 0, instr: null, instrVoice: 0, noteVolume: 0, freq: 0, carVolume: 0, modVolume: 0 }));
     this.free = [...this.voices];
     this.reset();
   }
@@ -70,13 +82,17 @@ export class Dmx {
   /** OPL_InitRegisters, and the channels back to their defaults. */
   reset() {
     const w = (r, v) => this.opl.write(r, v);
-    for (let r = 0x40; r <= 0x55; r++) w(r, 0x3f);          // every operator silent
-    for (let r = 0x20; r <= 0xf5; r++) if (r < 0x40 || r >= 0x60) w(r, 0);
-    for (let c = 0; c < 9; c++) { w(0xa0 + c, 0); w(0xb0 + c, 0); w(0xc0 + c, 0); }
+    if (this.opl3) w(0x105, 0x01);                          // NEW: OPL3 mode
+    for (const a of this.opl3 ? [0, 0x100] : [0]) {
+      for (let r = 0x40; r <= 0x55; r++) w(a | r, 0x3f);    // every operator silent
+      for (let r = 0x20; r <= 0xf5; r++) if (r < 0x40 || r >= 0x60) w(a | r, 0);
+      for (let c = 0; c < 9; c++) { w(a | (0xa0 + c), 0); w(a | (0xb0 + c), 0); w(a | (0xc0 + c), this.opl3 ? PAN_BOTH : 0); }
+    }
     w(0x01, 0x20);                                          // waveform select on
     w(0x08, 0x40);                                          // keyboard split: F-number bit 8
     w(0xbd, 0);
-    this.channels = Array.from({ length: 16 }, () => ({ instr: this.bank[0], volume: 100, bend: 0 }));
+    if (this.opl3) w(0x104, 0);                             // no 4-operator channels
+    this.channels = Array.from({ length: 16 }, () => ({ instr: this.bank[0], volume: 100, bend: 0, pan: this.opl3 ? PAN_BOTH : 0 }));
     for (const v of this.voices) { v.channel = null; v.freq = 0; }
     this.free = [...this.voices];
   }
@@ -91,7 +107,7 @@ export class Dmx {
     this.free.push(v);
   }
 
-  keyOff(v) { this.write(0xb0 + v.index, v.freq >> 8); }
+  keyOff(v) { this.write(v.array | (0xb0 + v.index), v.freq >> 8); }
 
   /** ReplaceExistingVoice: a second voice if there is one, else the one on the highest channel. */
   replaceExistingVoice() {
@@ -116,16 +132,34 @@ export class Dmx {
     return level;
   }
 
+  /** SetVoicePan (OPL3): the feedback register carries the sides */
+  setVoicePan(v) {
+    const d = v.instr.voices[v.instrVoice];
+    this.write(v.array | (0xc0 + v.index), d.feedback | v.channel.pan);
+  }
+
+  /**
+   * SetChannelPan (OPL3): MIDI pan 0–127 to the left, the right or both – the
+   * DMX way round, 96 and over to the left output, 48 and under to the right.
+   */
+  setChannelPan(channel, pan) {
+    if (!this.opl3) return;
+    const reg = pan >= 96 ? 0x10 : pan <= 48 ? 0x20 : PAN_BOTH;
+    if (channel.pan === reg) return;
+    channel.pan = reg;
+    for (const v of this.voices) if (v.channel === channel) this.setVoicePan(v);
+  }
+
   /** SetVoiceInstrument: the carrier first, both at their quietest until the volume is set. */
   setInstrument(v, instr, instrVoice) {
     v.instr = instr;
     v.instrVoice = instrVoice;
     const d = instr.voices[instrVoice];
     const modulating = (d.feedback & 1) === 0;
-    const off = MOD_OFF[v.index];
+    const off = v.array | MOD_OFF[v.index];
     v.carVolume = this.loadOperator(off + 3, d.car, true);
     v.modVolume = this.loadOperator(off, d.mod, !modulating);
-    this.write(0xc0 + v.index, d.feedback);
+    this.write(v.array | (0xc0 + v.index), d.feedback | v.channel.pan);
   }
 
   /** SetVoiceVolume */
@@ -137,14 +171,14 @@ export class Dmx {
     const car = 0x3f - full;
     if (car !== (v.carVolume & 0x3f)) {
       v.carVolume = car | (v.carVolume & 0xc0);
-      this.write(0x40 + MOD_OFF[v.index] + 3, v.carVolume);
+      this.write(v.array | (0x40 + MOD_OFF[v.index] + 3), v.carVolume);
       // additive: the modulator is heard too, and gets the same volume (no louder than its own level)
       if ((d.feedback & 1) && d.mod.level !== 0x3f) {
         let mod = Math.max(d.mod.level, car);
         mod |= v.modVolume & 0xc0;
         if (mod !== v.modVolume) {
           v.modVolume = mod;
-          this.write(0x40 + MOD_OFF[v.index], mod | d.mod.scale);
+          this.write(v.array | (0x40 + MOD_OFF[v.index]), mod | d.mod.scale);
         }
       }
     }
@@ -170,8 +204,8 @@ export class Dmx {
   updateFrequency(v) {
     const f = this.frequency(v);
     if (f === v.freq) return;
-    this.write(0xa0 + v.index, f & 0xff);
-    this.write(0xb0 + v.index, (f >> 8) | 0x20);
+    this.write(v.array | (0xa0 + v.index), f & 0xff);
+    this.write(v.array | (0xb0 + v.index), (f >> 8) | 0x20);
     v.freq = f;
   }
 
@@ -238,7 +272,8 @@ export class Dmx {
       if (e.a === 7) {
         channel.volume = Math.max(0, Math.min(127, e.b));
         for (const v of this.voices) if (v.channel === channel) this.setVolume(v, v.noteVolume);
-      } else if (e.a === 120 || e.a === 123) this.allNotesOff(e.ch);
+      } else if (e.a === 10) this.setChannelPan(channel, Math.max(0, Math.min(127, e.b)));
+      else if (e.a === 120 || e.a === 123) this.allNotesOff(e.ch);
       else if (e.a === 121) channel.bend = 0;
     }
   }
@@ -254,9 +289,10 @@ export class Dmx {
  * { events: [{ t (s), type, ch, a, b }], duration }, looped.
  */
 export class DmxPlayer {
-  constructor(bank, song, { loop = true } = {}) {
+  /** @param opl3 an OPL3 (18 voices, stereo: the chip's `left` and `right` after each sample) */
+  constructor(bank, song, { loop = true, opl3 = false } = {}) {
     this.opl = new Opl();
-    this.dmx = new Dmx(bank, this.opl);
+    this.dmx = new Dmx(bank, this.opl, { opl3 });
     this.song = song;
     this.loop = loop;
     this.idx = 0;

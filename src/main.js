@@ -46,7 +46,7 @@ let running = false;
 let paused = false;
 let lastTic = 0;
 // settings, remembered per browser
-const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, display: 'webgl', smooth: false, skill: 3, messages: true, mouse: 5, screenSize: 10 };
+const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, synth: 'opl2', display: 'webgl', smooth: false, skill: 3, messages: true, mouse: 5, screenSize: 10 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('firebird-doom:settings') || '{}'));
 } catch { /* storage unavailable: defaults */ }
@@ -97,6 +97,7 @@ let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every 
 let cheats = cheatReaders();
 const audio = new DoomAudio();
 audio.setVolumes(settings.sfx / 100, settings.music / 100);
+audio.setOpl3(settings.synth === 'opl3');
 audio.setEnabled(settings.audio);
 let lastSoundId = 0;
 // audio may only start after a user gesture
@@ -1404,11 +1405,20 @@ function setAudio(on) {
   $('audio').checked = on;
   $('sfxvol').disabled = !on;
   $('musicvol').disabled = !on;
+  $('synth').disabled = !on;
   audio.setEnabled(on);
 }
 $('audio').checked = settings.audio;
 $('sfxvol').disabled = !settings.audio;
 $('musicvol').disabled = !settings.audio;
+$('synth').disabled = !settings.audio;
+$('synth').value = settings.synth;
+$('synth').addEventListener('change', (e) => {
+  settings.synth = e.target.value;
+  saveSettings();
+  audio.unlock();
+  audio.setOpl3(settings.synth === 'opl3');
+});
 $('audio').addEventListener('change', (e) => setAudio(e.target.checked));
 $('sfxvol').value = settings.sfx;
 $('musicvol').value = settings.music;

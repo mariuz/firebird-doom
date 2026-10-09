@@ -839,15 +839,27 @@ the way DOOM played them on an AdLib or Sound Blaster:
   semitone steps that the pitch bend moves (the table is computed: within a step of DMX's own,
   a few cents at most). Percussion plays `GENMIDI`'s 47 drum patches at their fixed notes. It's
   mono, as DMX drove the OPL2.
+- **OPL3**, the **Synth** setting under the view: the chip becomes a YMF262, the Sound Blaster
+  16's, and the driver drives it as DMX's `-opl3` option did (Chocolate Doom's `opl3mode`): 18
+  voices, the second nine on the chip's second register array, and each voice sent to the left,
+  the right or both by its channel's pan (MIDI controller 10, from the MUS file). DMX had the
+  sides the wrong way round – a pan to the right drives the left output – and Chocolate Doom
+  keeps that as its default, so this does too. The chip's OPL3 half: NEW mode (register 0x105),
+  without which it's an OPL2 (the second array silent, the pan bits ignored, both sides the
+  same); the per-channel output bits; and four more waveforms (alternating sine, camel sine,
+  square, logarithmic sawtooth), which `GENMIDI` never asks for. Not emulated: 4-operator
+  channels, rhythm mode and the timers – DMX uses none of them. Changing the chip starts the
+  song over.
 - **Playback** runs in an AudioWorklet ([src/opl-worklet.js](src/opl-worklet.js)), on the audio
   thread, away from the game. Events land on the exact chip sample, and the output is resampled
-  to the sound card's rate.
+  to the sound card's rate, in stereo (the same on both sides from the OPL2).
 
 The emulator plays about 25 times faster than real time. Volumes are under the view, and audio
 starts after your first click or key press (a browser rule). In the devtools console,
 `doom.audio.renderLevel('D_E1M1')` renders a few seconds and reports the level. `npm run
 test:music` checks the chip against its documented behaviour (pitch, levels, envelopes,
-waveforms, feedback, tremolo, vibrato), the driver's register writes, and songs from both WADs.
+waveforms, feedback, tremolo, vibrato; the OPL3's arrays, sides and waveforms), the driver's
+register writes on both chips, and songs from both WADs, mono and stereo.
 
 ## Documentation
 

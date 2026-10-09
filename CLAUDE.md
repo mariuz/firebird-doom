@@ -29,7 +29,7 @@ npm run test:automap       # the automap's zoom, follow, grid, marks
 npm run test:light         # light diminishing vs DOOM's fixed point
 npm run test:statusbar     # the status bar face, the attacker, the death camera
 npm run test:sound         # the 8 sound channels: priorities, distance, following the source
-npm run test:music         # the emulated OPL2, DOOM's DMX music driver, songs from both WADs
+npm run test:music         # the emulated OPL2 and OPL3, DOOM's DMX music driver, songs from both WADs
 WAD=public/wads/freedoom2.wad npm run test:netgame  # two players through NET_TIC, co-op and deathmatch (and without WAD=)
 npm run test:browser       # the page in headless Chromium: title → game → intermission → next map
 npm run test:coop          # co-op and deathmatch: two pages, a real WebRTC link, invite → reply → Start → lockstep

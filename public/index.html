@@ -59,6 +59,10 @@
         <label title="Sound effects and music on or off (M)"><input id="audio" type="checkbox"> Audio</label>
         <label title="Sound effects volume">Sound <input id="sfxvol" type="range" min="0" max="100" step="5"></label>
         <label title="Music volume (GENMIDI OPL synthesis)">Music <input id="musicvol" type="range" min="0" max="100" step="5"></label>
+        <label title="The chip the music plays on: the OPL2 in mono, as DOOM's DMX drove it, or the OPL3 (Sound Blaster 16) in stereo with 18 voices, as DMX's -opl3 option did">Synth <select id="synth">
+          <option value="opl2">OPL2 (mono)</option>
+          <option value="opl3">OPL3 (stereo)</option>
+        </select></label>
         <span title="A demo records one level: every tic's input from a fresh start and seed. The same inputs replay the same game.">Demo
           <button id="demo-record" type="button">● Record</button>
           <button id="demo-stop" type="button">■ Stop</button>

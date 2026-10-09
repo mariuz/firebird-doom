@@ -6,7 +6,8 @@
 // with its priorities, attenuated and panned by where the listener is and
 // following their sources as they move (channels.js). Music is a D_* lump
 // (music.js reads MUS and MIDI) played by DOOM's DMX driver on an emulated
-// OPL2 chip (dmx.js, opl.js), in an AudioWorklet (opl-worklet.js).
+// OPL2 chip (dmx.js, opl.js), in an AudioWorklet (opl-worklet.js) – or, with
+// the Synth setting, an OPL3 in stereo, as DMX's -opl3 option drove it.
 
 import { parseSong } from './music.js';
 import { DmxPlayer, parseGenmidiRaw } from './dmx.js';
@@ -41,6 +42,14 @@ export class DoomAudio {
     this.pendingMusic = null;
     this.currentMusic = null;
     this.enabled = true;
+    this.opl3 = false;
+  }
+
+  /** The Synth setting: an OPL3 (stereo, 18 voices) or the OPL2; the song starts over on the new chip. */
+  setOpl3(on) {
+    if (this.opl3 === !!on) return;
+    this.opl3 = !!on;
+    if (this.currentMusic && this.musicPlaying) this.playMusic(this.currentMusic, true);
   }
 
   setWad(wad) {
@@ -170,7 +179,7 @@ export class DoomAudio {
    */
   renderLevel(lumpName, seconds = 8) {
     const song = parseSong(this.wad.data(this.wad.lump(lumpName)));
-    const p = new DmxPlayer(parseGenmidiRaw(this.wad.data(this.wad.lump('GENMIDI'))), song, { loop: false });
+    const p = new DmxPlayer(parseGenmidiRaw(this.wad.data(this.wad.lump('GENMIDI'))), song, { loop: false, opl3: this.opl3 });
     let sum = 0;
     let peak = 0;
     const n = Math.round(OPL_RATE * seconds);
@@ -186,7 +195,7 @@ export class DoomAudio {
   musicNode() {
     if (!this.oplReady) {
       this.oplReady = this.ctx.audioWorklet.addModule(new URL('./opl-worklet.js', location.href)).then(() => {
-        this.opl = new AudioWorkletNode(this.ctx, 'doom-opl', { numberOfInputs: 0, outputChannelCount: [1] });
+        this.opl = new AudioWorkletNode(this.ctx, 'doom-opl', { numberOfInputs: 0, outputChannelCount: [2] });
         this.opl.connect(this.musicGain);
         return this.opl;
       });
@@ -229,7 +238,7 @@ export class DoomAudio {
         node.port.postMessage({ type: 'bank', data: wad.data(genmidi).slice() });
         this.bankSent = wad;
       }
-      node.port.postMessage({ type: 'play', song });
+      node.port.postMessage({ type: 'play', song, opl3: this.opl3 });
     }).catch((err) => {
       this.musicPlaying = false;
       console.warn('[firebird-doom] no music (the AudioWorklet failed to load):', err);

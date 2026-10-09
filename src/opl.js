@@ -1,6 +1,7 @@
 // opl.js – a Yamaha YM3812 (OPL2), the FM chip on the AdLib and Sound Blaster
 // cards DOOM's music was written for, emulated one sample at a time at the
-// chip's own rate (49716 Hz: its 14.318 MHz clock / 288).
+// chip's own rate (49716 Hz: its 14.318 MHz clock / 288) – and its successor,
+// the YMF262 (OPL3) of the Sound Blaster 16, which DMX could also drive.
 //
 // Written from how the chip works (as documented by the YM3812 manual and the
 // reverse-engineering behind today's emulators), not ported from one:
@@ -14,7 +15,13 @@
 //   - envelopes: attack, decay to the sustain level, sustain (held or not),
 //     release; rates scaled by pitch (KSR); the counter-driven increments
 //   - total level, key scale level, tremolo and vibrato
-// Rhythm mode and the timers aren't emulated: DOOM's driver uses neither.
+// The OPL3 half: a second register array (0x100–0x1FF) with 9 more channels;
+// NEW mode (0x105 bit 0), without which the chip is an OPL2 – the second array
+// silent, the output the same on both sides; with it, each channel's output
+// to the left and right (0xC0 bits 4 and 5) and four more waveforms
+// (alternating sine, camel sine, square, logarithmic sawtooth). Not emulated:
+// rhythm mode, the timers and 4-operator channels (0x104): DOOM's driver uses
+// none of them.
 
 export const OPL_RATE = 49716;
 
@@ -43,6 +50,7 @@ const ROW_NEVER = 13;
 // a register offset (0x00–0x15) → operator slot, and each channel's two slots
 const SLOT_OF = [0, 1, 2, 3, 4, 5, -1, -1, 6, 7, 8, 9, 10, 11, -1, -1, 12, 13, 14, 15, 16, 17];
 const CH_MOD = [0, 1, 2, 6, 7, 8, 12, 13, 14];
+const CHANNELS = 18;      // 9 an array
 
 const ATTACK = 1;
 const DECAY = 2;
@@ -65,52 +73,61 @@ class Slot {
 
 export class Opl {
   constructor() {
-    this.regs = new Uint8Array(256);
-    this.slots = Array.from({ length: 18 }, (_, i) => new Slot(Math.floor(i / 6) * 3 + (i % 3)));
-    this.fnum = new Uint16Array(9);
-    this.block = new Uint8Array(9);
-    this.fb = new Uint8Array(9);
-    this.cnt = new Uint8Array(9);
+    this.regs = new Uint8Array(512);
+    this.slots = Array.from({ length: 36 }, (_, i) => new Slot(Math.floor(i / 18) * 9 + Math.floor((i % 18) / 6) * 3 + (i % 3)));
+    this.fnum = new Uint16Array(CHANNELS);
+    this.block = new Uint8Array(CHANNELS);
+    this.fb = new Uint8Array(CHANNELS);
+    this.cnt = new Uint8Array(CHANNELS);
+    this.pan = new Uint8Array(CHANNELS).fill(3);   // 0xC0 bits 4–5: to the left (1), the right (2), both (3)
     this.wse = 0;             // 0x01 bit 5: waveforms other than the sine allowed
     this.nts = 0;             // 0x08 bit 6: the keyboard split uses F-number bit 8, not 9
     this.dam = 0;             // 0xBD: deep tremolo (4.8 dB, else 1 dB), deep vibrato (14 cents, else 7)
     this.dvb = 0;
+    this.newm = 0;            // 0x105 bit 0: OPL3 mode (NEW)
     this.egCnt = 0;           // the envelope counter
     this.timer = 0;           // the LFO counter (tremolo, vibrato)
     this.tremPos = 0;
+    this.left = 0;            // the last sample, each side
+    this.right = 0;
   }
 
-  /** A write to register REG (0x00–0xFF). */
+  /** A write to register REG (0x000–0x1FF: the second array from 0x100). */
   write(reg, val) {
-    reg &= 0xff;
+    reg &= 0x1ff;
     val &= 0xff;
     this.regs[reg] = val;
-    const hi = reg & 0xe0;
-    if (reg === 0x01) { this.wse = (val >> 5) & 1; return; }
-    if (reg === 0x08) { this.nts = (val >> 6) & 1; return; }
-    if (reg === 0xbd) { this.dam = (val >> 7) & 1; this.dvb = (val >> 6) & 1; return; }
+    const arr = reg >> 8;
+    const r = reg & 0xff;
+    const hi = r & 0xe0;
+    if (arr === 0) {
+      if (r === 0x01) { this.wse = (val >> 5) & 1; return; }
+      if (r === 0x08) { this.nts = (val >> 6) & 1; return; }
+      if (r === 0xbd) { this.dam = (val >> 7) & 1; this.dvb = (val >> 6) & 1; return; }
+    } else if (r === 0x05) { this.newm = val & 1; return; }
+    else if (r < 0x20) return;   // (0x104, the 4-operator connections: not emulated)
     if (hi >= 0x20 && hi <= 0x80 || hi === 0xe0) {
-      const s = SLOT_OF[reg & 0x1f];
+      const s = SLOT_OF[r & 0x1f];
       if (s === undefined || s < 0) return;
-      const o = this.slots[s];
+      const o = this.slots[arr * 18 + s];
       if (hi === 0x20) {
         o.am = val >> 7; o.vib = (val >> 6) & 1; o.egt = (val >> 5) & 1; o.ksr = (val >> 4) & 1; o.mult = val & 15;
       } else if (hi === 0x40) { o.ksl = val >> 6; o.tl = val & 63; }
       else if (hi === 0x60) { o.ar = val >> 4; o.dr = val & 15; }
       else if (hi === 0x80) { o.sl = (val >> 4) === 15 ? 31 : val >> 4; o.rr = val & 15; }
-      else if (hi === 0xe0) o.wave = val & 3;
+      else if (hi === 0xe0) o.wave = val & 7;
       return;
     }
-    const c = reg & 0x0f;
-    if (c > 8) return;
-    if (hi === 0xa0 && reg < 0xb0) this.fnum[c] = (this.fnum[c] & 0x300) | val;
+    if ((r & 0x0f) > 8) return;
+    const c = arr * 9 + (r & 0x0f);
+    if (hi === 0xa0 && r < 0xb0) this.fnum[c] = (this.fnum[c] & 0x300) | val;
     else if (hi === 0xa0) {
       // 0xB0: key on, block, F-number high bits
       this.fnum[c] = (this.fnum[c] & 0xff) | ((val & 3) << 8);
       this.block[c] = (val >> 2) & 7;
       const on = (val >> 5) & 1;
-      for (const s of [CH_MOD[c], CH_MOD[c] + 3]) this.keyOn(this.slots[s], on);
-    } else if (hi === 0xc0) { this.fb[c] = (val >> 1) & 7; this.cnt[c] = val & 1; }
+      for (const s of [CH_MOD[c % 9], CH_MOD[c % 9] + 3]) this.keyOn(this.slots[arr * 18 + s], on);
+    } else if (hi === 0xc0) { this.fb[c] = (val >> 1) & 7; this.cnt[c] = val & 1; this.pan[c] = (val >> 4) & 3; }
   }
 
   keyOn(o, on) {
@@ -178,35 +195,55 @@ export class Opl {
     let ksl = (KSL[this.fnum[c] >> 6] << 2) - ((8 - this.block[c]) << 5);
     ksl = ksl < 0 ? 0 : ksl >> KSL_SHIFT[o.ksl];
     const att = Math.min(511, o.env + (o.tl << 2) + ksl + (o.am ? trem : 0));
-    // the waveform, from the quarter sine
-    const w = this.wse ? o.wave : 0;
+    // the waveform, from the quarter sine (in OPL3 mode all eight are there, WSE or not)
+    const w = this.newm ? o.wave : this.wse ? o.wave & 3 : 0;
     let q = p & 255;
     if (p & 256) q = 255 - q;
     let neg = (p & 512) !== 0;
-    if (w === 1 && neg) return 0;
-    if (w === 2) neg = false;
-    if (w === 3) {
-      if (p & 256) return 0;
-      q = p & 255;
-      neg = false;
+    let l;
+    if (w < 4) {
+      if (w === 1 && neg) return 0;
+      if (w === 2) neg = false;
+      if (w === 3) {
+        if (p & 256) return 0;
+        q = p & 255;
+        neg = false;
+      }
+      l = LOGSIN[q] + (att << 3);
+    } else if (w < 6) {
+      // 4: a whole sine in the first half of the cycle, then silence; 5: the same, both halves up
+      if (p & 512) return 0;
+      neg = w === 4 && (p & 256) !== 0;
+      q = p & 128 ? ((p ^ 255) << 1) & 255 : (p << 1) & 255;
+      l = LOGSIN[q] + (att << 3);
+    } else if (w === 6) {
+      l = att << 3;                     // a square: full amplitude, the sign from the half
+    } else {
+      // a logarithmic sawtooth: the attenuation climbs with the phase, mirrored in the second half
+      l = ((neg ? (p & 511) ^ 511 : p & 511) << 3) + (att << 3);
     }
-    const l = LOGSIN[q] + (att << 3);
     const e = l >> 8;
     if (e > 12) return 0;
     const v = EXP[l & 255] >> e;
     return neg ? -v : v;
   }
 
-  /** The next sample, a signed 16-bit value. */
+  /**
+   * The next sample, a signed 16-bit value: the two sides' mean, each side
+   * left in `left` and `right` (the same as an OPL2; apart in OPL3 mode).
+   */
   sample() {
     this.timer = (this.timer + 1) & 0xffff;
     if ((this.timer & 63) === 0) this.tremPos = (this.tremPos + 1) % 210;
     const trem = (this.tremPos < 105 ? this.tremPos : 210 - this.tremPos) >> (this.dam ? 2 : 4);
     this.egCnt++;
-    let acc = 0;
-    for (let c = 0; c < 9; c++) {
-      const m = this.slots[CH_MOD[c]];
-      const k = this.slots[CH_MOD[c] + 3];
+    let accL = 0;
+    let accR = 0;
+    const channels = this.newm ? CHANNELS : 9;   // (an OPL2 has no second array)
+    for (let c = 0; c < channels; c++) {
+      const base = Math.floor(c / 9) * 18;
+      const m = this.slots[base + CH_MOD[c % 9]];
+      const k = this.slots[base + CH_MOD[c % 9] + 3];
       this.envelope(m);
       this.envelope(k);
       if (m.env >= 511 && k.env >= 511 && m.state === RELEASE && k.state === RELEASE) {
@@ -216,10 +253,15 @@ export class Opl {
       const fb = this.fb[c] ? (m.out + m.prev) >> (9 - this.fb[c]) : 0;
       m.prev = m.out;
       m.out = this.operator(m, fb, trem);
-      if (this.cnt[c]) acc += m.out + this.operator(k, 0, trem);
-      else acc += this.operator(k, m.out, trem);
+      const v = this.cnt[c] ? m.out + this.operator(k, 0, trem) : this.operator(k, m.out, trem);
+      const pan = this.newm ? this.pan[c] : 3;
+      if (pan & 1) accL += v;
+      if (pan & 2) accR += v;
     }
-    return acc > 32767 ? 32767 : acc < -32768 ? -32768 : acc;
+    const clip = (a) => (a > 32767 ? 32767 : a < -32768 ? -32768 : a);
+    this.left = clip(accL);
+    this.right = clip(accR);
+    return clip((accL + accR) >> 1);
   }
 
   /** N samples into OUT (an Int16Array or Float32Array, scaled by SCALE). */

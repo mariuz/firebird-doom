@@ -14,23 +14,28 @@ let failures = 0;
 const assert = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) failures++; };
 
 // ── the chip ─────────────────────────────────────────────────────────────
-/** Channel 0 with a silent modulator and the carrier set up by REGS (offset → value). */
-function tone({ fnum = 580, block = 4, car = {}, mod = {}, fb = 0, cnt = 0, wse = 1, bd = 0 } = {}) {
+/**
+ * Channel 0 with a silent modulator and the carrier set up by REGS (offset →
+ * value). ARR 0x100 puts it on the OPL3's second array; NEWM sets OPL3 mode;
+ * PAN is 0xC0's bits 4–5 (0x30 both sides).
+ */
+function tone({ fnum = 580, block = 4, car = {}, mod = {}, fb = 0, cnt = 0, wse = 1, bd = 0, arr = 0, newm = 0, pan = 0 } = {}) {
   const o = new Opl();
+  o.write(0x105, newm);
   o.write(0x01, wse ? 0x20 : 0);
   o.write(0xbd, bd);
   const op = (base, r) => {
-    o.write(0x20 + base, r.c20 ?? 0x21);
-    o.write(0x40 + base, r.c40 ?? 0);
-    o.write(0x60 + base, r.c60 ?? 0xf0);
-    o.write(0x80 + base, r.c80 ?? 0x0f);
-    o.write(0xe0 + base, r.ce0 ?? 0);
+    o.write(arr | (0x20 + base), r.c20 ?? 0x21);
+    o.write(arr | (0x40 + base), r.c40 ?? 0);
+    o.write(arr | (0x60 + base), r.c60 ?? 0xf0);
+    o.write(arr | (0x80 + base), r.c80 ?? 0x0f);
+    o.write(arr | (0xe0 + base), r.ce0 ?? 0);
   };
   op(0, { c40: 0x3f, ...mod });
   op(3, car);
-  o.write(0xc0, (fb << 1) | cnt);
-  o.write(0xa0, fnum & 0xff);
-  o.write(0xb0, 0x20 | (block << 2) | (fnum >> 8));
+  o.write(arr | 0xc0, (fb << 1) | cnt | pan);
+  o.write(arr | 0xa0, fnum & 0xff);
+  o.write(arr | 0xb0, 0x20 | (block << 2) | (fnum >> 8));
   return o;
 }
 const render = (o, seconds) => o.generate(new Float32Array(Math.round(OPL_RATE * seconds)));
@@ -100,6 +105,43 @@ const peak = (b, from = 0, to = b.length) => { let p = 0; for (let i = from; i <
     `tremolo (deep): ${(20 * Math.log10(ratio)).toFixed(1)} dB of wobble (26 steps of 0.1875 dB = 4.875 expected); vibrato varies the period (${Math.min(...periods)}–${Math.max(...periods)} samples)`);
 }
 
+{
+  // OPL3: the second array, NEW mode, the sides, the four more waveforms
+  const sides = (o, seconds) => {
+    const l = new Float32Array(Math.round(OPL_RATE * seconds));
+    const r = new Float32Array(l.length);
+    for (let i = 0; i < l.length; i++) { o.sample(); l[i] = o.left; r[i] = o.right; }
+    return [l, r];
+  };
+  const [l2, r2] = sides(tone({ arr: 0x100 }), 0.2);
+  const [l3, r3] = sides(tone({ arr: 0x100, newm: 1, pan: 0x30 }), 0.2);
+  assert(peak(l2) === 0 && peak(r2) === 0 && peak(l3) > 4000 && peak(r3) > 4000,
+    `the second array's channel 0 is silent as an OPL2 (${peak(l2)}) and sounds in OPL3 mode (${peak(l3)} both sides)`);
+  const [ll, lr] = sides(tone({ newm: 1, pan: 0x10 }), 0.1);
+  const [rl, rr] = sides(tone({ newm: 1, pan: 0x20 }), 0.1);
+  const [nl, nr] = sides(tone({ newm: 1, pan: 0 }), 0.1);
+  const [ol, or_] = sides(tone({ pan: 0x10 }), 0.1);
+  assert(peak(ll) > 4000 && peak(lr) === 0 && peak(rl) === 0 && peak(rr) > 4000 && peak(nl) === 0 && peak(nr) === 0 && peak(ol) > 4000 && peak(or_) > 4000,
+    'panning: bit 4 is the left side, bit 5 the right, neither is silence; as an OPL2 the bits do nothing and both sides sound');
+  const mono = tone({ newm: 1, pan: 0x10 });
+  const m = render(mono, 0.1);
+  assert(peak(m) > 2000 && peak(m) <= 2048, `the mono sample is the two sides' mean (a left-only tone comes out at ${peak(m)})`);
+  const neg = (b) => b.some((v) => v < 0);
+  const zeros = (b) => b.filter((v) => v === 0).length / b.length;
+  const w4 = render(tone({ newm: 1, pan: 0x30, car: { ce0: 4 } }), 0.2);
+  const w5 = render(tone({ newm: 1, pan: 0x30, car: { ce0: 5 } }), 0.2);
+  const w6 = render(tone({ newm: 1, pan: 0x30, car: { ce0: 6 } }), 0.2);
+  const w7 = render(tone({ newm: 1, pan: 0x30, car: { ce0: 7 } }), 0.2);
+  const w4opl2 = render(tone({ car: { ce0: 4 } }), 0.2);
+  const sixes = w6.filter((v) => Math.abs(v) >= 4000).length / w6.length;
+  // (the log sawtooth's quiet end falls below the chip's floor: about a fifth of each cycle is 0)
+  assert(neg(w4) && zeros(w4) > 0.45 && !neg(w5) && zeros(w5) > 0.45 && sixes > 0.95 && neg(w7) && zeros(w7) > 0.1 && zeros(w7) < 0.3 && peak(w7) > 4000
+    && neg(w4opl2) && zeros(w4opl2) < 0.05,
+    `OPL3 waveforms: alternating sine (both signs, silent half the time), camel sine (one sign), square (full scale ${(100 * sixes).toFixed(0)}% of the time), log sawtooth (${(100 * zeros(w7)).toFixed(0)}% silent); an OPL2 reads 4 as the sine`);
+  const noWse = render(tone({ newm: 1, pan: 0x30, wse: 0, car: { ce0: 1 } }), 0.2);
+  assert(!neg(noWse), 'in OPL3 mode the waveforms are there without waveform select');
+}
+
 // ── the driver ───────────────────────────────────────────────────────────
 const wad1 = new Wad(fs.readFileSync(path.join(root, 'public/wads/freedoom1.wad')));
 const bank = parseGenmidiRaw(wad1.data(wad1.lump('GENMIDI')));
@@ -161,9 +203,41 @@ assert(bank.length === 175 && bank.every((i) => i.voices.length === 2), `GENMIDI
     `DMX's frequency table, computed: 668 F-numbers, starting 0x${FREQ_CURVE[0].toString(16)} as DMX's does`);
 }
 
+{
+  // DMX's -opl3: 18 voices, the second nine on the second array, the sides from the pan controller
+  const writes = [];
+  const chip = new Opl();
+  const spy = { write: (r, v) => { writes.push([r, v]); chip.write(r, v); } };
+  const d = new Dmx(bank, spy, { opl3: true });
+  assert(d.voices.length === 18 && writes.some(([r, v]) => r === 0x105 && v === 1) && writes.some(([r]) => r === 0x143)
+    && chip.regs[0x1c0] === 0x30 && chip.regs[0xc0] === 0x30,
+    'as an OPL3: 18 voices, NEW set, both arrays initialised, every channel to both sides');
+  d.event({ type: 'prog', ch: 0, a: 0 });
+  const per = bank[0].flags & 4 ? 2 : 1;   // (a two-voice instrument takes two)
+  for (let k = 0; k < 12; k++) d.event({ type: 'on', ch: 0, a: 48 + k, b: 100 });
+  const used = d.voices.filter((v) => v.channel).length;
+  const onSecond = d.voices.filter((v) => v.channel && v.array === 0x100).length;
+  assert(used === Math.min(18, 12 * per) && onSecond === used - 9 && (chip.regs[0x1b0] & 0x20),
+    `twelve notes of a ${per}-voice instrument: ${used} voices, ${onSecond} of them on the second array (keyed through 0x1B0)`);
+  writes.length = 0;
+  d.event({ type: 'cc', ch: 0, a: 10, b: 127 });   // pan hard right…
+  const panRight = chip.regs[0xc0] & 0x30;
+  d.event({ type: 'cc', ch: 0, a: 10, b: 0 });
+  const panLeft = chip.regs[0xc0] & 0x30;
+  d.event({ type: 'cc', ch: 0, a: 10, b: 64 });
+  const panMid = chip.regs[0xc0] & 0x30;
+  assert(panRight === 0x10 && panLeft === 0x20 && panMid === 0x30 && writes.every(([r]) => (r & 0xf0) === 0xc0),
+    `pan: 127 drives the left output (0x${panRight.toString(16)}), 0 the right, 64 both – DMX's sides, the wrong way round, as Chocolate Doom keeps them`);
+  const d2 = new Dmx(bank, new Opl());
+  d2.event({ type: 'cc', ch: 0, a: 10, b: 127 });
+  assert(d2.voices.length === 9 && (d2.opl.regs[0xc0] & 0x30) === 0, 'as an OPL2: nine voices, and pan is nothing to it');
+}
+
 // ── songs ────────────────────────────────────────────────────────────────
 const wad2Path = path.join(root, 'public/wads/freedoom2.wad');
-for (const [w, name] of [[wad1, 'D_E1M1'], [wad1, 'D_INTER'], ...(fs.existsSync(wad2Path) ? [[new Wad(fs.readFileSync(wad2Path)), 'D_RUNNIN']] : [])]) {
+// (D_E1M2 and D_STALKS pan a channel to a side from the start: the stereo check has something to hear)
+const wad2 = fs.existsSync(wad2Path) ? new Wad(fs.readFileSync(wad2Path)) : null;
+for (const [w, name] of [[wad1, 'D_E1M1'], [wad1, 'D_INTER'], [wad1, 'D_E1M2'], ...(wad2 ? [[wad2, 'D_RUNNIN'], [wad2, 'D_STALKS']] : [])]) {
   const song = parseSong(w.data(w.lump(name)));
   const p = new DmxPlayer(parseGenmidiRaw(w.data(w.lump('GENMIDI'))), song, { loop: false });
   const n = OPL_RATE * 6;
@@ -181,6 +255,29 @@ for (const [w, name] of [[wad1, 'D_E1M1'], [wad1, 'D_INTER'], ...(fs.existsSync(
   const rms = Math.sqrt(sum / n);
   assert(bad === 0 && rms > 0.01 && pk < 1 && ms < 6000 / 4,
     `${name}: 6 s rendered in ${ms.toFixed(0)} ms (needs under real time: ${(6000 / ms).toFixed(0)}× faster), level ${rms.toFixed(3)} rms, peak ${pk.toFixed(2)}`);
+  // and in stereo on the OPL3: both sides sound, apart wherever the song pans
+  const p3 = new DmxPlayer(parseGenmidiRaw(w.data(w.lump('GENMIDI'))), song, { loop: false, opl3: true });
+  // does a note sound on a channel panned to one side within the 6 s?
+  const chPan = Array(16).fill(64);
+  let sided = false;
+  for (const e of song.events) {
+    if (e.t * OPL_RATE >= n) break;
+    if (e.type === 'cc' && e.a === 10) chPan[e.ch] = e.b;
+    if (e.type === 'on' && (chPan[e.ch] >= 96 || chPan[e.ch] <= 48)) sided = true;
+  }
+  let sl = 0;
+  let sr = 0;
+  let apart = 0;
+  const t3 = performance.now();
+  for (let i = 0; i < n; i++) {
+    p3.sample();
+    sl += p3.opl.left * p3.opl.left;
+    sr += p3.opl.right * p3.opl.right;
+    if (p3.opl.left !== p3.opl.right) apart++;
+  }
+  const ms3 = performance.now() - t3;
+  assert(sl > 0 && sr > 0 && (sided ? apart > 0 : apart === 0) && ms3 < 6000 / 3,
+    `${name} on the OPL3: ${ms3.toFixed(0)} ms, ${(Math.sqrt(sl / n) / 32768).toFixed(3)} rms left, ${(Math.sqrt(sr / n) / 32768).toFixed(3)} right${sided ? `, apart ${(100 * apart / n).toFixed(1)}% of the time (a note on a panned channel)` : ' (nothing panned to a side yet)'}`);
 }
 
 console.log(failures ? `${failures} failure(s)` : 'music ok');

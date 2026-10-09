@@ -10,8 +10,8 @@ items as they land, and add what you find missing.
 - **A TURN relay** for multiplayer behind strict NATs (needs a server; the page has none).
 - **Two checks that need id's WADs** (Screens, below): DOOM I's episode maps at the intermission,
   and whether its endings should borrow Freedoom's text.
-- **Declined extras**, noted where they come up: random sound pitch, OPL3 stereo and rhythm mode,
-  a frag limit and obituaries (none of them vanilla 1.9).
+- **Declined extras**, noted where they come up: random sound pitch, the OPL3's rhythm mode and
+  4-operator channels, a frag limit and obituaries (none of them vanilla 1.9).
 
 Everything else below is done.
 
@@ -125,8 +125,9 @@ Everything else below is done.
   stop with it. Not done: the chainsaw's and others' random pitch (vanilla 1.9 doesn't do it
   either).
 - ~~**Music.**~~ Done: an emulated YM3812 (`src/opl.js`) driven by DMX's logic (`src/dmx.js`), in an
-  AudioWorklet. Not done: OPL3 mode with stereo (DMX ran the OPL2 in mono; Chocolate Doom's OPL3
-  option is an extra), the rhythm mode and the timers (DMX uses neither).
+  AudioWorklet; and the YMF262 (OPL3) in stereo with 18 voices as DMX's `-opl3` option drove it,
+  the **Synth** setting. Not done: the rhythm mode, the timers and 4-operator channels (DMX uses
+  none of them).
 
 ## Tooling
 

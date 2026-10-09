@@ -76,6 +76,26 @@ try {
   });
   assert(music.worklet && music.song === 'D_E1M1' && music.rms > 0.003,
     `E1M1's music plays from the OPL2 worklet (${music.song ?? music.state}, level ${music.rms?.toFixed(3)})`);
+  // the Synth setting: on the OPL3 the song starts over, in stereo, and still sounds
+  await page.selectOption('#synth', 'opl3');
+  await page.waitForTimeout(500);
+  const music3 = await doom(async () => {
+    const a = window.doom.audio;
+    const an = a.ctx.createAnalyser();
+    a.musicGain.connect(an);
+    const buf = new Float32Array(2048);
+    let sum = 0;
+    for (let k = 0; k < 10; k++) {
+      await new Promise((r) => setTimeout(r, 100));
+      an.getFloatTimeDomainData(buf);
+      for (const v of buf) sum += v * v;
+    }
+    a.musicGain.disconnect(an);
+    return { opl3: a.opl3, channels: a.opl.channelCount, rms: Math.sqrt(sum / 20480), song: a.currentMusic };
+  });
+  assert(music3.opl3 && music3.rms > 0.003 && music3.song === 'D_E1M1',
+    `Synth OPL3: the music plays on from the OPL3 worklet (level ${music3.rms.toFixed(3)})`);
+  await page.selectOption('#synth', 'opl2');
 
   // F6 picks the quicksave slot; walk away; F9 brings the game back
   await key('F6');
