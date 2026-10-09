@@ -589,7 +589,12 @@ async function netTics(tics) {
     lastFire = rows[net.me - 1][4] === 1;
     ran++;
     // the consistency check (d_net.c's consistancy): the host compares everyone's
-    if (r.tic % 35 === 0) net.ls.report(r.tic, (await db.query('SELECT csum FROM net_checksum')).rows[0].CSUM);
+    if (r.tic % 35 === 0) {
+      const sum = (await db.query('SELECT csum FROM net_checksum')).rows[0].CSUM;
+      net.ls.report(r.tic, sum);
+      net.sums.set(r.tic, sum);           // (the last few, for doom.net)
+      if (net.sums.size > 8) net.sums.delete(net.sums.keys().next().value);
+    }
     if (hud.EXIT_KIND) break;
   }
   if (net.ls.error) {
@@ -614,7 +619,7 @@ async function beginNet({ me, players, mapName, skill, seed }, links) {
     if (to === 'all') for (const l of links.values()) l.send(m);
     else links.get(to)?.send(m);
   };
-  net = { me, players, links, ls: new Lockstep({ me, players, send }) };
+  net = { me, players, links, ls: new Lockstep({ me, players, send }), sums: new Map() };
   netWait = 0;
   for (const [pid, link] of links) {
     link.onmessage = (m) => net?.links === links && net.ls.receive(pid, m);
@@ -1209,7 +1214,7 @@ async function boot() {
       addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await reloadWads(); },
       useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await reloadWads(); },
       get demo() { return { recording: !!recorder, playing: !!demoPlayer, last: lastDemo }; },
-      get net() { return net && { me: net.me, players: net.players, tic: net.ls.executed, error: net.ls.error }; },
+      get net() { return net && { me: net.me, players: net.players, tic: net.ls.executed, error: net.ls.error, sums: Object.fromEntries(net.sums) }; },
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },
       get melting() { return !!melt; },

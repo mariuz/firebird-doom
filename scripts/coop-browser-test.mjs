@@ -84,17 +84,49 @@ try {
   // the guest walks: player 2 moves on both screens, player 1 doesn't
   const players = (p) => p.evaluate(() => window.doom.sql(
     "SELECT p.id, CAST(t.x AS INTEGER) x, CAST(t.y AS INTEGER) y FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id"));
+  /**
+   * The guest holds W until player 2 has gone FAR units on the host's screen; if
+   * that gets nowhere in 4 s (a wall ahead: E1M2's starts face one), S. How far it went.
+   */
+  const walk = async (far = 64) => {
+    const from = (await players(host))[1];
+    let moved = 0;
+    for (const key of ['KeyW', 'KeyS']) {
+      await guest.keyboard.down(key);
+      for (let i = 0; i < (key === 'KeyW' ? 20 : 150) && moved <= far; i++) {
+        await guest.waitForTimeout(200);
+        const at = (await players(host))[1];
+        moved = Math.hypot(at.X - from.X, at.Y - from.Y);
+      }
+      await guest.keyboard.up(key);
+      if (moved > far) break;
+    }
+    return moved;
+  };
+  /**
+   * The two games at the same tic: the next consistency checksum both pages have
+   * made (every 35 tics) after now. (Reading the tables live would catch the
+   * two at different tics: the lockstep lets one run a few tics ahead.)
+   */
+  const agree = async () => {
+    const after = Math.max(...await Promise.all([host, guest].map((p) => p.evaluate(() => window.doom.net.tic))));
+    const common = (sums) => Object.keys(sums[0]).map(Number).filter((t) => t > after && t in sums[1]);
+    for (let i = 0; i < 300; i++) {
+      const sums = await Promise.all([host, guest].map((p) => p.evaluate(() => window.doom.net.sums)));
+      const tics = common(sums);
+      if (tics.length) return { tic: tics[0], same: sums[0][tics[0]] === sums[1][tics[0]] };
+      await host.waitForTimeout(100);
+    }
+    return { tic: null, same: false };
+  };
   const before = await players(host);
   await guest.click('#screen', { position: { x: 300, y: 200 } }).catch(() => {});
-  await guest.keyboard.down('KeyW');
-  await guest.waitForTimeout(1500);
-  await guest.keyboard.up('KeyW');
-  await guest.waitForTimeout(1500);
-  const [a, b] = [await players(host), await players(guest)];
-  const moved = Math.hypot(a[1].X - before[1].X, a[1].Y - before[1].Y);
+  const moved = await walk();
+  const a = await players(host);
   assert(moved > 64 && a[0].X === before[0].X && a[0].Y === before[0].Y,
     `the guest's W moves player 2 on the host's screen (${moved.toFixed(0)} units), and not player 1`);
-  assert(JSON.stringify(a) === JSON.stringify(b), `…and both browsers have both players in the same places (${JSON.stringify(b)})`);
+  const same = await agree();
+  assert(same.same, `…and both browsers' games are the same at tic ${same.tic} (their checksums)`);
 
   // a while longer, both firing: the checksums every 35 tics still agree
   await host.keyboard.down('ControlLeft');
@@ -137,19 +169,23 @@ try {
     }
   };
   await Promise.all([through(host), through(guest)]);
-  for (const p of [host, guest]) await until(p, () => window.doom.net?.tic > 0 && window.doom.screen === 'level' && !window.doom.melting);
+  // (SCREEN reads 'level' while the next map is still loading: wait for E1M2 in the
+  // tables with both players, and the melt over)
+  const onE1M2 = (p) => p.evaluate(async () => !window.doom.melting && window.doom.screen === 'level'
+    && (await window.doom.sql("SELECT g.map_name, (SELECT COUNT(*) FROM player p JOIN things t ON t.id = p.thing_id) n FROM game g")
+      .then((r) => r[0].MAP_NAME.trim() === 'E1M2' && r[0].N === 2)));
+  for (const p of [host, guest]) {
+    for (let i = 0; i < 600 && !(await onE1M2(p)); i++) await p.waitForTimeout(100);
+  }
   const t1 = await Promise.all([host, guest].map((p) => p.evaluate(() => window.doom.net.tic)));
-  await guest.keyboard.down('KeyW');
-  await guest.waitForTimeout(1500);
-  await guest.keyboard.up('KeyW');
-  await guest.waitForTimeout(1500);
+  const moved2 = await walk(8);   // (E1M2's player 2 start is a tight spot)
+  const later = await agree();
   const next = await Promise.all([host, guest].map((p) => p.evaluate(async () => ({
     net: window.doom.net, map: (await window.doom.sql('SELECT map_name FROM game'))[0].MAP_NAME.trim(),
-    players: await window.doom.sql('SELECT p.id, CAST(t.x AS INTEGER) x, CAST(t.y AS INTEGER) y FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id'),
+    players: (await window.doom.sql('SELECT COUNT(*) n FROM player'))[0].N,
   }))));
-  assert(next.every((n) => n.map === 'E1M2' && !n.net.error && n.net.tic > Math.max(...t1)) && next[0].players.length === 2
-    && JSON.stringify(next[0].players) === JSON.stringify(next[1].players),
-    `…and both go on to ${next[0].map} together, two players, still in lockstep (tic ${next[0].net.tic}, ${JSON.stringify(next[0].players)})`);
+  assert(next.every((n) => n.map === 'E1M2' && n.players === 2 && !n.net.error && n.net.tic > Math.max(...t1)) && moved2 > 8 && later.same,
+    `…and both go on to ${next[0].map} together: two players, player 2 walks (${moved2.toFixed(0)} units), the games agree at tic ${later.tic}`);
 
   // the guest leaves: the host's game stops and says why
   await guest.evaluate(() => document.getElementById('net-leave').click());   // (the page reflows as it plays: no pointer)
