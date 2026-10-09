@@ -38,6 +38,18 @@ await build({
   logLevel: 'warning',
 });
 
+// The music's AudioWorklet (DMX on the emulated OPL2): a module of its own
+await build({
+  entryPoints: [path.join(root, 'src/opl-worklet.js')],
+  outfile: path.join(OUT, 'opl-worklet.js'),
+  bundle: true,
+  format: 'esm',
+  platform: 'browser',
+  target: 'es2020',
+  minify: true,
+  logLevel: 'warning',
+});
+
 // The engine Worker: a classic script that loads the Emscripten glue first and
 // finds the .wasm next to itself, whatever path prefix the site is served from.
 const worker = await build({

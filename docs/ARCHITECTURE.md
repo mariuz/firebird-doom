@@ -39,7 +39,8 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `src/menu.js` | The title loop (`D_DoAdvanceDemo`) and the menus (`m_menu.c`): `Menu` (menus, cursor, messages, sliders; actions are callbacks) and `TitleLoop`. |
 | `src/dehacked.js` | DeHackEd: `parseDehacked`, `applyDehacked` (a patched copy of `THING_TYPES`, the `RULES` row, cheat spellings, par times, a report of what can't apply), `MOBJ_TYPES`, `SFX`. Applied in `loadResources`. |
 | `src/cheats.js` | `cht_CheckCheat`: readers for fixed cheats, IDCLEV/IDMUS digits, `clevMap`, `idmusMap`. |
-| `src/audio.js` / `src/music.js` | Sound effects from `SOUND_EVENTS`, positioned like `S_AdjustSoundParams`; MUS/MIDI music on an OPL2-style FM synthesiser with the WAD's `GENMIDI`. |
+| `src/audio.js` / `src/channels.js` | Sound effects from `SOUND_EVENTS` on DOOM's 8 channels (`S_StartSound`, `S_getChannel`, `S_AdjustSoundParams`, `S_UpdateSounds`). |
+| `src/music.js` / `src/dmx.js` / `src/opl.js` / `src/opl-worklet.js` | Music: MUS/MIDI read into events, DOOM's DMX driver turning them into register writes with the WAD's `GENMIDI`, an emulated YM3812 (OPL2), all in an AudioWorklet. |
 | `public/` | `index.html`, `style.css`, `coi-serviceworker.js` (cross-origin isolation for the Worker), and `wads/` (fetched, not committed). |
 | `scripts/` | The build (`build.mjs`, esbuild-wasm), `fetch-wad.mjs`, the tests, `screenshot.mjs`, `bench.mjs`. |
 

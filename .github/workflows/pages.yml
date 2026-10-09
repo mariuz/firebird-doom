@@ -114,6 +114,9 @@ jobs:
       - name: Sound channels
         run: npm run test:sound
 
+      - name: Music (the OPL2 emulator and the DMX driver)
+        run: npm run test:music
+
       # BSP + solidsegs must find exactly the walls brute force finds
       - name: Renderer equivalence (BSP vs brute force)
         run: npm run test:renderers -- E1M1 E1M2 E1M3

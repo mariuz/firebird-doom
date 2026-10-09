@@ -103,8 +103,9 @@ you find missing.
   priorities, `P_AproxDistance` attenuation, map 8's floor, sounds that follow their source and
   stop with it. Not done: the chainsaw's and others' random pitch (vanilla 1.9 doesn't do it
   either).
-- **Music.** The OPL2-style synth is an approximation of DMX's OPL playback (no OPL3, simplified
-  envelopes). A real OPL emulator (for example a port of Nuked-OPL3) would sound right.
+- ~~**Music.**~~ Done: an emulated YM3812 (`src/opl.js`) driven by DMX's logic (`src/dmx.js`), in an
+  AudioWorklet. Not done: OPL3 mode with stereo (DMX ran the OPL2 in mono; Chocolate Doom's OPL3
+  option is an extra), the rhythm mode and the timers (DMX uses neither).
 
 ## Tooling
 

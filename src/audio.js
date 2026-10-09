@@ -5,9 +5,12 @@
 // plays them: DMX sound lumps (DS*) through Web Audio, on DOOM's 8 channels
 // with its priorities, attenuated and panned by where the listener is and
 // following their sources as they move (channels.js). Music is a D_* lump
-// played by music.js.
+// (music.js reads MUS and MIDI) played by DOOM's DMX driver on an emulated
+// OPL2 chip (dmx.js, opl.js), in an AudioWorklet (opl-worklet.js).
 
-import { parseSong, parseGenmidi, OplSynth } from './music.js';
+import { parseSong } from './music.js';
+import { DmxPlayer, parseGenmidiRaw } from './dmx.js';
+import { OPL_RATE } from './opl.js';
 import { Channels, adjust } from './channels.js';
 
 // DOOM II's music lumps: MAP01..MAP30, the secret levels (MAP31 EVIL, MAP32
@@ -43,9 +46,8 @@ export class DoomAudio {
   setWad(wad) {
     this.wad = wad;
     this.buffers.clear();
-    this.bank = null;
-    if (this.synth) this.synth.stop();
-    this.synth = null;
+    this.bankSent = null;      // which WAD's GENMIDI the worklet has
+    this.stopMusic();
   }
 
   /** Browsers only allow audio after a user gesture: call from input handlers. */
@@ -77,8 +79,8 @@ export class DoomAudio {
     if (!this.ctx) return;
     this.sfxGain.gain.value = sfx;
     this.musicGain.gain.value = music;
-    if (music === 0 && this.synth) this.synth.stop();
-    else if (music > 0 && this.currentMusic && !this.synth?.timer) this.playMusic(this.currentMusic, true);
+    if (music === 0) this.stopMusic();
+    else if (this.currentMusic && !this.musicPlaying) this.playMusic(this.currentMusic, true);
   }
 
   suspend(on) {
@@ -91,7 +93,7 @@ export class DoomAudio {
   setEnabled(on) {
     this.enabled = on;
     if (!on) {
-      if (this.synth) this.synth.stop();
+      this.stopMusic();
       this.channels.slots.forEach((_, i) => this.channels.free(i));
       if (this.ctx) this.ctx.suspend();
     } else {
@@ -163,44 +165,74 @@ export class DoomAudio {
   }
 
   /**
-   * Debugging aid: render the first seconds of a song offline and report its
-   * level, e.g. await doom.audio.renderLevel('D_E1M1', 8) in the console.
+   * Debugging aid: render the first seconds of a song (no Web Audio needed) and
+   * report its level, e.g. doom.audio.renderLevel('D_E1M1', 8) in the console.
    */
-  async renderLevel(lumpName, seconds = 8) {
-    const lump = this.wad.lump(lumpName);
-    const song = parseSong(this.wad.data(lump));
-    const ctx = new OfflineAudioContext(2, 44100 * seconds, 44100);
-    const synth = new OplSynth(ctx, ctx.destination, parseGenmidi(this.wad.data(this.wad.lump('GENMIDI'))));
-    for (const e of song.events) if (e.t < seconds) synth.dispatch(e, e.t);
-    const out = (await ctx.startRendering()).getChannelData(0);
+  renderLevel(lumpName, seconds = 8) {
+    const song = parseSong(this.wad.data(this.wad.lump(lumpName)));
+    const p = new DmxPlayer(parseGenmidiRaw(this.wad.data(this.wad.lump('GENMIDI'))), song, { loop: false });
     let sum = 0;
     let peak = 0;
-    for (const v of out) {
+    const n = Math.round(OPL_RATE * seconds);
+    for (let i = 0; i < n; i++) {
+      const v = p.sample();
       sum += v * v;
       peak = Math.max(peak, Math.abs(v));
     }
-    return { rms: Math.sqrt(sum / out.length), peak, voices: synth.voices.length };
+    return { rms: Math.sqrt(sum / n), peak, voices: p.dmx.voices.filter((v) => v.channel).length };
+  }
+
+  /** The worklet that plays the music, loaded once per audio context. */
+  musicNode() {
+    if (!this.oplReady) {
+      this.oplReady = this.ctx.audioWorklet.addModule(new URL('./opl-worklet.js', location.href)).then(() => {
+        this.opl = new AudioWorkletNode(this.ctx, 'doom-opl', { numberOfInputs: 0, outputChannelCount: [1] });
+        this.opl.connect(this.musicGain);
+        return this.opl;
+      });
+    }
+    return this.oplReady;
+  }
+
+  stopMusic() {
+    this.musicPlaying = false;
+    this.opl?.port.postMessage({ type: 'stop' });
   }
 
   playMusic(lumpName, force = false) {
-    if (!force && lumpName === this.currentMusic && this.synth?.timer) return;
+    if (!force && lumpName === this.currentMusic && this.musicPlaying) return;
     this.currentMusic = lumpName;
     if (!this.enabled) return;
     if (!this.ctx || this.ctx.state !== 'running') {
       this.pendingMusic = lumpName;
       return;
     }
-    if (this.synth) this.synth.stop();
+    this.stopMusic();
     if (!lumpName || this.musicVolume === 0 || !this.wad) return;
     const lump = this.wad.lump(lumpName);
     const genmidi = this.wad.lump('GENMIDI');
     if (!lump || !genmidi) return;
-    if (!this.bank) this.bank = parseGenmidi(this.wad.data(genmidi));
-    if (!this.synth) this.synth = new OplSynth(this.ctx, this.musicGain, this.bank);
+    let song;
     try {
-      this.synth.play(parseSong(this.wad.data(lump)));
+      song = parseSong(this.wad.data(lump));
     } catch (err) {
-      console.warn(`[firebird-doom] could not play ${lumpName}:`, err);
+      console.warn(`[firebird-doom] could not read ${lumpName}:`, err);
+      return;
     }
+    if (!song) return;
+    this.musicPlaying = true;
+    const wad = this.wad;
+    this.musicNode().then((node) => {
+      // (still the song wanted? a newer playMusic or a stop may have come first)
+      if (this.currentMusic !== lumpName || !this.musicPlaying || this.wad !== wad) return;
+      if (this.bankSent !== wad) {
+        node.port.postMessage({ type: 'bank', data: wad.data(genmidi).slice() });
+        this.bankSent = wad;
+      }
+      node.port.postMessage({ type: 'play', song });
+    }).catch((err) => {
+      this.musicPlaying = false;
+      console.warn('[firebird-doom] no music (the AudioWorklet failed to load):', err);
+    });
   }
 }

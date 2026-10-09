@@ -68,7 +68,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `I_SetPalette` / `I_FinishUpdate`: palette indices to colours | [src/present.js](src/present.js): WebGL palette shader, Canvas 2D fallback |
 | `r_things.c`, `R_DrawFuzzColumn` (`MF_SHADOW`) | `RENDER_SPRITES` / `FRAME_SPRITES` (its `fuzz` column); fuzz in [src/renderer.js](src/renderer.js) |
 | `S_StartSound` (+ `sfxinfo` sounds per monster) | `PLAY_SOUND` / `SECTOR_SOUND` → `SOUND_EVENTS`; played by [src/audio.js](src/audio.js) |
-| `I_PlaySong` with the OPL `GENMIDI` bank | [src/music.js](src/music.js): MUS + MIDI parser, FM synthesiser |
+| `I_PlaySong`, DMX's OPL driver, the YM3812 | [src/music.js](src/music.js) (MUS + MIDI), [src/dmx.js](src/dmx.js) (the driver), [src/opl.js](src/opl.js) (the chip), [src/opl-worklet.js](src/opl-worklet.js) |
 
 ### The renderer
 
@@ -733,14 +733,32 @@ wherever they are: `A_Look` and `A_Scream` start them with no origin for those t
 
 `npm run test:sound` checks the distances, the priorities, the channel stealing and the following.
 
-Music comes from the WAD's `D_*` lumps (MIDI in Freedoom, MUS in the original IWADs). It plays
-through a small FM synthesiser built from the WAD's own `GENMIDI` lump, the OPL2 instrument
-bank DOOM's Adlib/Sound Blaster driver used. Each voice is a modulator oscillator driving a
-carrier's frequency (or both summed, for additive patches), with OPL-style envelopes and the
-four OPL2 waveforms. Operator feedback is baked into the waveform. Percussion uses GENMIDI's
-47 drum patches. Volumes are under the view, and audio starts after your first click or key
-press (a browser rule). In the devtools console, `await doom.audio.renderLevel('D_E1M1')`
-renders a few seconds offline and reports the level.
+Music comes from the WAD's `D_*` lumps (MIDI in Freedoom, MUS in the original IWADs), played
+the way DOOM played them on an AdLib or Sound Blaster:
+
+- **The chip** ([src/opl.js](src/opl.js)) is an emulated Yamaha YM3812 (OPL2), sample by sample
+  at its own 49,716 Hz. It's written from how the chip works, not ported from another emulator:
+  9 channels of 2 operators (FM or additive, with feedback), phase counters, a quarter-sine table
+  in the log domain and an exponent table back (the chip never multiplies), the 4 waveforms,
+  envelopes with their counter-driven rate steps and key scaling, total level, key scale level,
+  tremolo and vibrato.
+- **The driver** ([src/dmx.js](src/dmx.js)) is DOOM's DMX, after Chocolate Doom's
+  reconstruction of it (`i_oplmusic.c`). The WAD's `GENMIDI` instruments are loaded operator by
+  operator, carrier first. There are 9 voices, and with none free it takes a second voice of a
+  two-voice instrument, or the one on the highest channel. Note and channel volume go through
+  DMX's volume curve into the carrier's level. Pitch comes from DMX's frequency table, in 1/32
+  semitone steps that the pitch bend moves (the table is computed: within a step of DMX's own,
+  a few cents at most). Percussion plays `GENMIDI`'s 47 drum patches at their fixed notes. It's
+  mono, as DMX drove the OPL2.
+- **Playback** runs in an AudioWorklet ([src/opl-worklet.js](src/opl-worklet.js)), on the audio
+  thread, away from the game. Events land on the exact chip sample, and the output is resampled
+  to the sound card's rate.
+
+The emulator plays about 25 times faster than real time. Volumes are under the view, and audio
+starts after your first click or key press (a browser rule). In the devtools console,
+`doom.audio.renderLevel('D_E1M1')` renders a few seconds and reports the level. `npm run
+test:music` checks the chip against its documented behaviour (pitch, levels, envelopes,
+waveforms, feedback, tremolo, vibrato), the driver's register writes, and songs from both WADs.
 
 ## Documentation
 

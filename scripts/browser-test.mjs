@@ -30,7 +30,7 @@ await new Promise((resolve, reject) => {
   server.on('exit', (code) => reject(new Error(`the server exited (${code})`)));
 });
 
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined });
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined, args: ['--autoplay-policy=no-user-gesture-required'] });
 const errors = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
@@ -56,6 +56,26 @@ try {
   await page.waitForTimeout(1500);
   const map0 = (await doom(() => window.doom.sql('SELECT map_name FROM game').then((r) => r[0].MAP_NAME))).trim();
   assert(map0 === 'E1M1' && (await tic()) > t0, `New Game: the title melts into ${map0}, and the game ticks`);
+
+  // the music: DMX on the emulated OPL2, in its AudioWorklet, heard through the music volume
+  const music = await doom(async () => {
+    const a = window.doom.audio;
+    if (!a.ctx || a.ctx.state !== 'running') return { state: a.ctx?.state ?? 'none' };
+    await a.oplReady;
+    const an = a.ctx.createAnalyser();
+    a.musicGain.connect(an);
+    const buf = new Float32Array(2048);
+    let sum = 0;
+    for (let k = 0; k < 10; k++) {
+      await new Promise((r) => setTimeout(r, 100));
+      an.getFloatTimeDomainData(buf);
+      for (const v of buf) sum += v * v;
+    }
+    a.musicGain.disconnect(an);
+    return { state: a.ctx.state, song: a.currentMusic, worklet: !!a.opl, rms: Math.sqrt(sum / 20480) };
+  });
+  assert(music.worklet && music.song === 'D_E1M1' && music.rms > 0.003,
+    `E1M1's music plays from the OPL2 worklet (${music.song ?? music.state}, level ${music.rms?.toFixed(3)})`);
 
   // F6 picks the quicksave slot; walk away; F9 brings the game back
   await key('F6');

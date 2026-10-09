@@ -28,6 +28,7 @@ npm run test:automap       # the automap's zoom, follow, grid, marks
 npm run test:light         # light diminishing vs DOOM's fixed point
 npm run test:statusbar     # the status bar face, the attacker, the death camera
 npm run test:sound         # the 8 sound channels: priorities, distance, following the source
+npm run test:music         # the emulated OPL2, DOOM's DMX music driver, songs from both WADs
 npm run test:browser       # the page in headless Chromium: title → game → intermission → next map
 npm run test:visual        # the README's pictures, pixel for pixel against docs/screenshots.json
 npm run test:renderers -- E1M1 E1M2 E1M3
@@ -38,7 +39,7 @@ npm run screenshots        # regenerates docs/screenshot-*.png and docs/screensh
 ```
 
 Before every commit, run the smoke test, weapons/specials/physics on **both** WADs, finale,
-intermission, menu, automap, light, statusbar, sound, dehacked, pwad, savegame and demo (both WADs), the visual test, the build and the browser test. A change that
+intermission, menu, automap, light, statusbar, sound, music, dehacked, pwad, savegame and demo (both WADs), the visual test, the build and the browser test. A change that
 means to alter what's drawn fails the visual test: look at `screenshots-diff/`, then run `npm run
 screenshots` and commit `docs/`. All of them must pass; CI runs the same set.
 
