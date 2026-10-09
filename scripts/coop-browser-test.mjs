@@ -129,14 +129,16 @@ try {
   assert(same.same, `…and both browsers' games are the same at tic ${same.tic} (their checksums)`);
 
   // a while longer, both firing: the checksums every 35 tics still agree
+  const tics = async () => Math.min(...await Promise.all([host, guest].map((p) => p.evaluate(() => window.doom.net.tic))));
+  const firing = await tics();
   await host.keyboard.down('ControlLeft');
   await guest.keyboard.down('ControlLeft');
-  await host.waitForTimeout(6000);
+  for (let i = 0; i < 600 && (await tics()) < firing + 175; i++) await host.waitForTimeout(100);   // (5 s of game, however slow the machine)
   await host.keyboard.up('ControlLeft');
   await guest.keyboard.up('ControlLeft');
   const nets = await Promise.all([host, guest].map((p) => p.evaluate(() => window.doom.net)));
-  assert(nets.every((n) => !n.error) && Math.min(nets[0].tic, nets[1].tic) > 200,
-    `${Math.min(nets[0].tic, nets[1].tic)} tics in lockstep, both firing, and every consistency check agrees`);
+  assert(nets.every((n) => !n.error) && Math.min(nets[0].tic, nets[1].tic) >= firing + 175,
+    `${Math.min(nets[0].tic, nets[1].tic)} tics in lockstep, the last 175 both firing, and every consistency check agrees`);
 
   // a level exit: everyone to the intermission, then on to the next map together. (The
   // nearest line ahead of player 1 becomes a W1 exit on both pages, before anyone reaches it:
