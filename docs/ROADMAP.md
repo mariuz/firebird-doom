@@ -16,7 +16,7 @@ you find missing.
   Load/Save, since done.
 - ~~**Save and load.**~~ Done ([src/savegame.js](../src/savegame.js)): six IndexedDB slots per WAD
   from the menu. A save is a JSON snapshot of the live tables. Quicksave and quickload
-  (F6/F9) too. Still missing: exporting or importing saves as files.
+  (F6/F9) too, and exporting and importing a WAD's saves as a file.
 - ~~**Demos.**~~ Done ([src/demo.js](../src/demo.js)): record a level, play it back, download it
   or load it as a JSON file. The simulation is deterministic: `P_RANDOM` is seeded from
   `GAME.RNG`, and thing ids restart on every load. Not possible: DOOM's own `.lmp` demos. They

@@ -567,6 +567,14 @@ description, and <kbd>F9</kbd> asks before loading it (or says there's no quicks
 is our own. Some browsers keep <kbd>F6</kbd> for the address bar when the page doesn't have
 the focus, so click the game first. `npm run test:menu` checks each step.
 
+**Saves → Export** under the view downloads the current WAD's six slots as one JSON file, and
+**Import…** reads such a file back into this browser, or another one. It writes the slots the file
+has filled and leaves the rest alone, and asks first before replacing a save. A file made for
+another WAD, or by another save version, is refused, since its map names and thing ids wouldn't
+fit. DOOM has no such thing: its saves were already files (`DOOMSAV0.DSG`…). Here they live in
+IndexedDB, so this is how to back them up or move them. `npm run test:savegame` checks the round
+trip, the refusals, and that an imported save restores exactly.
+
 ### Demos
 
 A demo is the input of one level (after `G_RecordDemo`/`G_DoPlayDemo`, in this port's own format,

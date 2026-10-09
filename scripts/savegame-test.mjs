@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
-import { captureGame, restoreGame, saveStore, mantissaExponent, SAVE_VERSION } from '../src/savegame.js';
+import { captureGame, restoreGame, saveStore, mantissaExponent, exportSaves, importSaves, SAVE_VERSION } from '../src/savegame.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -111,6 +111,30 @@ const store = saveStore();
 await store.put('freedoom1.wad|36|0', { name: 'TEST', save: saved });
 const back = await store.get('freedoom1.wad|36|0');
 assert(back?.name === 'TEST' && (await store.get('nothing')) === null, 'the save store keeps and returns slots');
+
+// saves as a file: export a WAD's six slots, import them elsewhere; the file goes through JSON
+const key = 'freedoom1.wad|36';
+await store.put(`${key}|3`, { name: 'SECOND', save: saved });
+const file = JSON.parse(JSON.stringify(await exportSaves(store, key)));
+assert(file.slots.length === 6 && file.slots[0]?.name === 'TEST' && file.slots[3]?.name === 'SECOND' && file.slots[1] === null,
+  'Export: one file with the six slots (empty ones null)');
+const other = saveStore();
+await other.put(`${key}|1`, { name: 'KEEP ME', save: saved });
+await other.put(`${key}|3`, { name: 'OLD', save: saved });
+const written = await importSaves(other, key, file);
+assert(written.join() === '0,3' && (await other.get(`${key}|1`))?.name === 'KEEP ME' && (await other.get(`${key}|3`))?.name === 'SECOND',
+  'Import: the filled slots are written (over what was there), the empty ones leave a slot alone');
+const why = async (f, k = key) => { try { await importSaves(other, k, f); return null; } catch (err) { return err.message; } };
+const wrongWad = await why(file, 'freedoom2.wad|32');
+const wrongVer = await why({ ...file, version: 99 });
+const notSaves = await why({ map: 'E1M1' });
+const badSlot = await why({ ...file, slots: [{ name: 'X' }] });
+assert(wrongWad?.includes('freedoom1.wad') && wrongVer?.includes('99') && notSaves && badSlot?.includes('slot 1'),
+  `Import refuses another WAD's saves ("${wrongWad}"), another version, other files and broken slots`);
+// and a slot that came through a file loads back exactly
+await loadMap(db, wad, res, map, { skill: 4 });
+await restoreGame(db, (await other.get(`${key}|3`)).save);
+assert(JSON.stringify(await captureGame(db)) === before, 'an imported save restores the game exactly');
 
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'savegame ok');

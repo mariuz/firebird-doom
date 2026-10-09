@@ -18,7 +18,7 @@ import { cheatReaders, clevMap, idmusMap } from './cheats.js';
 import { nextMap } from './progress.js';
 import { Finale, parseDehStrings, setFallbackStrings } from './finale.js';
 import { Menu, TitleLoop } from './menu.js';
-import { captureGame, restoreGame, saveStore, SLOTS } from './savegame.js';
+import { captureGame, restoreGame, saveStore, exportSaves, importSaves, SLOTS } from './savegame.js';
 import { DemoPlayer, DemoRecorder, demoProblem } from './demo.js';
 import { Intermission, levelOf, setParOverrides } from './intermission.js';
 import { THING_TYPES } from './thinginfo.js';
@@ -1022,6 +1022,32 @@ $('demo-file').addEventListener('change', async (e) => {
     await playDemo(demo);
   } catch (err) { setStatus(`Can't read that demo: ${err.message}`, true); }
   e.target.value = '';
+});
+// saves as a file: this WAD's six slots out, a file's filled slots in
+$('saves-export').addEventListener('click', async () => {
+  if (!wadKey) return;
+  try {
+    const file = await exportSaves(saves, wadKey);
+    if (!file.slots.some(Boolean)) { setStatus('No saves to export for this WAD yet.'); return; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: 'application/json' }));
+    a.download = `firebird-doom-saves-${wadKey.split('|')[0].replace(/\.wad$/i, '')}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } catch (err) { setStatus(`Couldn't export the saves: ${err.message}`, true); }
+});
+$('saves-file').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f || !wadKey) return;
+  try {
+    const file = JSON.parse(await f.text());
+    const over = (file.slots ?? []).map((r, i) => (r && saveSlots[i] ? i + 1 : 0)).filter(Boolean);
+    if (over.length && !window.confirm(`Replace the saves in slot${over.length > 1 ? 's' : ''} ${over.join(', ')}?`)) return;
+    const written = await importSaves(saves, wadKey, file);
+    await refreshSlots();
+    setStatus(`Imported ${written.length} save${written.length === 1 ? '' : 's'} (slot${written.length === 1 ? '' : 's'} ${written.map((i) => i + 1).join(', ')}).`);
+  } catch (err) { setStatus(`Can't import those saves: ${err.message}`, true); }
 });
 updateDemoButtons();
 $('display').value = settings.display;

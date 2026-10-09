@@ -107,6 +107,34 @@ export async function restoreGame(db, save) {
 }
 
 /** Where saves live: IndexedDB, or memory when there's none (Node, private windows). */
+export const SAVES_FILE = 'firebird-doom-saves';
+
+/** A WAD's six slots as one file: { kind, version, wad, slots: [record | null × 6] }. */
+export async function exportSaves(store, wad) {
+  const slots = await Promise.all(Array.from({ length: SLOTS }, (_, i) => store.get(`${wad}|${i}`).catch(() => null)));
+  return { kind: SAVES_FILE, version: SAVE_VERSION, wad, slots: slots.map((r) => r ?? null) };
+}
+
+/**
+ * Write a file's filled slots back (the others are left alone). Refuses a file
+ * of another kind, another save version, or another WAD (its map names and
+ * thing ids wouldn't fit). Returns the slots written.
+ */
+export async function importSaves(store, wad, file) {
+  if (file?.kind !== SAVES_FILE || !Array.isArray(file.slots)) throw new Error('not a Firebird DOOM saves file');
+  if (file.version !== SAVE_VERSION) throw new Error(`saves of version ${file.version}; this game reads version ${SAVE_VERSION}`);
+  if (file.wad !== wad) throw new Error(`these saves are for ${String(file.wad).split('|')[0]}, not this WAD`);
+  const written = [];
+  for (let i = 0; i < SLOTS; i++) {
+    const r = file.slots[i];
+    if (!r) continue;
+    if (typeof r.name !== 'string' || !r.save?.tables || r.save.version !== SAVE_VERSION) throw new Error(`slot ${i + 1} isn't a save`);
+    await store.put(`${wad}|${i}`, r);
+    written.push(i);
+  }
+  return written;
+}
+
 export function saveStore() {
   const memory = new Map();
   const fallback = { get: async (k) => memory.get(k) ?? null, put: async (k, v) => { memory.set(k, v); } };
