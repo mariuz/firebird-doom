@@ -5,19 +5,30 @@
 
 import { THING_TYPES } from './thinginfo.js';
 import { applyDehacked, parseDehacked } from './dehacked.js';
+import { parseDehStrings } from './finale.js';
 
-const ITEM_LABELS = {
-  STIM: 'a stimpack', MEDI: 'a medikit', BON1: 'a health bonus', SOUL: 'a supercharge',
-  BON2: 'an armor bonus', ARM1: 'the armor', ARM2: 'the megaarmor', CLIP: 'a clip',
-  AMMO: 'a box of bullets', SHEL: '4 shotgun shells', SBOX: 'a box of shotgun shells',
-  SHOT: 'the shotgun!', MGUN: 'the chaingun!', BPAK: 'a backpack full of ammo!',
-  BKEY: 'a blue keycard', YKEY: 'a yellow keycard', RKEY: 'a red keycard',
-  BSKU: 'a blue skull key', YSKU: 'a yellow skull key', RSKU: 'a red skull key',
-  PSTR: 'a berserk pack!', PMAP: 'a computer area map', PINV: 'an invulnerability sphere',
-  PINS: 'a partial invisibility sphere', SUIT: 'a radiation suit', PVIS: 'light amplification goggles',
-  CSAW: 'a chainsaw! Find some meat!', SGN2: 'the super shotgun!', MEGA: 'a megasphere!',
-  LAUN: 'the rocket launcher!', PLAS: 'the plasma gun!', BFUG: 'the BFG9000! Oh, yes.',
-  ROCK: 'a rocket', BROK: 'a box of rockets', CELL: 'an energy cell', CELP: 'an energy cell pack',
+// P_TouchSpecialThing's message for each item: the string it shows (by its
+// DEHACKED name: Freedoom's DEHACKED has them all), else our own plain words
+// (id's own messages stay out of the repository). GOTMEDINEED is never
+// shown: vanilla tests health < 25 after adding the 25, so it can't be true.
+const ITEM_MESSAGES = {
+  STIM: ['GOTSTIM', 'Stimpack.'], MEDI: ['GOTMEDIKIT', 'Medikit.'], BON1: ['GOTHTHBONUS', 'Health bonus.'],
+  SOUL: ['GOTSUPER', 'Soulsphere!'], BON2: ['GOTARMBONUS', 'Armor bonus.'], ARM1: ['GOTARMOR', 'Green armor.'],
+  ARM2: ['GOTMEGA', 'Blue armor.'], CLIP: ['GOTCLIP', 'Bullets.'], AMMO: ['GOTCLIPBOX', 'Box of bullets.'],
+  SHEL: ['GOTSHELLS', 'Shells.'], SBOX: ['GOTSHELLBOX', 'Box of shells.'], SHOT: ['GOTSHOTGUN', 'Shotgun!'],
+  MGUN: ['GOTCHAINGUN', 'Chaingun!'], BPAK: ['GOTBACKPACK', 'Backpack!'],
+  BKEY: ['GOTBLUECARD', 'Blue keycard.'], YKEY: ['GOTYELWCARD', 'Yellow keycard.'], RKEY: ['GOTREDCARD', 'Red keycard.'],
+  BSKU: ['GOTBLUESKUL', 'Blue skull key.'], YSKU: ['GOTYELWSKUL', 'Yellow skull key.'], RSKU: ['GOTREDSKULL', 'Red skull key.'],
+  PSTR: ['GOTBERSERK', 'Berserk!'], PMAP: ['GOTMAP', 'Computer map.'], PINV: ['GOTINVUL', 'Invulnerability!'],
+  PINS: ['GOTINVIS', 'Partial invisibility.'], SUIT: ['GOTSUIT', 'Radiation suit.'], PVIS: ['GOTVISOR', 'Light amplification visor.'],
+  CSAW: ['GOTCHAINSAW', 'Chainsaw!'], SGN2: ['GOTSHOTGUN2', 'Super shotgun!'], MEGA: ['GOTMSPHERE', 'Megasphere!'],
+  LAUN: ['GOTLAUNCHER', 'Rocket launcher!'], PLAS: ['GOTPLASMA', 'Plasma gun!'], BFUG: ['GOTBFG9000', 'BFG9000!'],
+  ROCK: ['GOTROCKET', 'Rocket.'], BROK: ['GOTROCKBOX', 'Box of rockets.'], CELL: ['GOTCELL', 'Energy cell.'],
+  CELP: ['GOTCELLBOX', 'Energy cell pack.'],
+};
+const itemMessage = (sprite, strings) => {
+  const m = ITEM_MESSAGES[sprite];
+  return m ? (strings.get(m[0]) ?? m[1]).replace(/\n/g, ' ').slice(0, 80) : sprite;
 };
 
 const lit = (v) =>
@@ -51,6 +62,7 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
   // DeHackEd: the WAD's DEHACKED lump, then any patch given (a .deh file)
   const dehText = wad.dehacked() + '\n' + (dehacked ?? '');
   const deh = applyDehacked(THING_TYPES, parseDehacked(dehText));
+  const strings = parseDehStrings(dehText);
   // Wall textures: first definition of a name wins (R_TextureNumForName).
   const texDefs = [];
   const texId = new Map();
@@ -87,7 +99,7 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
       t.type, t.sprite, t.kind, t.radius, t.height, t.solid ?? 0, t.hp ?? null, t.speed ?? null, t.painChance ?? null,
       t.walk ?? 'A', t.attack ?? null, t.pain ?? null, t.death ?? null, t.deathSprite ?? null, t.bright ?? 0,
       t.atk ?? null, t.missile ?? null, t.dmgLo ?? null, t.dmgHi ?? null, t.shots ?? null, t.drop ?? null,
-      t.pickup ?? null, t.amount ?? null, ITEM_LABELS[t.sprite] ?? t.sprite,
+      t.pickup ?? null, t.amount ?? null, itemMessage(t.sprite, strings),
       t.seeSnd ?? null, t.atkSnd ?? null, t.painSnd ?? null, t.deathSnd ?? null, t.hang ?? 0,
       t.meleeFr ?? null, t.meleeSnd ?? null, t.meleeHitSnd ?? null, t.meleeDmg ?? null, t.meleeRolls ?? null,
       t.mass ?? 100, t.floats ?? 0, t.shadow ?? 0, t.activeSnd ?? null, t.countKill ?? 0, t.countItem ?? 0,

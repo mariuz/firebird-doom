@@ -240,6 +240,14 @@ an arch-vile raises or the Icon of Sin spawns aren't added to the total, so 100%
 in DOOM. DeHackEd's `COUNTKILL` and `COUNTITEM` bits move things in and out of the tallies.
 `npm run test:weapons` checks each rule.
 
+Each pickup shows its message at the top of the screen, as `P_TouchSpecialThing` sets
+`player->message`. The text is the WAD's: Freedoom's `DEHACKED` has every one (`GOTSHOTGUN` is
+"Got the pump-action shotgun!"), and a PWAD's or a `.deh` patch's `[STRINGS]` replace them by
+name. A WAD with no such strings, like id's, gets plain words of our own ("Shotgun!"), since id's
+messages stay out of this repository. Keys speak only the first time, as in vanilla, and the
+medikit's `GOTMEDINEED` never shows: vanilla checks health below 25 after adding the 25.
+`npm run test:weapons` and `npm run test:pwad` check the messages.
+
 ### Changing weapons
 
 A weapon key only picks the next weapon (`pendingweapon`), as in `p_pspr.c`. The one in your hands

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
+import { parseDehStrings } from '../src/finale.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -369,6 +370,25 @@ await tic(IDLE);
 assert((await one('SELECT items FROM player')).ITEMS === i0 + 1, 'a health bonus is in the item tally (MF_COUNTITEM)');
 const tot = await one(`SELECT (SELECT COUNT(*) FROM thing_types WHERE count_item = 1) ci, (SELECT COUNT(*) FROM thing_types WHERE count_kill = 1 AND thing_type = 3006) cs FROM rdb$database`);
 assert(Number(tot.CI) === 9 && Number(tot.CS) === 0, `nine item types count (${tot.CI}), the lost soul doesn't`);
+
+// P_TouchSpecialThing's messages: the WAD's GOT* strings; a key speaks only the first time
+const got = parseDehStrings(wad.dehacked());
+await db.exec("UPDATE player SET shells = 0, msg = NULL, keycards = 0");
+await spawnHere(2001);
+await tic(IDLE);
+const sgMsg = (await one('SELECT msg FROM player')).MSG;
+assert(sgMsg === got.get('GOTSHOTGUN'), `a shotgun says the WAD's GOTSHOTGUN: "${sgMsg}"`);
+await spawnHere(5);
+await tic(IDLE);
+const k1msg = (await one('SELECT msg FROM player')).MSG;
+await db.exec("UPDATE player SET msg = 'quiet', msg_tics = 0");
+await spawnHere(5);
+await tic(IDLE);
+const k2msg = (await one('SELECT msg, keycards FROM player'));
+assert(k1msg === got.get('GOTBLUECARD') && k2msg.MSG === 'quiet' && k2msg.KEYCARDS === 1,
+  `a blue keycard says "${k1msg}"; a second one is taken without a word`);
+const missing = (await db.query("SELECT LIST(sprite) l FROM thing_types WHERE kind = 'item' AND label = sprite")).rows[0].L;
+assert(!missing, `every item has a message (${missing ?? 'none missing'})`);
 
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'weapons ok');

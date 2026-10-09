@@ -82,9 +82,9 @@ you find missing.
   arithmetic by `npm run test:light`.
 - **Status bar.** No arms/frags switch for deathmatch (single player only). The face is done:
   `ST_updateFaceWidget`'s priorities, turn faces and pain levels, plus `P_DeathThink`'s death camera.
-- **Messages.** Pickup messages say "Picked up …". DOOM's own texts are mostly in the executable,
-  but Freedoom's `DEHACKED` has replacements (`GOTARMOR`, `GOTSHOTGUN`, …) that could be used,
-  as the story text already is.
+- ~~**Messages.**~~ Done: each pickup shows the WAD's `DEHACKED` string (`GOTARMOR`,
+  `GOTSHOTGUN`, …: Freedoom has them all, and a PWAD or `.deh` can replace them), else plain words
+  of our own.
 
 ## Screens
 

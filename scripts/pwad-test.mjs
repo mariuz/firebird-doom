@@ -78,6 +78,10 @@ const hp = (await db.query('SELECT hp FROM thing_types WHERE thing_type = 3004')
 const health = (await db.query('SELECT health FROM player')).rows[0].HEALTH;
 assert(n > 0 && flatEntry?.file === 1 && hp === 77 && health === 123 && res.dehacked.pars.get('E1M1') === 30,
   `Firebird gets the PWAD's E1M1 (${n} things) and NUKAGE1, its patch (zombieman ${hp} hp), the .deh on top (health ${health}), and still Freedoom's pars`);
+const armorMsg = (await db.query('SELECT label FROM thing_types WHERE thing_type = 2018')).rows[0].LABEL;
+const shotMsg = (await db.query('SELECT label FROM thing_types WHERE thing_type = 2001')).rows[0].LABEL;
+assert(armorMsg === 'Picked up some PWAD armour.' && shotMsg === strings.get('GOTSHOTGUN'),
+  `pickup messages: the PWAD's GOTARMOR ("${armorMsg}"), Freedoom's GOTSHOTGUN for the rest`);
 
 // a second load into the same database (another WAD, a PWAD added, a game switch) starts clean
 let again = true;

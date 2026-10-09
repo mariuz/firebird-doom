@@ -1498,7 +1498,7 @@ DECLARE i INTEGER;
 DECLARE iid INTEGER;
 DECLARE pk VARCHAR(10);
 DECLARE amt INTEGER;
-DECLARE lbl VARCHAR(40);
+DECLARE lbl VARCHAR(80);
 DECLARE took SMALLINT;
 DECLARE dropped SMALLINT;
 DECLARE count_item SMALLINT;
@@ -2034,7 +2034,9 @@ BEGIN
              strength_tics = IIF(:pk = 'berserk', 1, strength_tics),
              allmap = IIF(:pk = 'allmap', 1, allmap),
              infra_tics = IIF(:pk = 'goggles', :amt, infra_tics),
-             msg = 'Picked up ' || :lbl || '.', msg_tics = 70
+             -- the item's message (GOTARMOR…); a key only says so the first time
+             msg = IIF(:pk = 'key' AND BIN_AND(keycards, :amt) <> 0, msg, :lbl),
+             msg_tics = IIF(:pk = 'key' AND BIN_AND(keycards, :amt) <> 0, msg_tics, 70)
        WHERE id = 1;
       EXECUTE PROCEDURE play_sound(CASE WHEN pk IN ('shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'chainsaw', 'ssg') THEN 'DSWPNUP'
                                         WHEN pk IN ('none', 'soul', 'mega', 'invis', 'invuln', 'suit', 'goggles', 'berserk', 'allmap') THEN 'DSGETPOW' ELSE 'DSITEMUP' END, 0, NULL, NULL);

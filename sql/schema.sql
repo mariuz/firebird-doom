@@ -88,7 +88,7 @@ CREATE TABLE thing_types (
   drop_type    INTEGER,
   pickup       VARCHAR(10),
   amount       INTEGER,
-  label        VARCHAR(40),
+  label        VARCHAR(80),             -- the pickup message (GOTARMOR…)
   -- sfx lump names (DS*) for A_Look / attack / A_Pain / A_Scream
   see_snd      VARCHAR(8),
   active_snd   VARCHAR(8),                     -- activesound: now and then while chasing
