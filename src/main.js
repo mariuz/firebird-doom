@@ -248,11 +248,12 @@ async function startRecording() {
 function finishRecording() {
   if (!recorder) return;
   const { demo } = recorder;
+  const { levels, tics } = recorder;
   recorder = null;
   if (demo.calls.length) {
     lastDemo = demo;
     saves.put(`${wadKey}|demo`, demo).catch(() => {});
-    setStatus(`Demo recorded: ${demo.map}, ${demo.calls.reduce((n, c) => n + c[0], 0)} tics. Play or Download it below.`);
+    setStatus(`Demo recorded: ${levels.join(' → ')}, ${tics} tics. Play or Download it below.`);
   } else setStatus('');
   updateDemoButtons();
 }
@@ -483,15 +484,19 @@ async function loadSides() {
   map.sides = new Map(rows.map((r) => [r[0], { xoff: r[1], yoff: r[2], upper: r[3], lower: r[4], mid: r[5], sector: r[6] }]));
 }
 
-async function startMap(name, newGame, { skill = settings.skill, seed = null } = {}) {
+async function startMap(name, newGame, { skill = settings.skill, seed = null, keepDemo = false } = {}) {
   running = false;
   levelSerial++;
   finale = null;
   intermission = null;
   title = null;
   menu?.close(true);
-  if (recorder) finishRecording();   // (a new map ends the demo; demo starts set theirs afterwards)
-  demoPlayer = null;
+  // a map you pick (a new game, a save, the Map selector) ends a demo; the game's
+  // own next level doesn't (nextLevel); demo starts set theirs afterwards
+  if (!keepDemo) {
+    if (recorder) finishRecording();
+    demoPlayer = null;
+  }
   if (newGame) didSecret.clear();
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
@@ -521,6 +526,31 @@ async function startMap(name, newGame, { skill = settings.skill, seed = null } =
   audio.playMusic(musicLumpFor(name));
   lastTic = performance.now();
   running = true;
+}
+
+/**
+ * G_DoLoadLevel within a game: the next level, or this one again after a
+ * death. A demo goes on through it: recording notes the level and its seed,
+ * playing takes them from the recording (a restart's seed is a new one).
+ */
+async function nextLevel(name, newGame) {
+  let seed = null;
+  if (demoPlayer) {
+    const c = demoPlayer.take('map');
+    if (c && c[1] === name) seed = c[2];
+    else endPlayback(demoPlayer.done ? 'the demo is over' : 'it is out of step with the game');
+  }
+  const rec = recorder;
+  await startMap(name, newGame, { seed, keepDemo: true });
+  rec?.push(['map', name, lastSeed, newGame ? 1 : 0]);
+}
+
+/** A demo being played whose next entry isn't KIND has run out, or out of step: stop it. Returns the entry. */
+function demoTake(kind) {
+  if (!demoPlayer) return null;
+  const c = demoPlayer.take(kind);
+  if (!c) endPlayback(demoPlayer.done ? 'the demo is over' : 'it is out of step with the game');
+  return c;
 }
 
 // ── the loop ─────────────────────────────────────────────────────────────
@@ -572,10 +602,13 @@ async function frame() {
     }
 
     if (intermission) {
-      // WI_Ticker: a new press of fire or use hurries it along
+      // WI_Ticker: a new press of fire or use hurries it along (a demo's own presses, playing one)
+      const c = demoTake('wi');
       const input = readInput(tics);
-      const buttons = input[4] === 1 || input[5] === 1;
-      for (let i = 0; i < tics; i++) intermission.tick(i === 0 && buttons && !wiButtons);
+      const n = c ? c[1] : tics;
+      const buttons = c ? c[2] === 1 : input[4] === 1 || input[5] === 1;
+      recorder?.push(['wi', n, buttons ? 1 : 0]);
+      for (let i = 0; i < n; i++) intermission.tick(i === 0 && buttons && !wiButtons);
       wiButtons = buttons;
       if (intermission.done) {
         // G_WorldDone: a text screen if this exit has one, else the next map
@@ -585,7 +618,7 @@ async function frame() {
           finale = new Finale(renderer, audio, wad, THING_TYPES, fromName, secret);
           finaleKey = false;
         } else {
-          await startMap(nextMap(fromName, secret, wad.mapNames()), false);
+          await nextLevel(nextMap(fromName, secret, wad.mapNames()), false);
         }
       } else intermission.draw();
       nextFrame();
@@ -596,14 +629,20 @@ async function frame() {
       // the ending runs on its own clock: a key kills the one on stage (the
       // key that skips the text is spent before the cast starts), fire or
       // use held skips the text
+      const c = demoTake('fin');
       const input = readInput(tics);
-      if (finaleKey) { finale.press(); finaleKey = false; }
-      for (let i = 0; i < tics; i++) finale.tick(input[4] === 1 || input[5] === 1);
+      const n = c ? c[1] : tics;
+      const held = c ? c[2] === 1 : input[4] === 1 || input[5] === 1;
+      const pressed = c ? c[3] === 1 : finaleKey;
+      finaleKey = false;
+      recorder?.push(['fin', n, held ? 1 : 0, pressed ? 1 : 0]);
+      if (pressed) finale.press();
+      for (let i = 0; i < n; i++) finale.tick(held);
       if (finale.done) {
         // G_WorldDone after a text screen: on to the next map (MAP31/32 after a
         // secret exit's), inventory kept. DOOM I's endings never get here: the
         // game is over, and their art stays until the menu starts another
-        await startMap(nextMap(finale.from, finale.secret, wad.mapNames()), false);
+        await nextLevel(nextMap(finale.from, finale.secret, wad.mapNames()), false);
         nextFrame();
         return;
       }
@@ -616,8 +655,8 @@ async function frame() {
     // G_ReadDemoTiccmd / G_WriteDemoTiccmd
     let args;
     if (demoPlayer) {
-      args = demoPlayer.next();
-      if (!args) { endPlayback('the demo is over'); nextFrame(); return; }
+      args = demoTake('tic');
+      if (!args) { nextFrame(); return; }
       readInput(tics);              // (drained, so it doesn't pile up for later)
     } else args = readInput(tics);
     lastFire = args[4] === 1;
@@ -629,10 +668,8 @@ async function frame() {
     if (hud.EXIT_KIND) {
       const kind = hud.EXIT_KIND;
       const secret = kind === 2;
-      // a demo covers one level: it ends with the level (or the death that restarts it)
-      if (recorder) finishRecording();
-      if (demoPlayer) { endPlayback(kind === 3 ? 'the player died' : 'the level was finished'); nextFrame(); return; }
-      if (kind === 3) await startMap(map.name, true);
+      // (a demo goes on: through the intermission to the next level, or the restart after a death)
+      if (kind === 3) await nextLevel(map.name, true);
       else {
         await db.exec('UPDATE game SET exit_kind = 0 WHERE id = 1');
         const level = levelOf(map.name);

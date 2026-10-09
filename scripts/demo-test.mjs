@@ -91,9 +91,64 @@ await loadMap(db, wad, res, map, { skill: 3 });
 const again = (await db.query('SELECT MIN(id) a, MAX(id) b FROM things')).rows[0];
 assert(first.A === again.A && first.B === again.B, `every load numbers the things the same (${first.A}–${first.B})`);
 
+// a demo goes on from level to level: the exit, then the next map with the
+// random state and the inventory carried over, plays out the same every time
+{
+  const name = wad.mapNames()[0];
+  const next = wad.mapNames()[1];
+  /** the player before the first exit switch (11) facing it, as the start both runs share */
+  async function atExit() {
+    const l = (await db.query(`SELECT FIRST 1 l.x1, l.y1, l.x2, l.y2 FROM linedefs l WHERE l.special = 11 ORDER BY l.id`)).rows[0];
+    const len = Math.hypot(l.X2 - l.X1, l.Y2 - l.Y1);
+    const nx = (l.Y2 - l.Y1) / len;
+    const ny = -(l.X2 - l.X1) / len;           // the front: right of x1,y1 → x2,y2
+    const px = (l.X1 + l.X2) / 2 + nx * 24;
+    const py = (l.Y1 + l.Y2) / 2 + ny * 24;
+    await db.exec(`UPDATE things SET x = ${px}, y = ${py}, angle = ${Math.atan2(-ny, -nx)}, sector_id = sector_at(${px}, ${py}),
+                     z = (SELECT s.floor_h FROM sectors s WHERE s.id = sector_at(${px}, ${py})) WHERE kind = 'player'`);
+  }
+  const level2 = inputs.slice(0, 120);
+  async function session(seed) {
+    await loadMap(db, wad, res, name, { skill: 4 });
+    await db.exec(`UPDATE game SET rng = ${seed} WHERE id = 1`);
+    await db.exec('UPDATE player SET health = 100000 WHERE id = 1');
+    await atExit();
+    let exitKind = 0;
+    for (let i = 0; i < 10 && !exitKind; i++) {
+      exitKind = (await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, ?, 0, 0)', [i % 2])).rows[0].EXIT_KIND;
+    }
+    const rng = (await db.query('SELECT rng FROM game')).rows[0].RNG;
+    await loadMap(db, wad, res, next, { skill: 4, newGame: false });
+    await db.exec('UPDATE game SET exit_kind = 0 WHERE id = 1');
+    const carried = (await db.query('SELECT rng FROM game')).rows[0].RNG;
+    for (const c of level2) await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', c);
+    return { exitKind, rng, carried, snap: JSON.stringify((await captureGame(db)).tables) };
+  }
+  const one = await session(4242);
+  const two = await session(4242);
+  assert(one.exitKind === 1 && one.carried === one.rng && one.snap === two.snap,
+    `${name} → ${next}: the exit switch ends the level; the next one starts with the random state carried (${one.carried}) and plays out the same twice`);
+
+  // the recording's own bookkeeping: the screens' frames and level starts between the calls
+  const r = new DemoRecorder({ wad: 'x.wad|36', map: name, skill: 4, seed: 4242 });
+  r.push([2, 1, 0, 0, 0, 0, 0, 0]);
+  r.push(['wi', 3, 0]);
+  r.push(['wi', 2, 1]);
+  r.push(['map', next, null, 0]);
+  r.push([1, 0, 0, 0, 1, 0, 0, 0]);
+  r.push(['fin', 4, 0, 1]);
+  r.push(['map', next, 777, 1]);
+  const d2 = JSON.parse(JSON.stringify(r.demo));
+  const p = new DemoPlayer(d2);
+  const order = [p.take('tic') && 'tic', p.take('tic') ?? 'stop', p.take('wi') && 'wi', p.take('wi') && 'wi', p.take('map')?.[1]];
+  assert(r.tics === 3 && r.levels.join() === `${name},${next},${next}` && order.join() === `tic,stop,wi,wi,${next}` && demoProblem(d2) === null,
+    `a version 2 demo: ${r.tics} game tics between the screens' frames, levels ${r.levels.join(' → ')}; playing takes each kind in turn and notices one out of step`);
+}
+
 // a damaged or foreign demo is refused, with a reason
 assert(demoProblem({ ...demo, version: 9 })?.includes('version') && demoProblem({ ...demo, calls: [[1, 2]] }) && demoProblem(null)
-  && demoProblem(demo) === null, 'a damaged or foreign demo is refused with a reason');
+  && demoProblem({ ...demo, calls: [['map', 5, 0, 0]] }) && demoProblem(demo) === null && demoProblem({ ...demo, version: 1 }) === null,
+  'a damaged or foreign demo is refused with a reason; version 1 demos (one level) still play');
 
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'demo ok');

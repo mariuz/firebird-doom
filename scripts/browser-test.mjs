@@ -134,6 +134,52 @@ try {
   await until(() => window.doom.screen === 'title', null, 30000);
   assert(true, 'End Game asks, and Y goes back to the title');
 
+  // a demo across levels: recorded through E1M1's exit switch, the intermission and into E1M2,
+  // then played back – it must take the same turns all the way (the menu held up while the
+  // player is put before the switch, the same way both times: that's part of where it starts)
+  const atSwitch = () => doom(() => window.doom.sql(`SELECT FIRST 1 x1, y1, x2, y2 FROM linedefs WHERE special = 11 ORDER BY id`).then(async ([l]) => {
+    const len = Math.hypot(l.X2 - l.X1, l.Y2 - l.Y1);
+    const nx = (l.Y2 - l.Y1) / len;
+    const ny = -(l.X2 - l.X1) / len;
+    const px = (l.X1 + l.X2) / 2 + nx * 24;
+    const py = (l.Y1 + l.Y2) / 2 + ny * 24;
+    await window.doom.sql(`UPDATE things SET x = ${px}, y = ${py}, angle = ${Math.atan2(-ny, -nx)}, sector_id = sector_at(${px}, ${py}),
+      z = (SELECT s.floor_h FROM sectors s WHERE s.id = sector_at(${px}, ${py})), momx = 0, momy = 0 WHERE kind = 'player'`);
+  }));
+  const status = () => doom(() => document.getElementById('status')?.textContent ?? '');
+  await doom(() => {                                      // (Map: a new game on E1M1, even if it already says E1M1)
+    const sel = document.getElementById('map');
+    sel.value = 'E1M1';
+    sel.dispatchEvent(new Event('change'));
+  });
+  await until(() => window.doom.melting, null, 60000);
+  await until(() => !window.doom.melting);
+  await doom(async () => { await window.doom.record(); window.doom.menu.open(); });   // (nothing ticks behind the menu)
+  await atSwitch();
+  await doom(() => window.doom.menu.close(true));
+  await until(() => !window.doom.melting);               // (keys pressed during the melt are dropped)
+  await page.keyboard.down('Space'); await page.waitForTimeout(300); await page.keyboard.up('Space');
+  await until(() => window.doom.screen === 'intermission', null, 30000);
+  await until(() => !window.doom.melting);
+  for (let i = 0; i < 6 && (await doom(() => window.doom.screen)) === 'intermission'; i++) await key('Space', 600);
+  await until(() => window.doom.melting, null, 60000);
+  await until(() => !window.doom.melting);
+  await page.keyboard.down('KeyW'); await page.waitForTimeout(700); await page.keyboard.up('KeyW');
+  await doom(() => window.doom.stopDemo());
+  const recorded = await status();
+  const demo = await doom(() => window.doom.demo.last);
+  const kinds = [...new Set(demo.calls.map((c) => (typeof c[0] === 'number' ? 'tic' : c[0])))];
+  assert(/E1M1 → E1M2/.test(recorded) && kinds.includes('wi') && kinds.includes('map'),
+    `recording goes on through the exit and the intermission: "${recorded.trim()}" (${demo.calls.length} entries: ${kinds.join(', ')})`);
+  await doom(async () => { await window.doom.playDemo(); window.doom.menu.open(); });
+  await atSwitch();
+  await doom(() => window.doom.menu.close(true));
+  await until(() => !window.doom.demo.playing, null, 90000);
+  const played = await status();
+  const playedMap = (await doom(() => window.doom.sql('SELECT map_name FROM game').then((r) => r[0].MAP_NAME))).trim();
+  assert(/the demo is over/.test(played) && playedMap === 'E1M2',
+    `played back, it takes the same turns: through the intermission into ${playedMap}, to the end ("${played.trim()}")`);
+
   // a .deh patch over the main WAD is remembered across a reload, and forgotten when cleared
   await doom(() => window.doom.useDeh('Patch File for DeHackEd v3.0\n\n[STRINGS]\nGOTARMOR = Browser test armour.\n', 'test.deh'));
   await page.reload();

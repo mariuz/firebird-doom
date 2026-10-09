@@ -22,7 +22,7 @@ you find missing.
   `GAME.RNG`, and thing ids restart on every load. Not possible: DOOM's own `.lmp` demos. They
   need a bit-identical simulation (fixed point, the 256-entry random table consumed in the same
   order), and this is a re-implementation. That also means the title loop has no attract demos.
-  Still missing: demos that span several levels, and multiplayer.
+  Demos go on from level to level, as DOOM's do. Still missing: multiplayer.
 - ~~**The end of the game.**~~ Done: as in vanilla, Doom I's E?M8 ending is the end of the game.
   Its picture stays until the menu starts a new game, and Doom II's cast call loops.
 

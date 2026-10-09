@@ -621,13 +621,19 @@ trip, the refusals, and that an imported save restores exactly.
 
 ### Demos
 
-A demo is the input of one level (after `G_RecordDemo`/`G_DoPlayDemo`, in this port's own format,
+A demo is the input of a game (after `G_RecordDemo`/`G_DoPlayDemo`, in this port's own format,
 [src/demo.js](src/demo.js)). **● Record** under the view restarts the current map with a fresh
 random seed and records every `DOOM_TIC` call: `[tics, fwd, side, turn, fire, use, weapon, run]`.
-Recording stops at the level's exit, at a death, or with **■ Stop**. **▶ Play** loads the same map
-at the same skill with the same seed and makes the same calls, and the same game unfolds. Esc stops
-it. **Download** saves the demo as JSON, and **Load…** plays one from a file. The last demo of each
-WAD is kept in the browser.
+As in DOOM, a demo goes on from level to level. Through an exit it records the intermission's
+frames (`['wi', tics, buttons]`, the presses that hurry it along), a text screen's
+(`['fin', tics, held, pressed]`), and each level start (`['map', name, seed, newGame]`). That
+includes the restart after a death, which starts with a fresh seed the demo keeps. It stops with
+**■ Stop**, or when you start something else yourself (a new game, the **Map** selector, a load).
+**▶ Play** loads the same map at the same skill with the same seed and makes the same calls, and
+the same game unfolds, screens and all. If the game ever takes a different turn from the
+recording, playback stops and says it's out of step. Esc stops it. **Download** saves the demo as
+JSON, and **Load…** plays one from a file. One-level demos from before (version 1) still play.
+The last demo of each WAD is kept in the browser.
 
 That works because the game is deterministic. Every chance in `sql/game.sql` goes through
 `P_RANDOM()`, a linear congruential generator whose state is the `GAME.RNG` column (so a save

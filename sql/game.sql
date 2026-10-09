@@ -3624,7 +3624,8 @@ BEGIN
                          WHERE tt.count_kill = 1),
          total_items = (SELECT COUNT(*) FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
                          WHERE tt.count_item = 1),
-         total_secrets = (SELECT COUNT(*) FROM sectors WHERE special = 9)
+         total_secrets = (SELECT COUNT(*) FROM sectors WHERE special = 9),
+         sides_rev = 0          -- (the switches' textures start over with the map)
    WHERE id = 1;
 
   -- P_SetupPsprites: every level starts with the weapon coming up
