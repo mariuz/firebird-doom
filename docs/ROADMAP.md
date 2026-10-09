@@ -70,11 +70,17 @@ you find missing.
   frame is the BSP walk and the solid coverage; the rest is per column: each visible column of each
   seg is a `SUSPEND`ed row (about 1000–2000 a frame), sorted and clipped again by `RENDER_WALLS`.
   Shaving statements off the per-column loop (hoisting the closed-seg opening, skipping covered
-  runs with `POSITION`) measured no better: the cost is per row, not per statement. Ideas left:
-  fewer rows (fold `RENDER_WALLS`' clipping into the BSP pass, needing per-column clip state in
-  PSQL), caching static per-map work, reusing the previous frame's visible set. Moving the
-  per-column stepping to JS (about 3× faster walls) was considered and turned down: Firebird
-  decides, JavaScript draws.
+  runs with `POSITION`) measured no better: the cost is per row, not per statement.
+  Where `FRAME_WALLS`' ~23 ms goes (E1M1–E1M3, 24 views, ~990 rows): the BSP walk and column
+  projection ~10–11 ms; `RENDER_WALLS`' sort and clip ~3 ms; and handing the rows to JavaScript
+  ~9–10 ms. `firebird-wasm` sends results as JSON, and the cost is per value (~0.4 µs), so short
+  integers cost as much as 17-digit doubles. Tried and measured no better: folding the clipping
+  into the BSP pass with per-column clip strings (`OVERLAY`/`SUBSTRING` cost more than the layer
+  they save: 27 ms), `FOR SELECT` instead of the cursor (the same), sending the clip values as
+  whole rows (the same). Ideas left: fewer values per row (some of the 14 could be derived), a
+  binary result transfer in `firebird-wasm` (outside this repo), caching static per-map work,
+  reusing the previous frame's visible set. Moving the per-column stepping to JS (about 3× faster
+  walls) was considered and turned down: Firebird decides, JavaScript draws.
 - ~~**Automap.**~~ Done: zoom (= -), the whole-level view (0), follow mode and panning (F, arrows),
   the grid (G) and marks (M, C), as `AM_Responder` and `AM_Ticker` have them.
 - ~~**Light diminishing and colormaps.**~~ Done: the exact `scalelight`/`zlight` tables and
