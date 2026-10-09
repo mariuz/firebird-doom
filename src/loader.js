@@ -36,6 +36,28 @@ const lit = (v) =>
     : typeof v === 'number' ? (Number.isFinite(v) ? String(v) : 'NULL')
       : `'${String(v).replace(/'/g, "''")}'`;
 
+/**
+ * REJECT, re-cut into one row per sector: [sector, hex digits of the sectors
+ * it can't see (digit k: sectors 4k–4k+3, lowest bit first)]. A short lump
+ * reads as zeros past its end; rows with nothing rejected are left out.
+ */
+export function rejectRows(bytes, n) {
+  const bit = (i) => (i >> 3 < bytes.length ? (bytes[i >> 3] >> (i & 7)) & 1 : 0);
+  const rows = [];
+  for (let s1 = 0; s1 < n; s1++) {
+    let hex = '';
+    let any = false;
+    for (let k = 0; k < Math.ceil(n / 4); k++) {
+      let nib = 0;
+      for (let j = 0; j < 4 && 4 * k + j < n; j++) nib |= bit(s1 * n + 4 * k + j) << j;
+      if (nib) any = true;
+      hex += nib.toString(16);
+    }
+    if (any) rows.push([s1, hex]);
+  }
+  return rows;
+}
+
 /** Bulk insert: one EXECUTE BLOCK per chunk, so one Worker round trip each. */
 // Each INSERT is one "context" and a block may hold at most 256 of them.
 export async function insertRows(db, table, cols, rows, chunk = 200) {
@@ -141,9 +163,10 @@ export async function loadMap(db, wad, res, name, { skill = 3, newGame = true } 
 
   await db.exec(
     'DELETE FROM sound_events; DELETE FROM movers; DELETE FROM line_blocks; DELETE FROM things; DELETE FROM map_things; DELETE FROM nodes; DELETE FROM ssectors; ' +
-      'DELETE FROM segs; DELETE FROM linedefs; DELETE FROM sidedefs; DELETE FROM sectors; DELETE FROM vertexes',
+      'DELETE FROM segs; DELETE FROM linedefs; DELETE FROM sidedefs; DELETE FROM sectors; DELETE FROM vertexes; DELETE FROM reject',
   );
   await insertRows(db, 'vertexes', ['id', 'x', 'y'], m.vertexes.map((v) => [v.id, v.x, v.y]));
+  await insertRows(db, 'reject', ['sector_id', 'bits'], rejectRows(m.reject, m.sectors.length));
   await insertRows(
     db, 'sectors', ['id', 'floor_h', 'ceil_h', 'floor_flat', 'ceil_flat', 'light', 'base_light', 'special', 'tag'],
     m.sectors.map((s) => [s.id, s.floor, s.ceil, flat(s.floorTex), flat(s.ceilTex), s.light, s.light, s.special, s.tag]),

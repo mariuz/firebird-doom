@@ -725,9 +725,34 @@ if (sky) {
     const close = await look(50, dir);
     assert(backTurned === 'idle' && facing !== 'idle' && close !== 'idle',
       `A_Look: 260 away with its back to the player it stays ${backTurned}; facing it, it wakes (${facing}); 50 away behind its back, too (${close})`);
+    // P_CheckSight asks REJECT first: a sector that REJECT says can't see the player's never
+    // wakes by sight, line of sight or not (here a row of all ones, swapped in for the test)
+    const [rx, ry] = at(260);
+    const rsec = (await one(`SELECT sector_at(${rx}, ${ry}) s FROM rdb$database`)).S;
+    const nsec = (await one('SELECT COUNT(*) n FROM sectors')).N;
+    const oldRow = (await one(`SELECT bits FROM reject WHERE sector_id = ${rsec}`))?.BITS ?? null;
+    await db.exec(`UPDATE OR INSERT INTO reject (sector_id, bits) VALUES (${rsec}, '${'f'.repeat(Math.ceil(nsec / 4))}') MATCHING (sector_id)`);
+    const blind = await look(260, dir + Math.PI);
+    await db.exec(oldRow === null ? `DELETE FROM reject WHERE sector_id = ${rsec}` : `UPDATE reject SET bits = '${oldRow}' WHERE sector_id = ${rsec}`);
+    const sees = await look(260, dir + Math.PI);
+    assert(blind === 'idle' && sees !== 'idle', `REJECT: facing the player from a sector REJECT blinds, it stays ${blind}; with the map's own table it wakes (${sees})`);
     await db.exec(`DELETE FROM things WHERE id = ${chaser}`);
     await db.exec('UPDATE player SET health = 100, damage_count = 0');
   } else console.log('(no open run from the player start for the infighting tests)');
+}
+
+// ── REJECT: the table in Firebird is the lump, bit for bit ─────────────
+{
+  const name = (await one('SELECT map_name FROM game')).MAP_NAME.trim();
+  const m = wad.map(name);
+  const n = m.sectors.length;
+  const bit = (i) => (i >> 3 < m.reject.length ? (m.reject[i >> 3] >> (i & 7)) & 1 : 0);
+  const pairs = [];
+  for (let k = 0; k < 400; k++) pairs.push([(k * 7919) % n, (k * 104729 + 13) % n]);
+  const got = (await db.query(`SELECT ${pairs.map(([a, b]) => `rejected(${a}, ${b})`).join(', ')} FROM rdb$database`, [], { rowMode: 'array' })).rows[0];
+  const bad = pairs.filter(([a, b], i) => got[i] !== bit(a * n + b)).length;
+  const set = pairs.filter(([a, b]) => bit(a * n + b)).length;
+  assert(bad === 0 && set > 0 && set < pairs.length, `${name}: rejected(s1, s2) matches the REJECT lump at ${pairs.length} sector pairs (${set} rejected)`);
 }
 
 // ── skill levels ────────────────────────────────────────────────────────

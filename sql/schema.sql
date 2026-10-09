@@ -110,6 +110,14 @@ CREATE TABLE thing_types (
 );
 
 -- ── the map ─────────────────────────────────────────────────────────────
+-- The map's REJECT lump, a row of bits per sector: the sectors that can't be
+-- seen from it, as hex digits (digit k holds sectors 4k–4k+3, lowest bit
+-- first). All-zero rows are left out.
+CREATE TABLE reject (
+  sector_id INTEGER NOT NULL PRIMARY KEY,
+  bits      VARCHAR(8000) NOT NULL
+);
+
 CREATE TABLE vertexes (
   id INTEGER NOT NULL PRIMARY KEY,
   x  DOUBLE PRECISION NOT NULL,

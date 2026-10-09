@@ -39,8 +39,8 @@ you find missing.
   `movecount` and turnaround avoidance, the 45° turn, `MF_JUSTATTACKED`, the `movecount` gate on
   missile attacks, `A_Look`'s 180° field of view, monsters opening doors they bump into
   (`P_Move`'s special lines), and fliers rising and sinking when only the height blocks them
-  (`MF_FLOAT`, `MF_INFLOAT`). `A_Look` still ignores the player beyond 2400 units, to save sight
-  checks.
+  (`MF_FLOAT`, `MF_INFLOAT`), and `P_CheckSight`'s `REJECT` test before every monster's sight
+  line (so `A_Look` sees as far as vanilla's).
 - ~~**Sector specials.**~~ Done: 10 and 14's timed doors, 11's exit at 10 health, and type 4's
   strobe (it was only hurting). Every type `P_SpawnSpecials` knows is handled now.
 - ~~**Linedef specials.**~~ Done: every special the player can trigger, the scrolling wall (48)

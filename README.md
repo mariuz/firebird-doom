@@ -855,7 +855,12 @@ open. That's what makes monsters zigzag, sidestep and wander round pillars. A mi
 waits for `MOVECOUNT` to run out, except on Nightmare. The step after an attack only picks a new
 heading (`MF_JUSTATTACKED`). When its target dies, a monster goes back to standing. `A_Look`
 only sees ahead: a monster facing away doesn't notice you unless you come within 64 units, or
-make a noise. `P_Move` and `P_NewChaseDir` are stored procedures (`P_MOVE`, `NEW_CHASE_DIR`).
+make a noise. It sees as far as vanilla does, with no distance limit. Like `P_CheckSight`, every
+monster sight check first asks the map's `REJECT` table: a precomputed bit per pair of sectors
+saying one can't see the other. Firebird keeps it as a row of bits per sector, and `REJECT`
+(`rejected(s1, s2)`) rules out 70–94% of pairs on Freedoom's maps before any line of sight is
+walked. That makes idle monsters cheaper than before, when the port instead ignored the player
+beyond 2400 units. `P_Move` and `P_NewChaseDir` are stored procedures (`P_MOVE`, `NEW_CHASE_DIR`).
 
 Monsters fight each other, as in DOOM. When one monster's attack hurts another, the victim turns
 on the attacker and won't switch again for 100 chase steps (`BASETHRESHOLD`). After that, hurting

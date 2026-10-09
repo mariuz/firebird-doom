@@ -193,6 +193,21 @@ BEGIN
     ok = 0;
 END^
 
+-- P_CheckSight's first test: the map's REJECT table says nothing in sector S2
+-- can be seen from sector S1 (so no sight line need be walked).
+CREATE OR ALTER FUNCTION rejected (s1 INTEGER, s2 INTEGER)
+RETURNS SMALLINT
+AS
+DECLARE hex VARCHAR(8000);
+DECLARE nib INTEGER;
+BEGIN
+  IF (s1 IS NULL OR s2 IS NULL) THEN RETURN 0;
+  SELECT r.bits FROM reject r WHERE r.sector_id = :s1 INTO hex;
+  IF (hex IS NULL OR s2 / 4 >= CHAR_LENGTH(hex)) THEN RETURN 0;
+  nib = POSITION(SUBSTRING(hex FROM s2 / 4 + 1 FOR 1) IN '0123456789abcdef') - 1;
+  RETURN IIF(BIN_AND(nib, BIN_SHL(1, MOD(s2, 4))) <> 0, 1, 0);
+END^
+
 -- P_CheckSight: is there an unobstructed line from A to B at these heights?
 -- Walks the BLOCKMAP cells the sight line crosses (Amanatides–Woo) and stops
 -- at the first cell holding a blocking line.
@@ -2448,6 +2463,9 @@ DECLARE ppx DOUBLE PRECISION;
 DECLARE ppy DOUBLE PRECISION;
 DECLARE ppz DOUBLE PRECISION;
 DECLARE ppdead SMALLINT;
+DECLARE ppsec INTEGER;
+DECLARE psec INTEGER;
+DECLARE tsec INTEGER;
 DECLARE target_id INTEGER;
 DECLARE threshold INTEGER;
 DECLARE tgt INTEGER;
@@ -2466,9 +2484,9 @@ DECLARE tshadow SMALLINT;
 DECLARE shadowed SMALLINT;
 BEGIN
   SELECT g.skill FROM game g WHERE g.id = 1 INTO skill;
-  SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle, IIF(p.invis_tics > 0, 1, 0)
+  SELECT t.x, t.y, t.z, p.dead, p.thing_id, t.angle, IIF(p.invis_tics > 0, 1, 0), t.sector_id
     FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1
-    INTO ppx, ppy, ppz, ppdead, ptid, pang, pinvis;
+    INTO ppx, ppy, ppz, ppdead, ptid, pang, pinvis, ppsec;
 
   FOR SELECT t.id, t.kind, t.x, t.y, t.z, t.angle, t.st, t.st_tics, t.st_len, t.step, t.reaction,
              t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame, t.momz,
@@ -2510,6 +2528,7 @@ BEGIN
     px = ppx;
     py = ppy;
     pz = ppz;
+    psec = ppsec;
     pdead = ppdead;
     gang = pang;
     tgt = NULL;
@@ -2517,9 +2536,9 @@ BEGIN
     IF (k = 'monster' AND target_id IS NOT NULL) THEN
     BEGIN
       sx = NULL;
-      SELECT t.x, t.y, t.z, t.angle, (SELECT ts.shadow FROM thing_types ts WHERE ts.thing_type = t.thing_type)
+      SELECT t.x, t.y, t.z, t.angle, (SELECT ts.shadow FROM thing_types ts WHERE ts.thing_type = t.thing_type), t.sector_id
         FROM things t WHERE t.id = :target_id AND t.st NOT IN ('dying', 'dead')
-        INTO sx, sy, oz, gang, tshadow;
+        INTO sx, sy, oz, gang, tshadow, tsec;
       IF (sx IS NULL) THEN
       BEGIN
         target_id = NULL;              -- it died: back to hunting the player
@@ -2530,6 +2549,7 @@ BEGIN
         px = sx;
         py = sy;
         pz = oz;
+        psec = tsec;
         pdead = 0;
         tgt = target_id;
         shadowed = tshadow;
@@ -2874,7 +2894,8 @@ BEGIN
       behind = IIF(delta > PI() / 2 AND delta < 3 * PI() / 2, 1, 0);
       IF (k = 'monster' AND pdead = 0
           AND ((BIN_AND(flags, 8) = 0 AND heard = 1)
-               OR (dist < 2400 AND (heard = 1 OR behind = 0 OR dist <= 64)
+               OR ((heard = 1 OR behind = 0 OR dist <= 64)
+                   AND rejected(sec, psec) = 0
                    AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1))) THEN
       BEGIN
         st = 'chase';
@@ -2916,7 +2937,7 @@ BEGIN
         EXECUTE PROCEDURE play_sound('DSFLAMST', mid, px, py);
       END
       IF (atk_kind = 'vile' AND pdead = 0 AND st_len - st_tics = 72
-          AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
+          AND rejected(sec, psec) = 0 AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
       BEGIN
         EXECUTE PROCEDURE play_sound('DSBAREXP', id, px, py);
         EXECUTE PROCEDURE hurt_target(tgt, 20, id);
@@ -2949,7 +2970,7 @@ BEGIN
         BEGIN
           -- A_FaceTarget turns up to 45° wide of a shadow: then the volley
           -- only lands if that still points at the target's body
-          IF (check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1
+          IF (rejected(sec, psec) = 0 AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1
               AND (shadowed = 0 OR ABS((p_random() - p_random()) * PI() / 4) < ATAN2(20, dist))) THEN
           BEGIN
             -- P_LineAttack: the first other monster (or barrel) on the line of
@@ -3095,7 +3116,7 @@ BEGIN
                         AND p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2))
                     -- the lost soul's range check counts half the distance
                     OR (atk_kind = 'skull' AND p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 4)))))
-            AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
+            AND rejected(sec, psec) = 0 AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
         BEGIN
           ang = ATAN2(py - y, px - x);
           IF (melee_fr IS NOT NULL AND dist < melee_range) THEN

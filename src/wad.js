@@ -270,6 +270,8 @@ export class Wad {
         upper: name8(b, o + 4), lower: name8(b, o + 12), middle: name8(b, o + 20),
         sector: u16(dv, o + 28),
       })),
+      // REJECT: bit s1 × sectors + s2 set means s2 can't be seen from s1 (P_CheckSight)
+      reject: parts.REJECT ? this.data(parts.REJECT) : new Uint8Array(0),
       sectors: rec('SECTORS', 26, (dv, o, i, b) => ({
         id: i, floor: s16(dv, o), ceil: s16(dv, o + 2),
         floorTex: name8(b, o + 4), ceilTex: name8(b, o + 12),
