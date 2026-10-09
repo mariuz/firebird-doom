@@ -19,7 +19,8 @@ CREATE TABLE game (
   total_items   INTEGER DEFAULT 0 NOT NULL,
   total_secrets INTEGER DEFAULT 0 NOT NULL,
   rng           BIGINT DEFAULT 1 NOT NULL,      -- P_RANDOM's state: the same seed, the same game
-  skill         SMALLINT DEFAULT 3 NOT NULL     -- 1 (easiest) … 5 (nightmare: fast, respawning)
+  skill         SMALLINT DEFAULT 3 NOT NULL,    -- 1 (easiest) … 5 (nightmare: fast, respawning)
+  players       SMALLINT DEFAULT 1 NOT NULL     -- players in the game (netgame: more than 1); ids 1…players
 );
 
 CREATE TABLE viewcfg (
@@ -29,7 +30,20 @@ CREATE TABLE viewcfg (
   proj   DOUBLE PRECISION NOT NULL,   -- horizontal projection distance in pixels
   projy  DOUBLE PRECISION NOT NULL,   -- vertical (differs in low detail mode)
   near_z DOUBLE PRECISION NOT NULL,   -- near clip plane in map units
-  use_bsp SMALLINT DEFAULT 1 NOT NULL -- 1 = BSP front-to-back with solidsegs, 0 = every linedef
+  use_bsp SMALLINT DEFAULT 1 NOT NULL, -- 1 = BSP front-to-back with solidsegs, 0 = every linedef
+  player_id SMALLINT DEFAULT 1 NOT NULL -- whose eyes this browser sees through (consoleplayer)
+);
+
+-- A netgame's tic: every player's ticcmd, written before NET_TIC runs it.
+CREATE TABLE ticcmd (
+  player_id SMALLINT NOT NULL PRIMARY KEY,
+  fwd       DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  side      DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  turn      DOUBLE PRECISION DEFAULT 0 NOT NULL,
+  fire      SMALLINT DEFAULT 0 NOT NULL,
+  use_key   SMALLINT DEFAULT 0 NOT NULL,
+  weapon_sel SMALLINT DEFAULT 0 NOT NULL,
+  run       SMALLINT DEFAULT 0 NOT NULL
 );
 
 -- One row per screen column: the renderer's generate_series().
@@ -136,7 +150,7 @@ CREATE TABLE sectors (
   special    INTEGER NOT NULL,
   tag        INTEGER NOT NULL,
   sky        SMALLINT DEFAULT 0 NOT NULL,
-  sound_heard SMALLINT DEFAULT 0 NOT NULL     -- soundtarget: gunfire has reached this sector
+  sound_heard SMALLINT DEFAULT 0 NOT NULL     -- soundtarget: the player whose gunfire reached this sector (0: none)
 );
 CREATE INDEX sectors_tag ON sectors (tag);
 
@@ -269,7 +283,8 @@ CREATE TABLE things (
   height     DOUBLE PRECISION NOT NULL,
   solid      SMALLINT DEFAULT 0 NOT NULL,
   target_id  INTEGER,                               -- who a monster is after (NULL = the player)
-  threshold  INTEGER DEFAULT 0 NOT NULL             -- chase steps before it may switch target again
+  threshold  INTEGER DEFAULT 0 NOT NULL,            -- chase steps before it may switch target again
+  tplayer    SMALLINT DEFAULT 1 NOT NULL            -- the player it's after when TARGET_ID is NULL
 );
 CREATE INDEX things_kind ON things (kind);
 CREATE INDEX things_sector ON things (sector_id);
@@ -334,7 +349,8 @@ CREATE TABLE sound_events (
   sound  VARCHAR(8) NOT NULL,
   origin INTEGER,                 -- thing or sector making it; a new sound cuts the old one
   x      DOUBLE PRECISION,
-  y      DOUBLE PRECISION
+  y      DOUBLE PRECISION,
+  listener SMALLINT               -- only this player hears it (a pickup: S_StartSound for consoleplayer); NULL: everyone
 );
 
 -- The sound graph, built by INIT_MAP: sector A is next to sector B through

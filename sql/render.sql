@@ -91,7 +91,7 @@ BEGIN
     FROM player p
     JOIN things th ON th.id = p.thing_id
    CROSS JOIN viewcfg c
-   WHERE p.id = 1 AND c.id = 1
+   WHERE p.id = c.player_id AND c.id = 1
     INTO px, py, pz, ca, sa, w, h, proj, projy, nz;
   hw = w / 2;
   hh = h / 2;
@@ -265,7 +265,7 @@ BEGIN
     FROM player p
     JOIN things th ON th.id = p.thing_id
    CROSS JOIN viewcfg c
-   WHERE p.id = 1 AND c.id = 1
+   WHERE p.id = c.player_id AND c.id = 1
     INTO px, py, pz, ca, sa, w, h, proj, projy, nz;
   hw = w / 2;
   hh = h / 2;
@@ -458,14 +458,15 @@ DECLARE sh DOUBLE PRECISION;
 DECLARE leftoff DOUBLE PRECISION;
 DECLARE topoff DOUBLE PRECISION;
 DECLARE scale DOUBLE PRECISION;
+DECLARE me INTEGER;
 BEGIN
-  SELECT th.x, th.y, p.view_z, th.angle, c.w, c.h, c.proj, c.projy, c.near_z, g.tic
+  SELECT th.x, th.y, p.view_z, th.angle, c.w, c.h, c.proj, c.projy, c.near_z, g.tic, th.id
     FROM player p
     JOIN things th ON th.id = p.thing_id
    CROSS JOIN viewcfg c
    CROSS JOIN game g
-   WHERE p.id = 1 AND c.id = 1 AND g.id = 1
-    INTO px, py, pz, pa, w, h, proj, projy, nz, tic;
+   WHERE p.id = c.player_id AND c.id = 1 AND g.id = 1
+    INTO px, py, pz, pa, w, h, proj, projy, nz, tic, me;
   ca = COS(pa);
   sa = SIN(pa);
 
@@ -473,7 +474,7 @@ BEGIN
              th.sector_id, tt.walk_fr, tt.bright, COALESCE(tt.shadow, 0)
         FROM things th
         LEFT JOIN thing_types tt ON tt.thing_type = th.thing_type
-       WHERE th.kind NOT IN ('player', 'marker', 'shooter')
+       WHERE th.kind NOT IN ('marker', 'shooter') AND th.id <> :me   -- (every player but the one looking)
         INTO id, tx, ty, tz, tang, kind, fr, spr, sec, walk_fr, bright, fuzz
   DO
   BEGIN
@@ -539,7 +540,7 @@ DECLARE brute CURSOR FOR (SELECT col, depth, u, line_id, back_view, open_top, op
 BEGIN
   -- viewcfg.use_bsp picks the slice generator; the clipping is the same
   SELECT vc.use_bsp, vc.h, vc.projy, p.view_z FROM viewcfg vc CROSS JOIN player p
-   WHERE vc.id = 1 AND p.id = 1
+   WHERE vc.id = 1 AND p.id = vc.player_id
     INTO use_bsp, h, projy, pz;
   IF (use_bsp = 1) THEN OPEN bsp; ELSE OPEN brute;
   WHILE (1 = 1) DO

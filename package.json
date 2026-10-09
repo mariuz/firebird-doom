@@ -27,6 +27,7 @@
     "test:statusbar": "node scripts/statusbar-test.mjs",
     "test:sound": "node scripts/sound-test.mjs",
     "test:music": "node scripts/music-test.mjs",
+    "test:netgame": "node scripts/netgame-test.mjs",
     "test:browser": "node scripts/browser-test.mjs",
     "test:visual": "node scripts/screenshot.mjs --check"
   },

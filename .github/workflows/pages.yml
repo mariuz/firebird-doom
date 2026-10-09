@@ -117,6 +117,14 @@ jobs:
       - name: Music (the OPL2 emulator and the DMX driver)
         run: npm run test:music
 
+      - name: Netgame, Phase 1 (two players in Firebird)
+        run: npm run test:netgame
+
+      - name: Netgame, Phase 2
+        run: npm run test:netgame
+        env:
+          WAD: public/wads/freedoom2.wad
+
       # BSP + solidsegs must find exactly the walls brute force finds
       - name: Renderer equivalence (BSP vs brute force)
         run: npm run test:renderers -- E1M1 E1M2 E1M3

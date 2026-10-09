@@ -156,8 +156,13 @@ export async function setRenderer(db, useBsp) {
 }
 
 /** P_SetupLevel: replace the current map with `name` from the WAD. */
-export async function loadMap(db, wad, res, name, { skill = 3, newGame = true } = {}) {
+/**
+ * P_SetupLevel: map NAME into Firebird. PLAYERS (a netgame: 2–4) sets how
+ * many players the game has; left out, it keeps what the game had (1 to start).
+ */
+export async function loadMap(db, wad, res, name, { skill = 3, newGame = true, players = null } = {}) {
   const m = wad.map(name);
+  if (players != null) await db.exec(`UPDATE game SET players = ${Math.max(1, Math.min(4, players | 0))} WHERE id = 1`);
   const tex = (n) => (n && n !== '-' ? res.texId.get(n) ?? 0 : 0);
   const flat = (n) => res.flatId.get(n) ?? null;
 
