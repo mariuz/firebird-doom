@@ -86,11 +86,29 @@ export function lightNum(light, extralight = 0) {
   return Math.max(0, Math.min(LIGHTLEVELS - 1, (light >> 4) + extralight));
 }
 
-/** scalelight[lightnum][index]: walls and sprites, by their projected scale (index = scale >> 12). */
-export function scaleLight(lightnum, index) {
-  // level = startmap - j*SCREENWIDTH/(viewwidth<<detailshift)/DISTMAP, and viewwidth<<detailshift is always 320
+/** scalelight[lightnum][index]: walls and sprites, by their projected scale (index = scale >> 12).
+ *  R_ExecuteSetViewSize builds it for the view's width on the screen (viewwidth << detailshift). */
+export function scaleLight(lightnum, index, scaledWidth = 320) {
+  // level = startmap - j*SCREENWIDTH/(viewwidth<<detailshift)/DISTMAP
   const j = Math.max(0, Math.min(MAXLIGHTSCALE - 1, index));
-  return clampMap(startMap(lightnum) - Math.trunc(j / 2));
+  return clampMap(startMap(lightnum) - Math.trunc(Math.trunc((j * 320) / scaledWidth) / 2));
+}
+
+/**
+ * R_ExecuteSetViewSize: the 3D view for screen size BLOCKS (3–11) and the
+ * detail. 11 is the whole 320×200 screen with no status bar, 10 the full
+ * width above it; below that the view is blocks × 32 wide and
+ * (blocks × 168 / 10) & ~7 tall, centred over the status bar, with a border.
+ * w is in columns (half of scaledW in low detail).
+ */
+export function viewGeometry(blocks = 10, detail = 'high') {
+  const b = Math.max(3, Math.min(11, Math.trunc(blocks)));
+  const scaledW = b === 11 ? 320 : b * 32;
+  const h = b === 11 ? 200 : Math.trunc((b * 168) / 10) & ~7;
+  return {
+    blocks: b, scaledW, h, w: scaledW >> (detail === 'low' ? 1 : 0),
+    x: (320 - scaledW) >> 1, y: scaledW === 320 ? 0 : (168 - h) >> 1,
+  };
 }
 
 // zlight[lightnum][j]: scale = FixedDiv(160 << 16, (j + 1) << 20) >> 12, level = startmap - scale/DISTMAP
@@ -120,6 +138,8 @@ export class Renderer {
     this.fuzzPos = 0;
     this.screen = new Uint8Array(320 * 200);
     this.setSize(320, 168);
+    this.back = null;        // R_FillBackScreen's picture, and what it was made for
+    this.backKey = '';
   }
 
   /** Where present() sends the screen; it gets this WAD's palettes. */
@@ -128,14 +148,20 @@ export class Renderer {
     presenter?.setPalettes(this.palettes);
   }
 
-  setSize(w, h) {
+  /** The view: W columns by H rows, SCALEDW pixels wide on the screen at (X, Y). */
+  setSize(w, h, { scaledW = 320, x = 0, y = 0 } = {}) {
     this.w = w;
     this.h = h;
+    this.scaledW = scaledW;
+    this.winX = x;
+    this.winY = y;
     this.fb = new Uint8Array(w * h);
     this.sfb = this.screen;
     this.proj = w / 2; // 90° horizontal field of view
     this.spanStart = new Int32Array(h);
-    this.projy = 160; // vertical scale of a 320-wide screen, whatever the detail
+    // yslope's (viewwidth << detailshift) / 2: the vertical scale follows the
+    // view's width on the screen, whatever the detail
+    this.projy = scaledW / 2;
   }
 
   texture(id) {
@@ -314,13 +340,14 @@ export class Renderer {
     // R_RenderSegLoop: rw_scale is projection / distance, and projection is
     // half the view's columns – so in low detail it halves while scalelight
     // doesn't, and walls come out darker at a distance (vanilla's quirk, kept)
-    return scaleLight(lightNum(light, this.extralight), Math.floor((this.proj * 16) / depth));
+    return scaleLight(lightNum(light, this.extralight), Math.floor((this.proj * 16) / depth), this.scaledW ?? 320);
   }
 
   /** A sprite's: R_ProjectSprite shifts by LIGHTSCALESHIFT - detailshift, so detail doesn't change it. */
   spriteLightIndex(light, depth) {
     if (this.fixedCm != null) return this.fixedCm;
-    return scaleLight(lightNum(light, this.extralight), Math.floor(2560 / depth));
+    const sw = this.scaledW ?? 320;
+    return scaleLight(lightNum(light, this.extralight), Math.floor((sw * 8) / depth), sw);
   }
 
   wallColumn(col, y0, y1, tex, u, top, depth, scale, vz, light, masked = false) {
@@ -468,33 +495,83 @@ export class Renderer {
     }
   }
 
-  /** A patch drawn as fuzz (R_DrawFuzzColumn) over the 3D view: the weapon while invisible. */
-  patchFuzz(pic, x, y) {
+  /**
+   * R_DrawPSprite: a weapon sprite at (SX, SY) in DOOM's 320×200 weapon
+   * space, placed against the view's centre (BASEYCENTER 100 is the centre of
+   * a full screen, so above the status bar it sits 16 pixels higher), scaled
+   * by pspritescale (the view's width / 320) and clipped to the view. LIGHT
+   * is a colormap row, or 'fuzz' (R_DrawFuzzColumn: partial invisibility).
+   */
+  psprite(pic, sx, sy, light = 0) {
     if (!pic) return;
-    const { sfb, cmap } = this;
-    const x0 = x - pic.left;
-    const y0 = y - pic.top;
-    for (let px = 0; px < pic.w; px++) {
-      const sx = x0 + px;
-      if (sx < 0 || sx >= 320) continue;
+    const { sfb, cmap, scaledW, h, winX, winY } = this;
+    const s = scaledW / 320;
+    const left = winX + scaledW / 2 + (sx - 160 - pic.left) * s;
+    const top = winY + h / 2 - (100 - (sy - pic.top)) * s;
+    const x0 = Math.max(winX, Math.ceil(left));
+    const x1 = Math.min(winX + scaledW, Math.ceil(left + pic.w * s));
+    const y0 = Math.max(winY, Math.ceil(top));
+    const y1 = Math.min(winY + h, Math.ceil(top + pic.h * s));
+    const fuzz = light === 'fuzz';
+    const base = fuzz ? 0 : light * 256;
+    for (let x = x0; x < x1; x++) {
+      const px = Math.min(pic.w - 1, Math.floor((x - left) / s));
       const off = px * pic.h;
-      for (let py = 0; py < pic.h; py++) {
-        const sy = y0 + py;
-        if (sy < 0 || sy >= 168 || !pic.alpha[off + py]) continue;
-        const fy = Math.min(167, Math.max(0, sy + FUZZ_OFFSETS[this.fuzzPos]));
-        this.fuzzPos = (this.fuzzPos + 1) % FUZZ_OFFSETS.length;
-        sfb[sy * 320 + sx] = cmap[FUZZ_MAP + sfb[fy * 320 + sx]];
+      for (let y = y0; y < y1; y++) {
+        const py = Math.min(pic.h - 1, Math.floor((y - top) / s));
+        if (!pic.alpha[off + py]) continue;
+        if (fuzz) {
+          const fy = Math.min(winY + h - 1, Math.max(winY, y + FUZZ_OFFSETS[this.fuzzPos]));
+          this.fuzzPos = (this.fuzzPos + 1) % FUZZ_OFFSETS.length;
+          sfb[y * 320 + x] = cmap[FUZZ_MAP + sfb[fy * 320 + x]];
+        } else sfb[y * 320 + x] = cmap[base + pic.pix[off + py]];
       }
     }
   }
 
-  /** Scale the 3D view into the top of the 320×200 screen (low detail doubles pixels). */
+  /**
+   * R_FillBackScreen + R_DrawViewBorder: around a view narrower than the
+   * screen, the flat FLAT tiled over everything above the status bar, and the
+   * BRDR_* patches bevelling the view's edge. Made once per size, then copied.
+   */
+  drawBorder(flat) {
+    const { scaledW, h, winX, winY, sfb } = this;
+    if (scaledW >= 320) return;
+    const key = `${flat}|${scaledW}|${h}`;
+    if (this.backKey !== key) {
+      const lump = this.wad.lump(flat);
+      const data = lump ? this.wad.data(lump) : null;
+      for (let y = 0; y < 168; y++) {
+        for (let x = 0; x < 320; x++) sfb[y * 320 + x] = data ? data[((y & 63) << 6) + (x & 63)] : 0;
+      }
+      const p = (n) => this.pictureByName(n);
+      for (let x = 0; x < scaledW; x += 8) {
+        this.patch(p('BRDR_T'), winX + x, winY - 8);
+        this.patch(p('BRDR_B'), winX + x, winY + h);
+      }
+      for (let y = 0; y < h; y += 8) {
+        this.patch(p('BRDR_L'), winX - 8, winY + y);
+        this.patch(p('BRDR_R'), winX + scaledW, winY + y);
+      }
+      this.patch(p('BRDR_TL'), winX - 8, winY - 8);
+      this.patch(p('BRDR_TR'), winX + scaledW, winY - 8);
+      this.patch(p('BRDR_BL'), winX - 8, winY + h);
+      this.patch(p('BRDR_BR'), winX + scaledW, winY + h);
+      this.back = sfb.slice(0, 320 * 168);
+      this.backKey = key;
+      return;
+    }
+    sfb.set(this.back);
+  }
+
+  /** Put the 3D view into its window on the 320×200 screen (low detail doubles pixels). */
   composeView() {
-    const { w, h, fb, sfb } = this;
-    const sx = w / 320;
-    for (let y = 0; y < Math.min(h, 168); y++) {
+    const { w, h, fb, sfb, scaledW, winX, winY } = this;
+    const sx = w / scaledW;
+    for (let y = 0; y < Math.min(h, 200 - winY); y++) {
       const row = y * w;
-      for (let x = 0; x < 320; x++) sfb[y * 320 + x] = fb[row + Math.floor(x * sx)];
+      const out = (winY + y) * 320 + winX;
+      for (let x = 0; x < scaledW; x++) sfb[out + x] = fb[row + Math.floor(x * sx)];
     }
   }
 

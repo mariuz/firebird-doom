@@ -1,7 +1,7 @@
 // light-test.mjs – the renderer's light diminishing against DOOM's own
 // arithmetic: R_InitLightTables, R_ExecuteSetViewSize, R_RenderSegLoop,
 // R_ProjectSprite and R_MapPlane, re-done here in 16.16 fixed point.
-import { Renderer, lightNum, scaleLight, zLight } from '../src/renderer.js';
+import { Renderer, lightNum, scaleLight, zLight, viewGeometry } from '../src/renderer.js';
 import { extraLight } from '../src/hud.js';
 
 let failures = 0;
@@ -87,6 +87,36 @@ const n = lights.length * depths.length;
 assert(walls(0) === 0 && walls(1) === 0, `walls: the same colormap as R_RenderSegLoop at all ${n} light × distance samples, in high and low detail`);
 assert(sprites(0) === 0 && sprites(1) === 0, `sprites: the same as R_ProjectSprite (detail doesn't change them), ${n} samples each`);
 assert(flats === 0, `flats: the same as R_MapPlane's zlight, ${n} samples`);
+
+// ── every screen size (R_SetViewSize 3–11): scalelight is rebuilt for the view's width ──
+const scalelightW = (scaled) => Array.from({ length: LIGHTLEVELS }, (_, i) => Array.from({ length: MAXLIGHTSCALE }, (__, j) =>
+  clamp(startmap(i) - Math.trunc(Math.trunc((j * SCREENWIDTH) / scaled) / DISTMAP))));
+let sizeBad = 0;
+const sizeSamples = [];
+for (let blocks = 3; blocks <= 11; blocks++) {
+  for (const detail of [0, 1]) {
+    const g = viewGeometry(blocks, detail ? 'low' : 'high');
+    const table = scalelightW(g.scaledW);
+    const proto = { proj: g.w / 2, scaledW: g.scaledW, extralight: 0, fixedCm: null };
+    const projection = BigInt(g.scaledW >> detail >> 1) * FRACUNIT;
+    for (const l of lights) {
+      for (const d of depths) {
+        let wi = Number(FixedDiv(projection, toFixed(d)) >> LIGHTSCALESHIFT);
+        let si = Number(FixedDiv(projection, toFixed(d)) >> (LIGHTSCALESHIFT - BigInt(detail)));
+        wi = Math.min(wi, MAXLIGHTSCALE - 1);
+        si = Math.min(si, MAXLIGHTSCALE - 1);
+        const ln = Math.max(0, Math.min(15, l >> 4));
+        if (Renderer.prototype.lightIndex.call(proto, l, d) !== table[ln][wi]) sizeBad++;
+        if (Renderer.prototype.spriteLightIndex.call(proto, l, d) !== table[ln][si]) sizeBad++;
+      }
+    }
+    if (detail === 0) sizeSamples.push(`${blocks}: ${g.scaledW}×${g.h}`);
+  }
+}
+assert(sizeBad === 0, `every screen size and detail: walls and sprites lit as R_ExecuteSetViewSize's scalelight (${sizeSamples.join(', ')})`);
+// a high-detail wall 300 away is as bright in a small view as in a full one: scalelight compensates
+const at = (blocks) => Renderer.prototype.lightIndex.call({ proj: viewGeometry(blocks).w / 2, scaledW: viewGeometry(blocks).scaledW, extralight: 0, fixedCm: null }, 160, 300);
+assert(at(5) === at(10) && at(10) === at(11), `a wall 300 away: colormap ${at(5)} at size 5, ${at(10)} at 10, ${at(11)} at 11`);
 
 // low detail's quirk: walls come out darker at a distance (their scale index halves), sprites don't
 const lowWall = Renderer.prototype.lightIndex.call({ proj: 80, extralight: 0, fixedCm: null }, 160, 200);

@@ -11,7 +11,7 @@ import gameSql from '../sql/game.sql';
 import renderSql from '../sql/render.sql';
 import { Wad } from './wad.js';
 import { createSchema, loadResources, loadMap, setView, setRenderer } from './loader.js';
-import { Renderer } from './renderer.js';
+import { Renderer, viewGeometry } from './renderer.js';
 import { drawStatusBar, FaceWidget, drawText, drawWeapon, extraLight } from './hud.js';
 import { AM_COLORS, AM_STRINGS, AutomapView, GRID_COLOR, automapColor } from './automap.js';
 import { cheatReaders, clevMap, idmusMap } from './cheats.js';
@@ -44,14 +44,20 @@ let running = false;
 let paused = false;
 let lastTic = 0;
 // settings, remembered per browser
-const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, display: 'webgl', smooth: false, skill: 3, messages: true, mouse: 5 };
+const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, display: 'webgl', smooth: false, skill: 3, messages: true, mouse: 5, screenSize: 10 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('firebird-doom:settings') || '{}'));
 } catch { /* storage unavailable: defaults */ }
 const saveSettings = () => {
   try { localStorage.setItem('firebird-doom:settings', JSON.stringify(settings)); } catch { /* ignore */ }
 };
-const viewWidth = () => (settings.detail === 'high' ? 320 : 160);
+// R_SetViewSize: the menu's Screen Size (screenblocks 3–11) and the detail
+const view = () => viewGeometry(settings.screenSize, settings.detail);
+async function applyView() {
+  const g = view();
+  await setView(db, g.w, g.h, g.scaledW / 2);
+  renderer?.setSize(g.w, g.h, g);
+}
 let showMap = false;
 let face = new FaceWidget();         // the status bar face (ST_updateFaceWidget), its own state
 let lastFire = false;               // the attack button, as the face sees it (player->attackdown)
@@ -138,6 +144,11 @@ window.addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (finale) finaleKey = true;
   if (e.code === 'Tab') showMap = !showMap;
+  // M_Responder: - and = shrink and grow the view (M_SizeDisplay), unless the automap has them
+  if (!showMap && (e.code === 'Minus' || e.code === 'Equal') && menu && !title) {
+    e.preventDefault();
+    sizeDisplay(e.code === 'Equal' ? 1 : -1);
+  }
   // AM_Responder: F follow, G grid, M mark, C clear marks, 0 the whole level;
   // = and - zoom and (follow off) the arrows pan while held – and the game
   // doesn't see them (so F doesn't fire, nor M switch the sound off)
@@ -302,6 +313,16 @@ async function loadFromSlot(slot) {
   running = true;
 }
 
+/** M_SizeDisplay: one step of the Screen Size, 3–11 */
+function sizeDisplay(dir) {
+  const next = Math.max(3, Math.min(11, settings.screenSize + dir));
+  if (next === settings.screenSize) return;
+  settings.screenSize = next;
+  saveSettings();
+  audio.playEvents([[0, 'DSSTNMOV', 'menu', null, null]], { x: 0, y: 0, angle: 0 });
+  applyView().catch((err) => setStatus(err.message, true));
+}
+
 /** This WAD's menu, its options wired to the settings */
 function makeMenu() {
   const maps = wad.mapNames();
@@ -333,6 +354,13 @@ function makeMenu() {
       quit() {
         play(quitSounds[Math.floor(Math.random() * quitSounds.length)]);
         goTitle();
+      },
+      // (the menu's thermometer counts 0–8; the menu plays its own slider sound)
+      get screenSize() { return settings.screenSize - 3; },
+      set screenSize(v) {
+        settings.screenSize = v + 3;
+        saveSettings();
+        applyView().catch((err) => setStatus(err.message, true));
       },
       get messages() { return settings.messages; },
       set messages(v) { settings.messages = v; saveSettings(); },
@@ -652,10 +680,15 @@ async function frame() {
     renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette, fixedColormap,
       extralight: hud.DEAD ? 0 : extraLight(hud) },
       walls, sprites, map);
+    // R_DrawViewBorder round a small view (FLOOR7_2, DOOM II's GRNROCK)
+    if (renderer.scaledW < 320) renderer.drawBorder(wad.mapNames().some((m) => m.startsWith('MAP')) ? 'GRNROCK' : 'FLOOR7_2');
     renderer.composeView();
     if (!hud.DEAD) drawWeapon(renderer, hud);
     if (showMap) drawAutomap(tics);
-    drawStatusBar(renderer, hud, face.update(hud, tics, lastFire));
+    // (the face still keeps its time with the bar off: ST_Ticker runs regardless)
+    const faceNow = face.update(hud, tics, lastFire);
+    // ST_Drawer: full screen (11) has no status bar, except over the automap
+    if (settings.screenSize < 11 || showMap) drawStatusBar(renderer, hud, faceNow);
     if (amMsg) amMsg.tics -= tics;
     if (amMsg && amMsg.tics <= 0) amMsg = null;
     const msg = amMsg?.text ?? hud.MSG;
@@ -824,7 +857,7 @@ async function loadWads() {
   const maps = wad.mapNames();
   if (!maps.length) throw new Error(`${label} has no maps`);
   setStatus(`Copying ${label} resources into Firebird…`);
-  res = await loadResources(db, wad, { width: viewWidth(), height: 168, dehacked: dehPatch?.text ?? '' });
+  res = await loadResources(db, wad, { width: view().w, height: view().h, projy: view().scaledW / 2, dehacked: dehPatch?.text ?? '' });
   await setRenderer(db, settings.renderer === 'bsp');
   renderer = new Renderer(wad, res);
   renderer.attach(presenter);
@@ -839,7 +872,7 @@ async function loadWads() {
   lastDemo = null;
   saves.get(`${wadKey}|demo`).then((d) => { if (d && !demoProblem(d)) lastDemo = d; updateDemoButtons(); }).catch(() => {});
   makeMenu();
-  renderer.setSize(viewWidth(), 168);
+  renderer.setSize(view().w, view().h, view());
   const sel = $('map');
   sel.innerHTML = maps.map((m) => `<option>${m}</option>`).join('');
   $('wadname').textContent = label;
@@ -1066,8 +1099,7 @@ applyDisplay();
 $('detail').addEventListener('change', async (e) => {
   settings.detail = e.target.value;
   saveSettings();
-  await setView(db, viewWidth(), 168);
-  renderer.setSize(viewWidth(), 168);
+  await applyView();
 });
 
 boot();

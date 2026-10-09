@@ -34,11 +34,10 @@ function menus(doom2, episodes) {
     name: 'skill', x: 48, y: 63, titles: [['M_NEWG', 96, 14], ['M_SKILL', 54, 38]], prev: doom2 ? 'main' : 'episode', lastOn: 2,
     items: ['M_JKILL', 'M_ROUGH', 'M_HURT', 'M_ULTRA', 'M_NMARE'].map((l, i) => item(l, 'skill', { skill: i + 1 })),
   };
-  // (DOOM's Screen Size row stays blank: the view here is always the full width)
   const options = {
     name: 'options', x: 60, y: 37, titles: [['M_OPTTTL', 108, 15]], prev: 'main',
     items: [item('M_ENDGAM', 'endgame'), item('M_MESSG', 'messages', { toggle: true }), item('M_DETAIL', 'detail', { toggle: true }),
-      empty, empty, item('M_MSENS', 'mouse', { slider: true }), empty, item('M_SVOL', 'sound')],
+      item('M_SCRNSZ', 'screensize', { slider: true }), empty, item('M_MSENS', 'mouse', { slider: true }), empty, item('M_SVOL', 'sound')],
   };
   const sound = {
     name: 'sound', x: 80, y: 64, titles: [['M_SVOL', 60, 38]], prev: 'options',
@@ -243,6 +242,7 @@ export class Menu {
     if (it.act === 'messages') a.messages = !a.messages;
     else if (it.act === 'detail') a.detail = a.detail === 'high' ? 'low' : 'high';
     else if (it.act === 'mouse') a.mouse = clamp(a.mouse + dir, 9);
+    else if (it.act === 'screensize') a.screenSize = clamp(a.screenSize + dir, 8);   // M_SizeDisplay
     else if (it.act === 'sfx') a.sfx = clamp(a.sfx + dir, 15);
     else if (it.act === 'music') a.music = clamp(a.music + dir, 15);
   }
@@ -319,6 +319,7 @@ export class Menu {
     if (m.name === 'options') {
       r.patch(pic(a.messages ? 'M_MSGON' : 'M_MSGOFF'), m.x + 120, m.y + LINEHEIGHT * 1);
       r.patch(pic(a.detail === 'high' ? 'M_GDHIGH' : 'M_GDLOW'), m.x + 175, m.y + LINEHEIGHT * 2);
+      this.thermo(r, m.x, m.y + LINEHEIGHT * 4, 9, a.screenSize ?? 7);
       this.thermo(r, m.x, m.y + LINEHEIGHT * 6, 10, a.mouse);
     } else if (m.name === 'sound') {
       this.thermo(r, m.x, m.y + LINEHEIGHT * 1, 16, a.sfx);

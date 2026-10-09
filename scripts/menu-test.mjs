@@ -15,12 +15,13 @@ const assert = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) f
 
 const make = (opts = {}) => {
   const log = { games: [], sounds: [], ended: 0, quit: 0 };
-  const state = { messages: true, detail: 'high', mouse: 5, sfx: 10, music: 7 };
+  const state = { messages: true, detail: 'high', mouse: 5, sfx: 10, music: 7, screenSize: 7 };
   const actions = {
     newGame: (e, s) => log.games.push([e, s]), endGame: () => log.ended++, quit: () => log.quit++,
     get messages() { return state.messages; }, set messages(v) { state.messages = v; },
     get detail() { return state.detail; }, set detail(v) { state.detail = v; },
     get mouse() { return state.mouse; }, set mouse(v) { state.mouse = v; },
+    get screenSize() { return state.screenSize; }, set screenSize(v) { state.screenSize = v; },
     get sfx() { return state.sfx; }, set sfx(v) { state.sfx = v; },
     get music() { return state.music; }, set music(v) { state.music = v; },
   };
@@ -63,7 +64,9 @@ const keys = (m, ...ks) => ks.forEach((k) => m.key(k));
   keys(m, 'ArrowDown', 'ArrowDown', 'Enter');
   assert(m.current.name === 'options', 'Options');
   keys(m, 'ArrowDown', 'ArrowDown', 'ArrowDown');
-  assert(m.item.act === 'mouse', 'the cursor skips the blank rows to Mouse Sensitivity');
+  const third = m.item.act;
+  keys(m, 'ArrowDown');
+  assert(third === 'screensize' && m.item.act === 'mouse', 'the fourth row is Screen Size, and the cursor skips the blank row to Mouse Sensitivity');
   keys(m, 'Backspace');
   assert(m.current.name === 'main', 'Backspace goes back a menu');
   keys(m, 'Escape');
@@ -77,13 +80,18 @@ const keys = (m, ...ks) => ks.forEach((k) => m.key(k));
   keys(m, 'ArrowDown', 'Enter');                // Options
   keys(m, 'ArrowDown', 'Enter');                // Messages: on → off
   keys(m, 'ArrowDown', 'ArrowRight');           // Detail: high → low
+  keys(m, 'ArrowDown', 'ArrowRight', 'ArrowRight', 'ArrowRight');   // Screen Size: 7 → 8 (no further)
+  const big = state.screenSize;
+  keys(m, 'ArrowLeft', 'ArrowLeft', 'ArrowLeft');
+  const small = state.screenSize;
   keys(m, 'ArrowDown', 'ArrowLeft', 'ArrowLeft');   // Mouse: 5 → 3
   keys(m, 'ArrowDown', 'Enter');                // Sound Volume
   keys(m, 'ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowRight', 'ArrowRight');   // sfx 10 → 15 (no further)
   keys(m, 'ArrowDown', 'ArrowLeft');            // music 7 → 6
   assert(!state.messages && state.detail === 'low' && state.mouse === 3 && state.sfx === 15 && state.music === 6,
     `options: messages off, detail ${state.detail}, mouse ${state.mouse}, sfx ${state.sfx} (capped at 15), music ${state.music}`);
-  keys(m, 'Backspace', 'ArrowUp', 'ArrowUp', 'ArrowUp', 'ArrowUp', 'Enter');   // (from Sound Volume, over the blanks)
+  assert(big === 8 && small === 5, `Screen Size: a thermometer of 9 (0–8, screenblocks 3–11): up to ${big}, then down to ${small}`);
+  keys(m, 'Backspace', 'ArrowUp', 'ArrowUp', 'ArrowUp', 'ArrowUp', 'ArrowUp', 'Enter');   // (from Sound Volume, over the blanks)
   assert(m.message?.yesno && m.current.name === 'options', 'End Game asks first');
 }
 
@@ -212,7 +220,13 @@ const keys = (m, ...ks) => ks.forEach((k) => m.key(k));
   calls.length = 0;
   m.draw(stub);
   assert(calls.at(-1).startsWith('M_SKULL2'), 'the skull blinks every 8 tics');
-  keys(m, 'ArrowDown', 'Enter', 'ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowDown', 'Enter');
+  keys(m, 'ArrowDown', 'Enter');
+  calls.length = 0;
+  m.draw(stub);
+  // M_DrawThermo for Screen Size on the row under it (y 37 + 16 × 4): 9 notches, the dot at 7
+  assert(calls.includes('M_SCRNSZ@60,85') && calls.includes('M_THERML@60,101') && calls.includes('M_THERMR@140,101')
+      && calls.includes('M_THERMO@124,101'), 'the options menu: Screen Size and its 9-notch thermometer, at 7 (screenblocks 10)');
+  keys(m, 'ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowDown', 'Enter');
   calls.length = 0;
   m.draw(stub);
   assert(calls.includes('M_SVOL@60,38') && calls.includes('M_THERML@80,80') && calls.includes('M_THERMO@168,80'),

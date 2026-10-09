@@ -11,9 +11,9 @@ you find missing.
   on 1, and Nightmare's fast monsters, instant reactions, respawning and no cheats on 5.
   Dropped items give half (`MF_DROPPED`), as in vanilla.
 - ~~**Main menu, new game and episode select.**~~ Done ([src/menu.js](../src/menu.js)): the
-  title loop, the main menu, episode and skill select, Options, Read This!, Quit. Still missing:
-  the demo loop between the title pages (needs demo playback), the Screen Size option, and
-  Load/Save, since done.
+  title loop, the main menu, episode and skill select, Options, Read This!, Quit. Screen Size and
+  Load/Save are done too. Still missing: the demo loop between the title pages (DOOM's attract
+  demos are `.lmp` files, which this re-implementation can't replay; see Demos).
 - ~~**Save and load.**~~ Done ([src/savegame.js](../src/savegame.js)): six IndexedDB slots per WAD
   from the menu. A save is a JSON snapshot of the live tables. Quicksave and quickload
   (F6/F9) too, and exporting and importing a WAD's saves as a file.

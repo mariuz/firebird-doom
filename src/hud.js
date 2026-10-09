@@ -162,15 +162,15 @@ export function extraLight(hud) {
 
 export function drawWeapon(renderer, hud) {
   const { gun, flash, bob } = weaponFrames(hud);
-  // R_DrawPSprite: sx = 1, sy = WEAPONTOP (32), against a 320×200 screen.
+  // R_DrawPSprite: sx = 1, sy = WEAPONTOP (32), in the view (renderer.psprite).
   // Partially invisible, the weapon is fuzz too – flickering back in the
   // last four seconds (pw_invisibility > 4*32 || & 8)
   const inv = hud.INVIS_TICS ?? 0;
   // …and invulnerable, it takes the inverse colormap with the rest of the view
   const cmap = renderer.fixedCm ?? 0;
   const draw = inv > 4 * 32 || (inv & 8)
-    ? (pic, x, y) => renderer.patchFuzz(pic, x, y)
-    : (pic, x, y) => renderer.patch(pic, x, y, cmap);
+    ? (pic, x, y) => renderer.psprite(pic, x, y, 'fuzz')
+    : (pic, x, y) => renderer.psprite(pic, x, y, cmap);
   const lowered = hud.WEAPON_Y ?? 0;
   const sy = 32 + lowered + Math.abs(Math.round(bob));
   if (flash) draw(renderer.pictureByName(flash), 1 + Math.round(bob), sy);

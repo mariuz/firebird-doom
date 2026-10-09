@@ -47,7 +47,7 @@ export async function createSchema(db, sql) {
  * Resources: everything that does not change between maps.
  * Returns the lookup tables the JS renderer needs alongside.
  */
-export async function loadResources(db, wad, { width = 320, height = 168, dehacked = '' } = {}) {
+export async function loadResources(db, wad, { width = 320, height = 168, projy = 160, dehacked = '' } = {}) {
   // DeHackEd: the WAD's DEHACKED lump, then any patch given (a .deh file)
   const dehText = wad.dehacked() + '\n' + (dehacked ?? '');
   const deh = applyDehacked(THING_TYPES, parseDehacked(dehText));
@@ -100,7 +100,7 @@ SET TERM ; ^`);
   await db.exec('INSERT INTO game (id) VALUES (1); INSERT INTO player (id) VALUES (1)');
   const rk = Object.keys(deh.rules);
   await db.exec(`INSERT INTO rules (id, ${rk.join(', ')}) VALUES (1, ${rk.map((k) => Math.trunc(deh.rules[k])).join(', ')})`);
-  await setView(db, width, height);
+  await setView(db, width, height, projy);
 
   return { texDefs, texId, flats, flatId, dehacked: { cheats: deh.cheats, pars: deh.pars, report: deh.report, types: deh.types } };
 }
@@ -109,9 +109,10 @@ SET TERM ; ^`);
  * The view: 90° wide like DOOM. Vertical scale is always that of a 320-wide
  * screen, so "low detail" (160 columns) just makes each column twice as wide.
  */
-export async function setView(db, width, height) {
+/** The view: WIDTH columns, HEIGHT rows, vertical scale PROJY (the view's width on the screen / 2). */
+export async function setView(db, width, height, projy = 160) {
   await db.exec(
-    `UPDATE OR INSERT INTO viewcfg (id, w, h, proj, projy, near_z) VALUES (1, ${width}, ${height}, ${width / 2}, 160, 4) MATCHING (id)`,
+    `UPDATE OR INSERT INTO viewcfg (id, w, h, proj, projy, near_z) VALUES (1, ${width}, ${height}, ${width / 2}, ${projy}, 4) MATCHING (id)`,
   );
 }
 

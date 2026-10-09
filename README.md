@@ -524,10 +524,9 @@ cursor was.
   - End Game, back to the title.
   - Messages on/off.
   - Graphic Detail.
+  - Screen Size (see below).
   - Mouse Sensitivity.
   - Sound Volume, two thermometers tied to the page's sliders.
-
-  DOOM's Screen Size row is blank, because the view is always full width.
 - **Read This!** (DOOM I): `HELP1`, then `HELP2` (or `CREDIT` on a four-episode WAD).
 - **Load Game and Save Game:** six slots per WAD, in DOOM's bordered boxes (see below).
 - **Quit** asks with one of the WAD's quit messages, then plays one of DOOM's quit sounds and goes
@@ -536,6 +535,26 @@ cursor was.
 Menu sounds are DOOM's: a click on cursor moves, a pistol shot on choosing, and the switch sounds
 when it opens and closes. The settings under the view still work as before and stay in step
 with the menu. `npm run test:menu` drives all of it headless.
+
+### Screen size
+
+The menu's **Screen Size** thermometer, or <kbd>-</kbd> and <kbd>=</kbd> during play (while the
+automap is closed), sets DOOM's `screenblocks` from 3 to 11, as `R_SetViewSize` does. 10, the
+default, is the full-width view over the status bar. 11 is the whole 320×200 screen with no
+status bar, which comes back while the automap is open. Below 10, the view is `blocks × 32` pixels
+wide and `(blocks × 168 / 10) & ~7` tall, centred over the status bar. Around it is
+`R_FillBackScreen`'s border: the `FLOOR7_2` flat (DOOM II's `GRNROCK`) with the `BRDR_*` patches
+bevelling the edge. A smaller view is a smaller `FRAME_WALLS`: Firebird projects and clips fewer
+columns and rows, so the frame rate goes up. On 16 views of E1M1 and E1M2, size 6 took
+`FRAME_WALLS` from 29 ms to 18 ms. The vertical scale follows the view's width
+(`yslope`'s `(viewwidth << detailshift) / 2`), and so does the weapon (`pspritescale`). The
+light tables are rebuilt for the width, as `R_ExecuteSetViewSize` rebuilds `scalelight`, so a
+wall is exactly as bright at every size, which `npm run test:light` checks.
+
+`R_DrawPSprite` places the weapon against the view's centre, and `BASEYCENTER` (100) is the centre of
+the full screen. So at size 10, with the view 168 tall, the weapon sits 16 pixels higher than at
+size 11. The port used to draw it at the full-screen height at every size, 16 pixels too low. The
+setting is remembered with the others.
 
 ### Save and load
 
