@@ -956,6 +956,7 @@ async function boot() {
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },
       get melting() { return !!melt; },
+      get screen() { return screenState().replace(/ \d+$/, ''); },   // title, level, intermission, finale
       finale(name, secret = false) {
         if (!Finale.available(wad, name, secret)) return `no screen after ${name}${secret ? "'s secret exit" : ''} in this WAD`;
         intermission = null;

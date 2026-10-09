@@ -822,9 +822,12 @@ database. Try the `IDKFA` button.
 ## Deploying
 
 [.github/workflows/pages.yml](.github/workflows/pages.yml) runs on every push to `main`. It
-installs, fetches and caches Freedoom, runs the SQL smoke test and the BSP-vs-brute-force
-renderer check, builds, and publishes `dist/` to
-GitHub Pages. Pull requests run everything except the deploy.
+installs, fetches and caches Freedoom, and runs every test: the SQL smoke test, weapons,
+specials and physics on both WADs, the screens, menus, saves, demos, light, sound and the
+BSP-vs-brute-force renderer check. Then comes `npm run test:browser`, which drives the built page
+in headless Chromium through Playwright: the title, the menus, E1M1 melting in, quicksave and
+quickload, a level exit, the intermission, E1M2, an ending and End Game, with no page errors
+allowed. Then it builds and publishes `dist/` to GitHub Pages. Pull requests run everything except the deploy.
 
 ## Simplifications
 

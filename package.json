@@ -25,14 +25,16 @@
     "test:automap": "node scripts/automap-test.mjs",
     "test:light": "node scripts/light-test.mjs",
     "test:statusbar": "node scripts/statusbar-test.mjs",
-    "test:sound": "node scripts/sound-test.mjs"
+    "test:sound": "node scripts/sound-test.mjs",
+    "test:browser": "node scripts/browser-test.mjs"
   },
   "license": "MIT",
   "dependencies": {
     "firebird-wasm": "^0.3.0"
   },
   "devDependencies": {
-    "esbuild-wasm": "^0.25.0"
+    "esbuild-wasm": "^0.25.0",
+    "playwright": "1.56.1"
   },
   "engines": {
     "node": ">=20"

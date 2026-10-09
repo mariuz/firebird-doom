@@ -118,6 +118,14 @@ jobs:
       - name: Renderer equivalence (BSP vs brute force)
         run: npm run test:renderers -- E1M1 E1M2 E1M3
 
+      # The page itself in headless Chromium: title → menu → E1M1, the melt,
+      # quicksave/quickload, a level exit → the intermission → E1M2, End Game
+      - name: Install Chromium for the browser test
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser (the live frame loop's hand-offs)
+        run: npm run test:browser
+
       - name: Build site
         run: npm run build
 

@@ -111,6 +111,6 @@ you find missing.
 - **A visual regression test.** Compare `docs/screenshot-*.png` renders against stored hashes in
   CI, so rendering changes are noticed. Monster movement makes some shots non-deterministic, so it
   needs a fixed seed for `RAND()`.
-- **A test for the live frame loop.** The hand-offs between game, intermission and finale in
-  `main.js` are only checked by hand. A headless browser test, such as Playwright in CI, would
-  cover them.
+- ~~**A test for the live frame loop.**~~ Done (`npm run test:browser`, in CI): headless
+  Chromium plays through the title, the menus, a level, quicksave and quickload, the
+  intermission, the next level, an ending and End Game.

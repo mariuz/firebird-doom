@@ -28,6 +28,7 @@ npm run test:automap       # the automap's zoom, follow, grid, marks
 npm run test:light         # light diminishing vs DOOM's fixed point
 npm run test:statusbar     # the status bar face, the attacker, the death camera
 npm run test:sound         # the 8 sound channels: priorities, distance, following the source
+npm run test:browser       # the page in headless Chromium: title → game → intermission → next map
 npm run test:renderers -- E1M1 E1M2 E1M3
 node scripts/all-maps.mjs public/wads/freedoom2.wad  # every map (the WAD is an argument here, not WAD=)
 npm run build              # dist/ (also writes dist/wads/freedoom-strings.json)
@@ -36,7 +37,7 @@ npm run screenshots        # regenerates docs/screenshot-*.png
 ```
 
 Before every commit, run the smoke test, weapons/specials/physics on **both** WADs, finale,
-intermission, menu, automap, light, statusbar, sound, dehacked, pwad, savegame and demo (both WADs) and the build. All of them must pass; CI runs the same set.
+intermission, menu, automap, light, statusbar, sound, dehacked, pwad, savegame and demo (both WADs), the build and the browser test. All of them must pass; CI runs the same set.
 
 ## How the user likes it
 
@@ -48,6 +49,10 @@ intermission, menu, automap, light, statusbar, sound, dehacked, pwad, savegame a
 - **Every feature lands with:** a test (extend the existing script that fits), a README section or
   paragraph, a commit on `main` with a descriptive message, a push, and a green CI run (`gh run
   watch`). End commit messages with the attribution line the harness gives you.
+- **The browser test** (`scripts/browser-test.mjs`) drives the real page. Waiting for a new level:
+  `doom.screen` reads `level` while the next map is still loading, so wait for `doom.melting` to
+  start and then to stop (every level load melts in). Playwright is pinned to the version whose
+  Chromium is installed here (`/opt/pw-browsers`); CI installs its own.
 - **Check live when you can.** The desktop app's browser pane runs the dev server. The game loop
   pauses while the page is hidden (`document.hidden`), so if the pane is hidden, say so and verify
   headless: drive the state machines, render PNGs with `renderer.toRGBA`, use stub renderers. Never
