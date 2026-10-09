@@ -1,9 +1,19 @@
 # Roadmap: what's missing
 
-What vanilla DOOM does that Firebird DOOM doesn't yet, roughly in order of how much a player would
-notice. Each item says where it would go. For how things fit together, see
-[ARCHITECTURE.md](ARCHITECTURE.md). Keep this list current: strike items as they land, and add what
-you find missing.
+What vanilla DOOM does that Firebird DOOM doesn't yet. Each open item says where it would go. For
+how things fit together, see [ARCHITECTURE.md](ARCHITECTURE.md). Keep this list current: strike
+items as they land, and add what you find missing.
+
+## Still open
+
+- **Performance** of `FRAME_WALLS` (Rendering, below): ~22 ms a frame, with outliers near 90 ms.
+- **A TURN relay** for multiplayer behind strict NATs (needs a server; the page has none).
+- **Two checks that need id's WADs** (Screens, below): DOOM I's episode maps at the intermission,
+  and whether its endings should borrow Freedoom's text.
+- **Declined extras**, noted where they come up: random sound pitch, OPL3 stereo and rhythm mode,
+  a frag limit and obituaries (none of them vanilla 1.9).
+
+Everything else below is done.
 
 ## Game flow and menus
 
@@ -91,7 +101,7 @@ you find missing.
 - ~~**Light diminishing and colormaps.**~~ Done: the exact `scalelight`/`zlight` tables and
   lookups, low detail's quirk, and the muzzle flash's `extralight`, checked against DOOM's fixed-point
   arithmetic by `npm run test:light`.
-- **Status bar.** Done, frags in deathmatch included. The face is done:
+- ~~**Status bar.**~~ Done, frags in deathmatch included. The face is done:
   `ST_updateFaceWidget`'s priorities, turn faces and pain levels, plus `P_DeathThink`'s death camera.
 - ~~**Messages.**~~ Done: each pickup shows the WAD's `DEHACKED` string (`GOTARMOR`,
   `GOTSHOTGUN`, …: Freedoom has them all, and a PWAD or `.deh` can replace them), else plain words
@@ -120,9 +130,11 @@ you find missing.
 
 ## Tooling
 
-- ~~**A visual regression test.**~~ Done (`npm run test:visual`, in CI): the README's eleven
+- ~~**A visual regression test.**~~ Done (`npm run test:visual`, in CI): the README's thirteen
   pictures are rendered again and compared pixel for pixel with `docs/screenshots.json`. The
-  simulation's `p_random()` makes them come out the same every time.
+  simulation's `p_random()` makes them come out the same every time. The title loop's demos have
+  the same guard (`npm run test:attract`): each replays to the checksum stored in it.
 - ~~**A test for the live frame loop.**~~ Done (`npm run test:browser`, in CI): headless
   Chromium plays through the title, the menus, a level, quicksave and quickload, the
-  intermission, the next level, an ending and End Game.
+  intermission, the next level, an ending, End Game and an attract demo; `npm run test:coop`
+  connects two pages over WebRTC and plays co-op and deathmatch in lockstep.
