@@ -296,10 +296,12 @@ function endPlayback(why) {
  */
 async function startAttract(n) {
   const demo = attractDemos.get(n);
-  if (!demo || demo.wad !== wadKey || !wad.mapNames().includes(demo.map)) { title.advance(); return; }
+  // (not while players are gathering for a netgame, or in one: the map is theirs)
+  if (!demo || demo.wad !== wadKey || !wad.mapNames().includes(demo.map) || net || lobby.role) { title.advance(); return; }
   attract = n;
   try {
     await startMap(demo.map, true, { skill: demo.skill, seed: demo.seed, keepDemo: true, attract: true });
+    if (attract !== n || !title) return;   // (a game started meanwhile)
     demoPlayer = new DemoPlayer(demo);
   } catch (err) {
     attract = 0;
@@ -524,7 +526,15 @@ async function loadSides() {
   map.sides = new Map(rows.map((r) => [r[0], { xoff: r[1], yoff: r[2], upper: r[3], lower: r[4], mid: r[5], sector: r[6] }]));
 }
 
-async function startMap(name, newGame, { skill = settings.skill, seed = null, keepDemo = false, netgame = false, attract: forTitle = false } = {}) {
+/** One map load at a time: a second start waits for the first and lands last. */
+let mapQueue = Promise.resolve();
+function startMap(name, newGame, opts) {
+  const run = mapQueue.then(() => startMapNow(name, newGame, opts));
+  mapQueue = run.catch(() => {});
+  return run;
+}
+
+async function startMapNow(name, newGame, { skill = settings.skill, seed = null, keepDemo = false, netgame = false, attract: forTitle = false } = {}) {
   if (net && !netgame) leaveNet('you started another game');
   running = false;
   levelSerial++;
