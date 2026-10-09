@@ -672,10 +672,18 @@ async function frame() {
       q('SELECT * FROM frame_walls'), q('SELECT * FROM frame_sectors'), q('SELECT * FROM frame_sprites'),
       q(`SELECT id, sound, origin, x, y FROM sound_events WHERE id > ${lastSoundId} ORDER BY id`),
     ]);
+    // the listener; on map 8 (E?M8, MAP08) S_AdjustSoundParams never quite fades a sound out
+    const listener = { x: hud.PX, y: hud.PY, angle: hud.PANGLE, bossMap: /^(E\dM8|MAP08)$/.test(map.name) };
     if (sounds.length) {
       lastSoundId = sounds[sounds.length - 1][0];
-      audio.playEvents(sounds, { x: hud.PX, y: hud.PY, angle: hud.PANGLE });
+      audio.playEvents(sounds, listener);
     }
+    // S_UpdateSounds: the things sounding now, where they are (gone: their sound stops)
+    const sounding = audio.channels.thingOrigins();
+    const positions = new Map(sounding.length
+      ? (await db.query(`SELECT id, x, y FROM things WHERE id IN (${sounding.join(', ')})`, [], arr)).rows.map((r) => [r[0], [r[1], r[2]]])
+      : []);
+    audio.update(listener, positions);
     for (const r of walls) map.seen.add(r[3]);
     // AM_drawThings (IDDT twice): where everything is
     map.amThings = showMap && amCheating === 2

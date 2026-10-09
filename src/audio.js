@@ -2,15 +2,13 @@
 //
 // The simulation decides *what* is heard: PSQL procedures insert rows into
 // SOUND_EVENTS (S_StartSound). The browser reads the new rows each frame and
-// plays them: DMX sound lumps (DS*) through Web Audio, attenuated and panned
-// by the listener's position and angle like S_AdjustSoundParams. Music is a
-// D_* lump played by music.js.
+// plays them: DMX sound lumps (DS*) through Web Audio, on DOOM's 8 channels
+// with its priorities, attenuated and panned by where the listener is and
+// following their sources as they move (channels.js). Music is a D_* lump
+// played by music.js.
 
 import { parseSong, parseGenmidi, OplSynth } from './music.js';
-
-const CLOSE_DIST = 200;    // S_CLOSE_DIST: full volume inside this
-const CLIP_DIST = 1200;    // S_CLIPPING_DIST: silent beyond this
-const STEREO_SWING = 0.75; // S_STEREO_SWING, as a fraction of full pan
+import { Channels, adjust } from './channels.js';
 
 // DOOM II's music lumps: MAP01..MAP30, the secret levels (MAP31 EVIL, MAP32
 // ULTIMA), then the three that aren't level music but that IDMUS 33–35 reach
@@ -31,7 +29,10 @@ export class DoomAudio {
     this.ctx = null;
     this.wad = null;
     this.buffers = new Map();
-    this.channels = new Map(); // origin → playing source (one sound per origin)
+    // s_sound.c's channels; a handle is { src, gain, pan }
+    this.channels = new Channels((h) => {
+      try { h.src?.stop(); } catch { /* already ended */ }
+    });
     this.sfxVolume = 0.7;
     this.musicVolume = 0.5;
     this.pendingMusic = null;
@@ -91,10 +92,7 @@ export class DoomAudio {
     this.enabled = on;
     if (!on) {
       if (this.synth) this.synth.stop();
-      for (const src of this.channels.values()) {
-        try { src.stop(); } catch { /* already ended */ }
-      }
-      this.channels.clear();
+      this.channels.slots.forEach((_, i) => this.channels.free(i));
       if (this.ctx) this.ctx.suspend();
     } else {
       this.unlock();
@@ -129,41 +127,39 @@ export class DoomAudio {
 
   /**
    * Play SOUND_EVENTS rows [id, sound, origin, x, y] heard from `listener`
-   * ({ x, y, angle }).
+   * ({ x, y, angle, bossMap }): S_StartSound for each.
    */
   playEvents(rows, listener) {
     if (!this.enabled || !this.ctx || this.ctx.state !== 'running' || this.sfxVolume === 0) return;
     for (const [, sound, origin, x, y] of rows.slice(-16)) {
-      let vol = 1;
-      let pan = 0;
-      if (x != null && y != null) {
-        const dx = x - listener.x;
-        const dy = y - listener.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist >= CLIP_DIST) continue;
-        vol = dist < CLOSE_DIST ? 1 : (CLIP_DIST - dist) / (CLIP_DIST - CLOSE_DIST);
-        if (dist > 1) pan = -Math.sin(Math.atan2(dy, dx) - listener.angle) * STEREO_SWING;
-      }
       const buf = this.buffer(sound);
       if (!buf) continue;
-      const prev = this.channels.get(origin);
-      if (prev) {
-        try { prev.stop(); } catch { /* already ended */ }
-      }
-      const src = this.ctx.createBufferSource();
-      src.buffer = buf;
-      const g = this.ctx.createGain();
-      g.gain.value = vol;
-      const p = this.ctx.createStereoPanner();
-      p.pan.value = pan;
-      src.connect(g).connect(p).connect(this.sfxGain);
-      src.onended = () => {
-        if (this.channels.get(origin) === src) this.channels.delete(origin);
-        p.disconnect();
+      const h = {};
+      if (this.channels.start(sound, origin, x, y, listener, h) < 0) continue;
+      h.src = this.ctx.createBufferSource();
+      h.src.buffer = buf;
+      h.gain = this.ctx.createGain();
+      h.pan = this.ctx.createStereoPanner();
+      h.src.connect(h.gain).connect(h.pan).connect(this.sfxGain);
+      h.src.onended = () => {
+        this.channels.ended(h);
+        h.pan.disconnect();
       };
-      this.channels.set(origin, src);
-      src.start();
+      const a = adjust(x, y, listener);
+      h.gain.gain.value = a.vol;
+      h.pan.pan.value = a.pan;
+      h.src.start();
     }
+  }
+
+  /** S_UpdateSounds: POSITIONS (Map thing id → [x, y]) for the things sounding now. */
+  update(listener, positions) {
+    if (!this.ctx) return;
+    this.channels.update(listener, positions, (h, vol, pan) => {
+      if (!h.gain) return;
+      h.gain.gain.value = vol;
+      h.pan.pan.value = pan;
+    });
   }
 
   /**

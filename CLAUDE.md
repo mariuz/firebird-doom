@@ -27,6 +27,7 @@ npm run test:pwad          # PWADs over the IWAD
 npm run test:automap       # the automap's zoom, follow, grid, marks
 npm run test:light         # light diminishing vs DOOM's fixed point
 npm run test:statusbar     # the status bar face, the attacker, the death camera
+npm run test:sound         # the 8 sound channels: priorities, distance, following the source
 npm run test:renderers -- E1M1 E1M2 E1M3
 node scripts/all-maps.mjs public/wads/freedoom2.wad  # every map (the WAD is an argument here, not WAD=)
 npm run build              # dist/ (also writes dist/wads/freedoom-strings.json)
@@ -35,7 +36,7 @@ npm run screenshots        # regenerates docs/screenshot-*.png
 ```
 
 Before every commit, run the smoke test, weapons/specials/physics on **both** WADs, finale,
-intermission, menu, automap, light, statusbar, dehacked, pwad, savegame and demo (both WADs) and the build. All of them must pass; CI runs the same set.
+intermission, menu, automap, light, statusbar, sound, dehacked, pwad, savegame and demo (both WADs) and the build. All of them must pass; CI runs the same set.
 
 ## How the user likes it
 

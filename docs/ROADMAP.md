@@ -99,8 +99,10 @@ you find missing.
 
 ## Audio
 
-- **Sound.** One channel per origin and no channel limit. DOOM mixes 8 channels with priorities.
-  Sounds don't follow a moving source after they start.
+- ~~**Sound.**~~ Done ([src/channels.js](../src/channels.js)): 8 channels with `sounds.c`'s
+  priorities, `P_AproxDistance` attenuation, map 8's floor, sounds that follow their source and
+  stop with it. Not done: the chainsaw's and others' random pitch (vanilla 1.9 doesn't do it
+  either).
 - **Music.** The OPL2-style synth is an approximation of DMX's OPL playback (no OPL3, simplified
   envelopes). A real OPL emulator (for example a port of Nuked-OPL3) would sound right.
 

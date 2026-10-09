@@ -24,7 +24,8 @@
     "test:pwad": "node scripts/pwad-test.mjs",
     "test:automap": "node scripts/automap-test.mjs",
     "test:light": "node scripts/light-test.mjs",
-    "test:statusbar": "node scripts/statusbar-test.mjs"
+    "test:statusbar": "node scripts/statusbar-test.mjs",
+    "test:sound": "node scripts/sound-test.mjs"
   },
   "license": "MIT",
   "dependencies": {

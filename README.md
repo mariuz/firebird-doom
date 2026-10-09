@@ -708,10 +708,24 @@ lump, origin, map position) for:
 - the world: doors, lifts, switches, teleports, exploding fireballs and barrels
 
 Each frame the browser reads the rows it hasn't seen, in the same pipelined batch as the
-render queries. It plays the WAD's DMX sound lumps through Web Audio. Volume falls off between
-200 and 1200 units and sound is panned by the angle to the listener, like
-`S_AdjustSoundParams`. A new sound from the same origin cuts off the previous one, as DOOM's
-channels do.
+render queries. It plays the WAD's DMX sound lumps through Web Audio, on DOOM's 8 channels
+([src/channels.js](src/channels.js)), as `s_sound.c` does:
+
+- **Starting a sound** (`S_StartSoundAtVolume`): a sound out of earshot isn't started. Otherwise
+  the origin's previous sound stops, and `S_getChannel` takes a free channel. If none is free, it
+  takes the first channel playing a sound that matters no more than the new one, by `sounds.c`'s
+  priorities: a lower number matters more, so the teleport is 32, the pistol 64 and a zombie's
+  growl 120. If there's no such channel, the new sound is lost, as in DOOM.
+- **Loudness** (`S_AdjustSoundParams`): the distance is `P_AproxDistance`'s. Full volume within
+  200 units, falling to nothing at 1200. Separation is `128 − 96·sin` of the angle to the
+  listener. On map 8 (E?M8 and MAP08, the boss maps) a sound never fades below 15 of 127, however
+  far away.
+- **Every frame** (`S_UpdateSounds`): each sound follows its thing as it moves (the page asks
+  Firebird where the things that are sounding are now), and stops once out of earshot. A thing
+  that is removed takes its sound with it (`P_RemoveMobj`'s `S_StopSound`), which cuts a
+  rocket's explosion short when the explosion is gone, as in DOOM.
+
+`npm run test:sound` checks the distances, the priorities, the channel stealing and the following.
 
 Music comes from the WAD's `D_*` lumps (MIDI in Freedoom, MUS in the original IWADs). It plays
 through a small FM synthesiser built from the WAD's own `GENMIDI` lump, the OPL2 instrument
