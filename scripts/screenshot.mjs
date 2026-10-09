@@ -1,7 +1,12 @@
 // screenshot.mjs – render frames with the real SQL renderer + the page's
 // rasteriser, headless, and save them as PNGs for the README.
 //
-//   node scripts/screenshot.mjs            → docs/screenshot-*.png
+//   node scripts/screenshot.mjs            → docs/screenshot-*.png, and their
+//                                            pixels' hashes in docs/screenshots.json
+//   node scripts/screenshot.mjs --check    the visual regression test: render
+//                                            them all again, write nothing, and fail
+//                                            if any picture's pixels differ (the new
+//                                            ones go to screenshots-diff/ to look at)
 //
 // Same code path as the browser: DOOM_TIC, FRAME_WALLS, FRAME_SPRITES,
 // FRAME_SECTORS, then src/renderer.js and src/hud.js into a 320×200 buffer of
@@ -10,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
@@ -31,6 +37,27 @@ const wad = new Wad(fs.readFileSync(process.env.WAD ?? path.join(root, 'public/w
 const res = await loadResources(db, wad);
 let renderer = new Renderer(wad, res);   // (no presenter: the PNGs come from toRGBA)
 const arr = { rowMode: 'array' };
+
+const CHECK = process.argv.includes('--check');
+const HASHES = path.join(outDir, 'screenshots.json');
+const DIFF = path.join(root, 'screenshots-diff');
+const known = CHECK ? JSON.parse(fs.readFileSync(HASHES, 'utf8')) : {};
+const hashes = {};
+const changed = [];
+/** The screen as it is now: saved as FILE, or (--check) compared with its hash. */
+function emit(file) {
+  const rgba = renderer.toRGBA(0);
+  const hash = crypto.createHash('sha256').update(Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength)).digest('hex').slice(0, 16);
+  hashes[file] = hash;
+  if (!CHECK) {
+    fs.mkdirSync(outDir, { recursive: true });
+    fs.writeFileSync(path.join(outDir, file), png(rgba, 320, 200, 640, 480));
+  } else if (known[file] !== hash) {
+    changed.push(file);
+    fs.mkdirSync(DIFF, { recursive: true });
+    fs.writeFileSync(path.join(DIFF, file), png(rgba, 320, 200, 640, 480));
+  }
+}
 
 async function mapState(name) {
   const m = /^E(\d)M/.exec(name);
@@ -54,8 +81,7 @@ async function shoot(map, file) {
   renderer.composeView();
   drawWeapon(renderer, hud, 0);
   drawStatusBar(renderer, hud, 0);
-  fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(path.join(outDir, file), png(renderer.toRGBA(0), 320, 200, 640, 480));
+  emit(file);
   console.log(`docs/${file}  (${walls.length} wall slices, ${sprites.length} sprites)`);
 }
 
@@ -177,7 +203,7 @@ await shoot(map, 'screenshot-e1m2.png');
     { kills: 17, totalKills: 20, items: 30, totalItems: 37, secrets: 2, totalSecrets: 3, time: 95 * 35 });
   for (let i = 0; i < 600; i++) wi.tick(false);
   wi.draw();
-  fs.writeFileSync(path.join(outDir, 'screenshot-intermission.png'), png(renderer.toRGBA(0), 320, 200, 640, 480));
+  emit('screenshot-intermission.png');
   console.log('docs/screenshot-intermission.png');
 }
 
@@ -188,7 +214,7 @@ await shoot(map, 'screenshot-e1m2.png');
   new TitleLoop(false, true).draw(renderer);
   menu.open();
   menu.draw(renderer);
-  fs.writeFileSync(path.join(outDir, 'screenshot-menu.png'), png(renderer.toRGBA(0), 320, 200, 640, 480));
+  emit('screenshot-menu.png');
   console.log('docs/screenshot-menu.png');
 }
 
@@ -217,7 +243,7 @@ if (!process.env.WAD && fs.existsSync(wad2Path)) {
   const fin = new Finale(renderer, { playMusic() {}, playEvents() {} }, wad2, THING_TYPES);
   const save = (file) => {
     fin.draw();
-    fs.writeFileSync(path.join(outDir, file), png(renderer.toRGBA(0), 320, 200, 640, 480));
+    emit(file);
     console.log(`docs/${file}`);
   };
   for (let i = 0; i < 10 + fin.state.text.length * 3; i++) fin.tick(false);
@@ -228,4 +254,20 @@ if (!process.env.WAD && fs.existsSync(wad2Path)) {
   save('screenshot-finale-cast.png');
 }
 
+if (CHECK) {
+  const missing = Object.keys(known).filter((f) => !(f in hashes));
+  const extra = Object.keys(hashes).filter((f) => !(f in known));
+  const n = Object.keys(hashes).length;
+  if (changed.length || missing.length || extra.length) {
+    if (changed.length) console.log(`FAIL changed: ${changed.join(', ')} (the new pictures are in screenshots-diff/)`);
+    if (missing.length) console.log(`FAIL not rendered: ${missing.join(', ')}`);
+    if (extra.length) console.log(`FAIL not in docs/screenshots.json: ${extra.join(', ')}`);
+    console.log('If the change is meant, run npm run screenshots and commit docs/.');
+    process.exit(1);
+  }
+  console.log(`visual ok: all ${n} pictures render pixel for pixel as in docs/screenshots.json`);
+} else {
+  fs.writeFileSync(HASHES, JSON.stringify(Object.fromEntries(Object.entries(hashes).sort()), null, 2) + '\n');
+  console.log('docs/screenshots.json');
+}
 process.exit(0);

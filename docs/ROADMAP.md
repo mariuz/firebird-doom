@@ -108,9 +108,9 @@ you find missing.
 
 ## Tooling
 
-- **A visual regression test.** Compare `docs/screenshot-*.png` renders against stored hashes in
-  CI, so rendering changes are noticed. Monster movement makes some shots non-deterministic, so it
-  needs a fixed seed for `RAND()`.
+- ~~**A visual regression test.**~~ Done (`npm run test:visual`, in CI): the README's eleven
+  pictures are rendered again and compared pixel for pixel with `docs/screenshots.json`. The
+  simulation's `p_random()` makes them come out the same every time.
 - ~~**A test for the live frame loop.**~~ Done (`npm run test:browser`, in CI): headless
   Chromium plays through the title, the menus, a level, quicksave and quickload, the
   intermission, the next level, an ending and End Game.

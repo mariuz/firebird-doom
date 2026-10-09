@@ -118,6 +118,18 @@ jobs:
       - name: Renderer equivalence (BSP vs brute force)
         run: npm run test:renderers -- E1M1 E1M2 E1M3
 
+      # The README's pictures, rendered again pixel for pixel (docs/screenshots.json)
+      - name: Visual regression (docs/screenshot-*.png)
+        run: npm run test:visual
+
+      - name: Upload the pictures that changed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-diff
+          path: screenshots-diff/
+          if-no-files-found: ignore
+
       # The page itself in headless Chromium: title → menu → E1M1, the melt,
       # quicksave/quickload, a level exit → the intermission → E1M2, End Game
       - name: Install Chromium for the browser test

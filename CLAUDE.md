@@ -29,15 +29,18 @@ npm run test:light         # light diminishing vs DOOM's fixed point
 npm run test:statusbar     # the status bar face, the attacker, the death camera
 npm run test:sound         # the 8 sound channels: priorities, distance, following the source
 npm run test:browser       # the page in headless Chromium: title → game → intermission → next map
+npm run test:visual        # the README's pictures, pixel for pixel against docs/screenshots.json
 npm run test:renderers -- E1M1 E1M2 E1M3
 node scripts/all-maps.mjs public/wads/freedoom2.wad  # every map (the WAD is an argument here, not WAD=)
 npm run build              # dist/ (also writes dist/wads/freedoom-strings.json)
 npm run build -- --serve   # dev server (the desktop app's launch config "firebird-doom" uses it)
-npm run screenshots        # regenerates docs/screenshot-*.png
+npm run screenshots        # regenerates docs/screenshot-*.png and docs/screenshots.json
 ```
 
 Before every commit, run the smoke test, weapons/specials/physics on **both** WADs, finale,
-intermission, menu, automap, light, statusbar, sound, dehacked, pwad, savegame and demo (both WADs), the build and the browser test. All of them must pass; CI runs the same set.
+intermission, menu, automap, light, statusbar, sound, dehacked, pwad, savegame and demo (both WADs), the visual test, the build and the browser test. A change that
+means to alter what's drawn fails the visual test: look at `screenshots-diff/`, then run `npm run
+screenshots` and commit `docs/`. All of them must pass; CI runs the same set.
 
 ## How the user likes it
 

@@ -26,7 +26,8 @@
     "test:light": "node scripts/light-test.mjs",
     "test:statusbar": "node scripts/statusbar-test.mjs",
     "test:sound": "node scripts/sound-test.mjs",
-    "test:browser": "node scripts/browser-test.mjs"
+    "test:browser": "node scripts/browser-test.mjs",
+    "test:visual": "node scripts/screenshot.mjs --check"
   },
   "license": "MIT",
   "dependencies": {
