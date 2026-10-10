@@ -8,8 +8,6 @@ items as they land, and add what you find missing.
 
 In the order they'd be noticed. The vanilla features first:
 
-- **The automap in netgames** (Rendering): every player's arrow in co-op, only your own in
-  deathmatch.
 - **Mouse buttons 2 and 3** (Game flow and menus): strafe and forward; mouse-Y movement as an
   option.
 
@@ -129,10 +127,9 @@ Everything else below is done.
   walls) was considered and turned down: Firebird decides, JavaScript draws.
 - ~~**Automap.**~~ Done: zoom (= -), the whole-level view (0), follow mode and panning (F, arrows),
   the grid (G) and marks (M, C), as `AM_Responder` and `AM_Ticker` have them.
-- **The automap in netgames.** `AM_drawPlayers`: in co-op every player's arrow, in their colour
-  (green, grey, brown, red – the sprite translations), a dead player's grey; in deathmatch only
-  your own (the others stay hidden unless you cheat). Today only your arrow is drawn
-  (`drawAutomap` in `main.js`; the other players' positions come with `FRAME_SPRITES`).
+- ~~**The automap in netgames.**~~ Done: `AM_drawPlayers` (`automapPlayers` in `automap.js`):
+  in co-op every player's arrow in their colour (green, grey, brown, red), near black while
+  invisible; in deathmatch only your own, and no IDDT there (`AM_Responder`).
 - ~~**Gamma correction.**~~ Done: `v_video.c`'s `gammatable` in `present.js`, over the
   presenter's palettes; F11 steps the level with its message, and the setting is remembered.
 - ~~**Light diminishing and colormaps.**~~ Done: the exact `scalelight`/`zlight` tables and

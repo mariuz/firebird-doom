@@ -20,6 +20,23 @@ export const AM_COLORS = {
   player: 209,      // YOURCOLORS (WHITE): your arrow
 };
 
+// AM_drawPlayers' their_colors[]: GREENS, GRAYS, BROWNS, REDS, by player
+export const THEIR_COLORS = [112, 96, 64, 176];
+export const INVISIBLE_COLOR = 246;   // "*close* to black": a player with the invisibility
+/**
+ * AM_drawPlayers: which arrows the automap draws, and in what colour. Alone,
+ * your own in white. In a netgame each player's in their colour (near black
+ * while invisible), and in deathmatch only your own.
+ * @param players [{ id, x, y, angle, invis }] by player number
+ * @returns [{ id, x, y, angle, color }]
+ */
+export function automapPlayers(players, { me = 1, netgame = false, deathmatch = 0 } = {}) {
+  if (!netgame) return players.filter((p) => p.id === me).map((p) => ({ ...p, color: AM_COLORS.player }));
+  return players
+    .filter((p) => !(deathmatch && p.id !== me))
+    .map((p) => ({ id: p.id, x: p.x, y: p.y, angle: p.angle, color: p.invis > 0 ? INVISIBLE_COLOR : THEIR_COLORS[(p.id - 1) % 4] }));
+}
+
 const ML_SECRET = 32;
 const ML_DONTDRAW = 128;
 const ML_MAPPED = 256;

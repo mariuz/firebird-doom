@@ -13,7 +13,7 @@ import { Wad } from './wad.js';
 import { createSchema, loadResources, loadMap, setView, setRenderer } from './loader.js';
 import { Renderer, viewGeometry } from './renderer.js';
 import { drawStatusBar, FaceWidget, drawText, drawWeapon, extraLight } from './hud.js';
-import { AM_COLORS, AM_STRINGS, AutomapView, GRID_COLOR, automapColor } from './automap.js';
+import { AM_COLORS, AM_STRINGS, AutomapView, GRID_COLOR, automapColor, automapPlayers } from './automap.js';
 import { cheatReaders, clevMap, idmusMap } from './cheats.js';
 import { nextMap } from './progress.js';
 import { Finale, parseDehStrings, setFallbackStrings } from './finale.js';
@@ -93,6 +93,7 @@ let attractDemos = new Map();       // this WAD's bundled demos, by number
 let lastSeed = null;                // the seed the current map started from
 let wiButtons = true;               // fire/use held last tic: only a new press accelerates
 const didSecret = new Set();        // DOOM I episodes whose secret level is done (wbs->didsecret)
+let amArrows = [];                  // the players' arrows the automap drew last ({ id, color }), for doom.automap
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
 // ST_Responder's cheats, typed any time during play (respelt by a DeHackEd patch: cheatReaders)
 let cheats = cheatReaders();
@@ -190,8 +191,8 @@ window.addEventListener('keydown', (e) => {
     // (the cheat readers below still see the key, as ST_Responder does before AM_Responder)
     if (['KeyF', 'KeyG', 'KeyM', 'KeyC', 'Digit0', 'Minus', 'Equal', 'NumpadAdd', 'NumpadSubtract'].includes(e.code)) e.preventDefault();
   }
-  // AM_Responder: the automap listens for IDDT while it's open
-  if (showMap && cheats.iddt(e.key)) amCheating = (amCheating + 1) % 3;
+  // AM_Responder: the automap listens for IDDT while it's open (not in deathmatch)
+  if (showMap && cheats.iddt(e.key) && !net?.deathmatch) amCheating = (amCheating + 1) % 3;
   for (const [code, read] of cheats.fixed) {
     if (recorder || demoPlayer || net) break;   // (a cheat isn't an input: it would desync the demo, or the netgame)
     if (read(e.key)) db.query(`EXECUTE PROCEDURE cheat('${code}')`).catch((err) => console.error(err));
@@ -710,6 +711,7 @@ async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, tim
   };
   const strings = chatStrings(parseDehStrings(wad.dehacked() + '\n' + (dehPatch?.text ?? '')));
   const chat = new Chat({ me, players, strings, say: chatSay });
+  amCheating = 0;   // (a netgame starts a fresh DOOM: no IDDT carried over from a game alone)
   net = { me, players, deathmatch, timer, nomonsters, respawn, fast, links, chat, ls: new Lockstep({ me, players, send }), sums: new Map() };
   netWait = 0;
   for (const [pid, link] of links) {
@@ -1072,6 +1074,11 @@ async function frameNow() {
     map.amThings = showMap && amCheating === 2
       ? (await db.query("SELECT x, y, angle FROM things WHERE kind NOT IN ('player', 'marker')", [], arr)).rows
       : null;
+    // AM_drawPlayers in a netgame: where everyone is
+    map.amPlayers = showMap && net
+      ? (await db.query('SELECT p.id, t.x, t.y, t.angle, p.invis_tics invis FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id',
+        [], { rowMode: 'object' })).rows.map((r) => ({ id: r.ID, x: r.X, y: r.Y, angle: r.ANGLE, invis: r.INVIS }))
+      : null;
     lastFrame.walls = wallMs;
     lastFrame.sprites = spriteMs;
     lastFrame.rows = walls.length;
@@ -1216,7 +1223,12 @@ function drawAutomap(tics = 1) {
       tri(px, py, ang, 3 * z, 2.5 * z, AM_COLORS.thing);
     }
   }
-  tri(tx(hud.PX), ty(hud.PY), hud.PANGLE, 6 * z, 5 * z, AM_COLORS.player);
+  // AM_drawPlayers: your arrow in white; in a netgame everyone's in their colour (deathmatch: only yours)
+  const me = net?.me ?? 1;
+  const arrows = automapPlayers(net && map.amPlayers ? map.amPlayers : [{ id: me, x: hud.PX, y: hud.PY, angle: hud.PANGLE }],
+    { me, netgame: !!net, deathmatch: net?.deathmatch ?? 0 });
+  for (const a of arrows) tri(tx(a.x), ty(a.y), a.angle, 6 * z, 5 * z, a.color);
+  amArrows = arrows.map((a) => ({ id: a.id, color: a.color }));
   // AM_drawMarks: the numbers, AMMNUM0–9
   amView.marks.forEach(([x, y], i) => {
     const pic = renderer.pictureByName(`AMMNUM${i}`);
@@ -1398,7 +1410,7 @@ async function boot() {
       // to the map after the one named, as if you'd just finished it (DOOM I's
       // endings excepted: they end the game)
       get menu() { return menu; },
-      get automap() { return { view: amView, open: showMap, message: amMsg?.text ?? null }; },
+      get automap() { return { view: amView, open: showMap, message: amMsg?.text ?? null, arrows: amArrows }; },
       get gamma() { return settings.gamma; },
       get debug() { return { running, paused, frames, loopAlive, levelSerial, shownState, menu: !!menu?.active, melt: !!melt, keys: [...keys], mouseTurn, showMap, amFollow: amView?.follow, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, error: net.ls.error } }; },
       get message() { return amMsg?.text ?? hud?.MSG ?? null; },

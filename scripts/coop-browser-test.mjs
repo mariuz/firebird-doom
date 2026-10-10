@@ -162,6 +162,19 @@ try {
   const chatted = await agree();
   assert(chatted.same && !(await host.evaluate(() => window.doom.net.error)), `the chat changed nothing in the game: the checksums still agree at tic ${chatted.tic}`);
 
+  // the automap in co-op: both players' arrows, green and grey (AM_drawPlayers)
+  const arrowsNow = async (p) => {
+    await p.keyboard.press('Tab');
+    await until(p, () => window.doom.automap.open && window.doom.automap.arrows.length > 0, null, 20000);
+    await p.waitForTimeout(300);
+    const arrows = await p.evaluate(() => window.doom.automap.arrows);
+    await p.keyboard.press('Tab');
+    return arrows;
+  };
+  const coopArrows = await arrowsNow(guest);
+  assert(JSON.stringify(coopArrows) === JSON.stringify([{ id: 1, color: 112 }, { id: 2, color: 96 }]),
+    `co-op automap: everyone's arrow, each in their colour (${JSON.stringify(coopArrows)})`);
+
   // a level exit: everyone to the intermission, then on to the next map together. (The
   // nearest line ahead of player 1 becomes a W1 exit on both pages, before anyone reaches it:
   // a change to the map that's the same in both games.)
@@ -260,6 +273,10 @@ try {
   assert(dm.every((d) => d.net.deathmatch === 1 && d.net.timer === 5 && d.game.DEATHMATCH === 1 && d.game.TIME_LIMIT === 5 && d.mode === '1' && d.timer === '5'
     && onStart(d) && d.players.every((p) => p.KEYCARDS === 7)) && JSON.stringify(dm[0].players) === JSON.stringify(dm[1].players),
     `a deathmatch with a 5-minute timer: both pages in it, the players on deathmatch starts with every key (${JSON.stringify(dm[0].players.map((p) => [p.X, p.Y]))})`);
+  // the automap in deathmatch: only your own arrow
+  await guest.evaluate(() => document.activeElement?.blur());
+  const dmArrows = await arrowsNow(guest);
+  assert(JSON.stringify(dmArrows) === JSON.stringify([{ id: 2, color: 96 }]), `deathmatch automap: only your own arrow (${JSON.stringify(dmArrows)})`);
   // the guest kills the host: a frag for player 2, on both status bars' numbers
   await guest.evaluate(() => window.doom.sql('EXECUTE PROCEDURE damage_player(1000, (SELECT thing_id FROM player WHERE id = 2), 1)'));
   await host.evaluate(() => window.doom.sql('EXECUTE PROCEDURE damage_player(1000, (SELECT thing_id FROM player WHERE id = 2), 1)'));

@@ -314,6 +314,11 @@ in grey (`TSWALLCOLORS`). Twice also draws every thing in the level as a green t
 its way (`AM_drawThings`), read live from `THINGS`. A third time turns it off. Like DOOM, the cheat
 prints no message and isn't stored in the database.
 
+In a netgame the arrows are `AM_drawPlayers`'s. In co-op everyone's arrow is drawn, each in
+their colour: green, grey, brown and red, the same order as their sprites. A player with the
+invisibility is drawn near black (palette entry 246). In deathmatch you see only your own
+arrow, and IDDT does nothing there (`AM_Responder` refuses it with `deathmatch` set).
+
 The automap's keys are `AM_Responder`'s:
 
 - <kbd>=</kbd> and <kbd>-</kbd> zoom in and out while held, 2% a tic. The limits are the whole level and a

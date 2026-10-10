@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Wad } from '../src/wad.js';
-import { AM_STRINGS, AutomapView, MAPBLOCKUNITS } from '../src/automap.js';
+import { AM_COLORS, AM_STRINGS, AutomapView, MAPBLOCKUNITS, automapPlayers, THEIR_COLORS, INVISIBLE_COLOR } from '../src/automap.js';
 import { parseDehStrings } from '../src/finale.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -82,6 +82,22 @@ assert(am.grid && vertical.length > 2 && vertical.every((x) => near(((x - origin
 const strings = parseDehStrings(wad.dehacked());
 assert(Object.keys(AM_STRINGS).every((k) => strings.get(k) === AM_STRINGS[k]),
   'the messages come from DEHACKED (AMSTR_*); without one, Freedoom\'s same words');
+
+// AM_drawPlayers: alone, your arrow in white; in co-op everyone's in their
+// colour (near black while invisible); in deathmatch only your own
+{
+  const four = [1, 2, 3, 4].map((id) => ({ id, x: id * 100, y: 0, angle: 0, invis: id === 3 ? 50 : 0 }));
+  const solo = automapPlayers(four.slice(0, 1), { me: 1 });
+  const coop = automapPlayers(four, { me: 2, netgame: true });
+  const dm = automapPlayers(four, { me: 2, netgame: true, deathmatch: 1 });
+  const dmInvis = automapPlayers(four, { me: 3, netgame: true, deathmatch: 2 });
+  assert(solo.length === 1 && solo[0].color === AM_COLORS.player && AM_COLORS.player === 209,
+    'alone: your arrow, in white (YOURCOLORS)');
+  assert(coop.map((a) => a.color).join() === [112, 96, INVISIBLE_COLOR, 176].join() && THEIR_COLORS.join() === '112,96,64,176' && INVISIBLE_COLOR === 246,
+    `co-op: four arrows, green, grey, brown and red (their_colors[]), the invisible one near black (${coop.map((a) => a.color).join(', ')})`);
+  assert(dm.length === 1 && dm[0].id === 2 && dm[0].color === 96 && dmInvis.length === 1 && dmInvis[0].color === INVISIBLE_COLOR,
+    'deathmatch: only your own arrow, in your colour (near black while you\'re invisible)');
+}
 
 console.log(failures ? `${failures} failure(s)` : 'automap ok');
 process.exit(failures ? 1 : 0);
