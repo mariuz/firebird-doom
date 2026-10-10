@@ -118,10 +118,12 @@ Everything else below is done.
     +2.2 ms), so formatting them isn't the cost either. A binary result encoding would remove
     the formatting and parsing, ~0.5–1 ms of the 20, and keep the per-row fetch. That agrees
     with `firebird-wasm`'s own plan (`docs/plans/typed-results.md` in `mariuz/electric-firebird`),
-    which argues against replacing its JSON results. The page is on 0.5.0, using the binary
-    parameters and `execBatch` (0.4) for loads and saves. 0.5.0 keeps prepared statements by
-    their text; it measured within the noise here (the frame's cost is executing, not preparing),
-    and it still returns JSON.
+    which argues against replacing its JSON results. The page is on 0.6.1, using the binary
+    parameters and `execBatch` (0.4) for loads and saves. Two later options measured within the
+    noise here and are left off: 0.5.0's prepared-statement cache, and 0.6.0's `sharedReads`
+    (autocommit reads in one shared read-only transaction; it played a 300-tic game to the same
+    checksum, and a frame's cost is executing, not starting transactions). Results are still
+    JSON.
   What's left is the work itself: the BSP walk and column projection ~10–11 ms, and
   `RENDER_WALLS`' sort and clip ~3 ms. `DOOM_TIC` was halved by keying the BLOCKMAP by cell (10 ms
   on average over E1M1–E1M3 and E2M2, from 22). Tried and measured no better: shaving statements
