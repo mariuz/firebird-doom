@@ -57,8 +57,8 @@ export class Menu {
    * @param o.strings   the WAD's DEHACKED strings (Map)
    * @param o.sound     (lump) → play a menu sound
    * @param o.actions   { newGame(episode, skill), endGame(), quit(), save(slot, name), load(slot),
-   *                      slots (six descriptions or null), canSave, get/set: messages, detail,
-   *                      mouse (0–9), sfx and music (0–15) }
+   *                      slots (six descriptions or null), canSave, inGame, netgame, get/set: messages,
+   *                      detail, mouse (0–9), sfx and music (0–15) }
    */
   constructor({ doom2 = false, episodes = 1, retail = false, strings = new Map(), sound = () => {}, actions = {} } = {}) {
     this.doom2 = doom2;
@@ -115,6 +115,73 @@ export class Menu {
   text(name, fallback, arg = '') {
     const s = this.strings.get(name);
     return s ? s.replace('%s', arg) : fallback;
+  }
+
+  // ── M_Responder's function keys, the menu down (main.js calls these) ──
+  /** F1: Read This! (HELP on DOOM II, which has no menu item for it) */
+  openReadThis() {
+    if (this.active) return;
+    this.open(true);
+    this.sound('DSSWTCHN');
+    this.page = this.doom2 ? 'HELP' : 'HELP1';
+  }
+
+  /** F2: Save Game (M_SaveGame: in a game only) */
+  openSave() {
+    if (this.active) return;
+    this.sound('DSSWTCHN');
+    this.open(true);
+    this.choose({ act: 'save' });
+  }
+
+  /** F3: Load Game (M_LoadGame: not in a netgame) */
+  openLoad() {
+    if (this.active) return;
+    this.sound('DSSWTCHN');
+    if (this.actions.netgame) {
+      this.say("You can't load a game\nin a netgame.\n\n(press a key)");
+      return;
+    }
+    this.open(true);
+    this.go('load');
+  }
+
+  /** F4: Sound Volume, the cursor on the sound effects slider */
+  openSound() {
+    if (this.active) return;
+    this.sound('DSSWTCHN');
+    this.open(true);
+    this.go('sound');
+    this.on = 0;
+  }
+
+  /** F5: M_ChangeDetail – returns the message for it */
+  toggleDetail() {
+    this.sound('DSSWTCHN');
+    this.change({ act: 'detail' }, 1);
+    return this.actions.detail === 'high' ? this.text('DETAILHI', 'Detail: high') : this.text('DETAILLO', 'Detail: low');
+  }
+
+  /** F7: M_EndGame – in a game; otherwise just a grunt */
+  endGame() {
+    if (this.active) return;
+    if (!this.actions.inGame) { this.sound('DSOOF'); return; }
+    this.sound('DSSWTCHN');
+    this.choose({ act: 'endgame' });
+  }
+
+  /** F8: M_ChangeMessages – returns the message for it (shown even with messages off) */
+  toggleMessages() {
+    this.sound('DSSWTCHN');
+    this.change({ act: 'messages' }, 1);
+    return this.actions.messages ? this.text('MSGON', 'Messages: on') : this.text('MSGOFF', 'Messages: off');
+  }
+
+  /** F10: M_QuitDOOM */
+  quit() {
+    if (this.active) return;
+    this.sound('DSSWTCHN');
+    this.choose({ act: 'quit' });
   }
 
   /** M_QuickSave (F6): in a game only; the first time it opens Save Game to pick

@@ -37,11 +37,13 @@ const browser = await chromium.launch({
   args: ['--autoplay-policy=no-user-gesture-required', '--disable-features=WebRtcHideLocalIpsWithMdns'],
 });
 const errors = [];
+const consoleLog = [];
 try {
   const open = async (who) => {
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 900 } });
     const page = await ctx.newPage();
     page.on('pageerror', (e) => errors.push(`${who}: ${e.message}`));
+    page.on('console', (m) => { if (m.type() === 'error') consoleLog.push(`${who}: ${m.text().slice(0, 300)}`); });
     page.setDefaultTimeout(120000);
     await page.goto(`http://localhost:${port}/`);
     await page.waitForFunction(() => window.doom?.title, null, { timeout: 120000, polling: 100 });
@@ -138,6 +140,7 @@ try {
   await host.keyboard.up('ControlLeft');
   await guest.keyboard.up('ControlLeft');
   const nets = await Promise.all([host, guest].map((p) => p.evaluate(() => window.doom.net)));
+  if (process.env.DBG) console.log('firing:', JSON.stringify(await Promise.all([host, guest].map((p) => p.evaluate(() => ({ debug: window.doom.debug, status: document.getElementById('status').textContent, screen: window.doom.screen }))))), JSON.stringify(consoleLog.slice(-6)));
   assert(nets.every((n) => !n.error) && Math.min(nets[0].tic, nets[1].tic) >= firing + 175,
     `${Math.min(nets[0].tic, nets[1].tic)} tics in lockstep, the last 175 both firing, and every consistency check agrees`);
 
@@ -210,7 +213,16 @@ try {
   await host.fill('#net-timer', '5');
   await host.evaluate(() => document.getElementById('net-start').click());
   for (const p of [host, guest]) {
-    await until(p, () => window.doom.net?.tic > 10 && window.doom.screen === 'level' && !window.doom.melting);
+    try {
+      await until(p, () => window.doom.net?.tic > 10 && window.doom.screen === 'level' && !window.doom.melting, null, 40000);
+    } catch (e) {
+      if (process.env.DBG) {
+        for (const q of [host, guest]) console.log(JSON.stringify(await q.evaluate(() => ({ net: window.doom.net, screen: window.doom.screen, melting: window.doom.melting, status: document.getElementById('net-status').textContent, title: !!window.doom.title, demo: window.doom.demo.attract, msg: document.getElementById('status').textContent, debug: window.doom.debug }))));
+        await host.waitForTimeout(1000);
+        console.log('a second later:', JSON.stringify(await Promise.all([host, guest].map((q) => q.evaluate(() => window.doom.debug)))));
+      }
+      throw e;
+    }
   }
   const dm = await Promise.all([host, guest].map((p) => p.evaluate(async () => ({
     net: window.doom.net,

@@ -8,9 +8,6 @@ items as they land, and add what you find missing.
 
 In the order they'd be noticed. The vanilla features first:
 
-- **The function keys** (Game flow and menus, below): only F6 and F9 work. `M_Responder` has
-  F1–F5, F7, F8, F10 and F11 too.
-- **Gamma correction** (Rendering): F11's five levels, nowhere in the code yet.
 - **Netgame launch options** (Simulation): `-nomonsters`, `-respawn`, `-fast` for the panel.
 - **Netgame chat** (Screens): `hu_stuff.c`'s T to talk, the chat macros, the colour-named players.
 - **The automap in netgames** (Rendering): every player's arrow in co-op, only your own in
@@ -55,11 +52,9 @@ Everything else below is done.
   Demos go on from level to level, as DOOM's do.
 - ~~**The end of the game.**~~ Done: as in vanilla, Doom I's E?M8 ending is the end of the game.
   Its picture stays until the menu starts a new game, and Doom II's cast call loops.
-- **The function keys.** `M_Responder`'s: F1 help (Read This!), F2 save, F3 load, F4 sound
-  volume, F5 detail (toggled, with its message), F7 end game, F8 messages on/off (with
-  `MSGON`/`MSGOFF`), F10 quit, F11 gamma (Rendering, below). Only F6 (quicksave) and F9
-  (quickload) are wired, in `main.js`'s keydown; everything the others open exists in the menu
-  already. Each key's sound as vanilla plays it (`sfx_swtchn`).
+- ~~**The function keys.**~~ Done: `M_Responder`'s F1 help, F2 save, F3 load, F4 sound volume,
+  F5 detail, F7 end game, F8 messages, F10 quit and F11 gamma, each with its sound and message,
+  through the menu's entry points (`openReadThis`, `openSave`, …).
 - **Mouse buttons 2 and 3.** Vanilla's defaults: button 2 strafes (held: the mouse's X moves you
   sideways), button 3 moves forward; and the mouse's Y moved the player (`mousey`), which most
   people turned off (the "novert" hacks). The buttons are a line each in `readInput`; mouse-Y
@@ -141,10 +136,8 @@ Everything else below is done.
   (green, grey, brown, red – the sprite translations), a dead player's grey; in deathmatch only
   your own (the others stay hidden unless you cheat). Today only your arrow is drawn
   (`drawAutomap` in `main.js`; the other players' positions come with `FRAME_SPRITES`).
-- **Gamma correction.** `I_SetPalette`'s five gamma tables (`gammatable[5][256]`, off and levels
-  1–4), F11 stepping through them with the `GAMMALVL0`–`4` messages, remembered across sessions.
-  It belongs in `present.js`, where `PLAYPAL` is applied: the table over the palette's RGB before
-  it reaches the shader or the canvas.
+- ~~**Gamma correction.**~~ Done: `v_video.c`'s `gammatable` in `present.js`, over the
+  presenter's palettes; F11 steps the level with its message, and the setting is remembered.
 - ~~**Light diminishing and colormaps.**~~ Done: the exact `scalelight`/`zlight` tables and
   lookups, low detail's quirk, and the muzzle flash's `extralight`, checked against DOOM's fixed-point
   arithmetic by `npm run test:light`.

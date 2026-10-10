@@ -195,6 +195,15 @@ screen in DOOM's own palette colours (`am_map.c`'s `REDS`, `BROWNS`, `YELLOWS`, 
 `GREENS`, `WHITE`), over the view darkened through `COLORMAP` 24. Screenshots and tests read
 the screen through `toRGBA`.
 
+### Gamma correction
+
+<kbd>F11</kbd> steps through DOOM's five gamma levels, off and 1–4, saying which
+(`I_SetPalette`'s `usegamma`), and the level is remembered with the other settings. The tables
+are `v_video.c`'s `gammatable`: each level lifts the dark end of every palette entry more than
+the last, so Freedoom's dimmer maps can be seen into. It's applied where the palette is
+([src/present.js](src/present.js)): the presenter's palettes go through the table, while the
+renderer's own (what `toRGBA` and the tests' pictures use) stay as the WAD has them.
+
 ### Spectres: fuzz
 
 The spectre (`MF_SHADOW`, the `shadow` flag in `THING_TYPES`) comes out of `FRAME_SPRITES` with
@@ -615,7 +624,14 @@ comes back exactly.
 first <kbd>F6</kbd> of a session opens **Save Game**, and the slot you save into becomes the
 quicksave slot. After that, <kbd>F6</kbd> asks before writing over that slot's game under its
 description, and <kbd>F9</kbd> asks before loading it (or says there's no quicksave slot yet).
-<kbd>F6</kbd> outside a game just grunts. The questions come from the WAD's DEHACKED
+<kbd>F6</kbd> outside a game just grunts. The other function keys are `M_Responder`'s too, with
+the menu down: <kbd>F1</kbd> Read This! (DOOM II's `HELP` page), <kbd>F2</kbd> Save Game (or the
+"only during a game" message), <kbd>F3</kbd> Load Game (refused in a netgame), <kbd>F4</kbd> Sound
+Volume with the cursor on the effects slider, <kbd>F5</kbd> toggles the detail and says so,
+<kbd>F7</kbd> asks to end the game (a grunt outside one), <kbd>F8</kbd> toggles messages – that
+message shows even when they're off, as DOOM's does – <kbd>F10</kbd> asks to quit, and
+<kbd>F11</kbd> steps the gamma correction (below). Each plays the switch sound as DOOM does. The
+questions come from the WAD's DEHACKED
 (`QSPROMPT`, `QLPROMPT`, `QSAVESPOT`) when it has them. Freedoom's doesn't, so the wording here
 is our own. Some browsers keep <kbd>F6</kbd> for the address bar when the page doesn't have
 the focus, so click the game first. `npm run test:menu` checks each step.
@@ -935,7 +951,7 @@ arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd>
 <kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>7</kbd> pick weapons (fist, pistol, shotgun, chaingun, rocket
 launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggles the chainsaw and
 <kbd>3</kbd> again the super shotgun. A change takes the old weapon down and the new one up. <kbd>Tab</kbd> shows the
-automap (type IDDT on it to reveal everything), <kbd>P</kbd> pauses, <kbd>Esc</kbd> opens the menu, and <kbd>F6</kbd>/<kbd>F9</kbd> quicksave and quickload. Under the view you can set **Detail** (320 or 160 columns),
+automap (type IDDT on it to reveal everything), <kbd>P</kbd> pauses, <kbd>Esc</kbd> opens the menu, and the function keys do what DOOM's do: <kbd>F1</kbd> help, <kbd>F2</kbd> save, <kbd>F3</kbd> load, <kbd>F4</kbd> sound volume, <kbd>F5</kbd> detail, <kbd>F6</kbd>/<kbd>F9</kbd> quicksave and quickload, <kbd>F7</kbd> end game, <kbd>F8</kbd> messages on/off, <kbd>F10</kbd> quit, <kbd>F11</kbd> gamma correction. Under the view you can set **Detail** (320 or 160 columns),
 **Renderer** (BSP + solidsegs, or brute force), **Skill** (1–5), **Display** (WebGL palette shader or Canvas 2D),
 **Smooth upscaling**, **Audio** on/off (<kbd>M</kbd>), and **Sound** and **Music** volume. These settings
 are remembered in your browser. The SQL console under the game queries the live game

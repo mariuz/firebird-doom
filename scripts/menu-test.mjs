@@ -15,9 +15,11 @@ const assert = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) f
 
 const make = (opts = {}) => {
   const log = { games: [], sounds: [], ended: 0, quit: 0 };
-  const state = { messages: true, detail: 'high', mouse: 5, sfx: 10, music: 7, screenSize: 7 };
+  const state = { messages: true, detail: 'high', mouse: 5, sfx: 10, music: 7, screenSize: 7, inGame: true, netgame: false, canSave: true };
   const actions = {
     newGame: (e, s) => log.games.push([e, s]), endGame: () => log.ended++, quit: () => log.quit++,
+    get inGame() { return state.inGame; }, get netgame() { return state.netgame; },
+    get canSave() { return state.canSave; }, set canSave(v) { state.canSave = v; },
     get messages() { return state.messages; }, set messages(v) { state.messages = v; },
     get detail() { return state.detail; }, set detail(v) { state.detail = v; },
     get mouse() { return state.mouse; }, set mouse(v) { state.mouse = v; },
@@ -231,6 +233,73 @@ const keys = (m, ...ks) => ks.forEach((k) => m.key(k));
   m.draw(stub);
   assert(calls.includes('M_SVOL@60,38') && calls.includes('M_THERML@80,80') && calls.includes('M_THERMO@168,80'),
     'the sound menu: the title and a thermometer at volume 10');
+}
+
+// M_Responder's function keys, through the menu's entry points
+{
+  const { m, log, state } = make();
+  m.openReadThis();
+  assert(m.active && m.page === 'HELP1' && log.sounds.at(-1) === 'DSSWTCHN', 'F1: Read This!, the switch sound');
+  m.key('Escape');
+  m.close(true);
+  m.openSave();
+  assert(m.active && m.current.name === 'save', 'F2: Save Game');
+  m.close(true);
+  state.canSave = false;
+  m.openSave();
+  assert(m.active && /only save/.test(m.message?.text ?? ''), 'F2 outside a game: the message instead');
+  m.key('x');
+  m.close(true);
+  m.openLoad();
+  assert(m.active && m.current.name === 'load', 'F3: Load Game');
+  m.close(true);
+  state.netgame = true;
+  m.openLoad();
+  assert(/netgame/.test(m.message?.text ?? '') && !m.message.yesno, 'F3 in a netgame: refused with a message (LOADNET)');
+  m.key('x');
+  m.close(true);
+  state.netgame = false;
+  m.openSound();
+  assert(m.active && m.current.name === 'sound' && m.item.act === 'sfx', 'F4: Sound Volume, the cursor on the effects slider');
+  m.close(true);
+  const d1 = m.toggleDetail();
+  const d2 = m.toggleDetail();
+  assert(state.detail === 'high' && d1 === 'Detail: low' && d2 === 'Detail: high' && !m.active, `F5: the detail toggles, with its message ("${d1}", "${d2}"), no menu`);
+  const g1 = m.toggleMessages();
+  const g2 = m.toggleMessages();
+  assert(state.messages && g1 === 'Messages: off' && g2 === 'Messages: on', `F8: messages toggle ("${g1}", "${g2}")`);
+  m.endGame();
+  assert(m.active && m.message?.yesno && /End this game/.test(m.message.text), 'F7: the End Game question');
+  m.key('y');
+  assert(log.ended === 1 && !m.active, '…Y ends it');
+  state.inGame = false;
+  log.sounds.length = 0;
+  m.endGame();
+  assert(!m.active && log.sounds.at(-1) === 'DSOOF', 'F7 outside a game: a grunt, nothing else');
+  m.quit();
+  assert(m.active && m.message?.yesno, 'F10: the quit question');
+  m.key('y');
+  assert(log.quit === 1, '…Y quits');
+  const { m: m2 } = make({ doom2: true, episodes: 0 });
+  m2.openReadThis();
+  assert(m2.page === 'HELP', 'F1 on DOOM II: its HELP page');
+}
+
+// gamma correction: v_video.c's tables, applied to the palettes (I_SetPalette)
+{
+  const { GAMMA_TABLES, paletteTables } = await import('../src/present.js');
+  const rows = GAMMA_TABLES;
+  const monotone = rows.every((t) => t.every((v, i) => i === 0 || v >= t[i - 1]));
+  assert(rows.length === 5 && rows.every((t) => t.length === 256) && monotone && rows[0][0] === 1 && rows[0][200] === 200 && rows[4][0] === 16 && rows[4][63] === 128
+    && [1, 2, 3, 4].every((k) => rows[k][64] > rows[k - 1][64]),
+    `five tables of 256, each lifting the dark end more (64 → ${rows.map((t) => t[64]).join(', ')})`);
+  const playpal = new Uint8Array(768);
+  for (let i = 0; i < 256; i++) playpal.set([i, i, i], i * 3);
+  const raw = paletteTables(playpal);
+  const p0 = paletteTables(playpal, 0);
+  const p4 = paletteTables(playpal, 4);
+  assert(raw.bytes[64 * 4] === 64 && p0.bytes[64 * 4] === 65 && p4.bytes[64 * 4] === 128 && p4.words[64] !== p0.words[64],
+    `the palettes through them: grey 64 stays ${raw.bytes[64 * 4]} as the WAD has it, is ${p0.bytes[64 * 4]} with gamma off (DOOM's "off" lifts by one) and ${p4.bytes[64 * 4]} at level 4`);
 }
 
 // the title loop

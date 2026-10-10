@@ -118,6 +118,42 @@ try {
   const off = Math.hypot(back.X - saved.X, back.Y - saved.Y);
   assert(moved > 32 && off < moved / 2, `…and the player is back (walked ${moved.toFixed(0)} away, ${off.toFixed(0)} from the save after loading)`);
 
+  // the other function keys (M_Responder): F1 help, F2 save, F3 load, F4 sound, F5 detail, F7 end game, F8 messages, F10 quit, F11 gamma
+  await key('F1');
+  const f1 = await doom(() => window.doom.menu.page);
+  await key('Escape');   // (back to the menu, as DOOM's Read This! does)
+  await key('Escape');
+  await key('F2');
+  const f2 = await doom(() => window.doom.menu.current.name);
+  await key('Escape');
+  await key('F3');
+  const f3 = await doom(() => window.doom.menu.current.name);
+  await key('Escape');
+  await key('F4');
+  const f4 = await doom(() => [window.doom.menu.current.name, window.doom.menu.item.act].join(':'));
+  await key('Escape');
+  assert(f1 === 'HELP1' && f2 === 'save' && f3 === 'load' && f4 === 'sound:sfx', `F1 ${f1}, F2 ${f2}, F3 ${f3}, F4 ${f4}`);
+  await key('F5');
+  const f5 = await doom(() => [document.getElementById('detail').value, window.doom.message].join(' / '));
+  await key('F5');
+  await key('F8');
+  const f8 = await doom(() => window.doom.message);
+  await key('F8');
+  assert(f5 === 'low / Detail: low' && f8 === 'Messages: off' && (await doom(() => document.getElementById('detail').value)) === 'high',
+    `F5 toggles the detail (${f5}) and F8 the messages (${f8}), each saying so`);
+  await key('F7');
+  const f7 = await doom(() => window.doom.menu.message?.text ?? '');
+  await key('n');
+  await key('F10');
+  const f10 = await doom(() => window.doom.menu.message?.yesno === true);
+  await key('n');
+  assert(/End this game/.test(f7) && f10 && (await doom(() => window.doom.screen)) === 'level', 'F7 asks to end the game, F10 to quit; N keeps playing');
+  await key('F11');
+  const g1 = await doom(() => [window.doom.gamma, window.doom.message].join(' / '));
+  for (let i = 0; i < 4; i++) await key('F11');
+  const g0 = await doom(() => [window.doom.gamma, window.doom.message].join(' / '));
+  assert(g1 === '1 / Gamma: level 1' && g0 === '0 / Gamma: off', `F11 steps the gamma (${g1}; four more: ${g0})`);
+
   // the screen size keys
   await key('Minus', 400);
   const small = await doom(() => window.doom.renderer.scaledW);

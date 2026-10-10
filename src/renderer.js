@@ -143,7 +143,9 @@ export class Renderer {
     this.flatAnim = buildAnim(res.flats.map((l) => l.name));
     // COLORMAP: 34 rows of 256 – light levels 0–31, 32 the invulnerability greys
     this.cmap = wad.colormap();
-    this.palettes = paletteTables(wad.data(wad.lump('PLAYPAL')));
+    this.playpal = wad.data(wad.lump('PLAYPAL'));
+    this.palettes = paletteTables(this.playpal);   // (as the WAD has them: toRGBA, the tests' pictures)
+    this.gamma = 0;                                 // the presenter's gamma level (F11)
     this.presenter = null;
     this.fuzzPos = 0;
     this.screen = new Uint8Array(320 * 200);
@@ -152,10 +154,16 @@ export class Renderer {
     this.backKey = '';
   }
 
-  /** Where present() sends the screen; it gets this WAD's palettes. */
+  /** Where present() sends the screen; it gets this WAD's palettes, at the gamma level. */
   attach(presenter) {
     this.presenter = presenter;
-    presenter?.setPalettes(this.palettes);
+    presenter?.setPalettes(paletteTables(this.playpal, this.gamma));
+  }
+
+  /** I_SetPalette with usegamma: the presenter's palettes through gamma table LEVEL (0–4). */
+  setGamma(level) {
+    this.gamma = Math.max(0, Math.min(4, level | 0));
+    this.attach(this.presenter);
   }
 
   /** The view: W columns by H rows, SCALEDW pixels wide on the screen at (X, Y). */

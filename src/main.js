@@ -46,7 +46,7 @@ let running = false;
 let paused = false;
 let lastTic = 0;
 // settings, remembered per browser
-const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, synth: 'opl2', display: 'webgl', smooth: false, skill: 3, messages: true, mouse: 5, screenSize: 10 };
+const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, synth: 'opl2', display: 'webgl', smooth: false, skill: 3, messages: true, mouse: 5, screenSize: 10, gamma: 0 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('firebird-doom:settings') || '{}'));
 } catch { /* storage unavailable: defaults */ }
@@ -64,7 +64,7 @@ let showMap = false;
 let face = new FaceWidget();         // the status bar face (ST_updateFaceWidget), its own state
 let lastFire = false;               // the attack button, as the face sees it (player->attackdown)
 let amView = null;                  // the automap's window: zoom, follow, grid, marks (AutomapView)
-let amMsg = null;                   // its messages ({ text, tics }), shown like the game's but kept out of Firebird
+let amMsg = null;                   // the page's own messages ({ text, tics }: the automap's, F5/F8/F11's), shown like the game's but kept out of Firebird
 let finale = null;                  // text screens: DOOM II's (MAP06/11/20, the secret levels, MAP30) and DOOM I's E1M8
 let finaleKey = false;              // a key went down: F_CastResponder
 let intermission = null;            // the stats screen between levels (wi_stuff.c)
@@ -135,12 +135,17 @@ window.addEventListener('keydown', (e) => {
     if (!(e.key === 'Escape' && performance.now() - menuOpenedAt < 200)) menu.key(e.key);
     return;
   }
-  // M_Responder's function keys, with the menu down: F6 quicksave, F9 quickload
-  if ((e.key === 'F6' || e.key === 'F9') && menu && !demoPlayer && !net) {
+  // M_Responder's function keys, with the menu down
+  if (/^F([1-9]|1[01])$/.test(e.key) && menu) {
     e.preventDefault();
+    if (e.key === 'F5') { pageSay(menu.toggleDetail()); return; }
+    if (e.key === 'F8') { pageSay(menu.toggleMessages(), true); return; }
+    if (e.key === 'F11') { setGamma((settings.gamma + 1) % 5, true); return; }
+    if ((e.key === 'F6' || e.key === 'F9') && (demoPlayer || net)) return;
     menuBackdrop = renderer.sfb.slice();
     keys.clear();
-    if (e.key === 'F6') menu.quickSave(); else menu.quickLoad();
+    ({ F1: () => menu.openReadThis(), F2: () => menu.openSave(), F3: () => menu.openLoad(), F4: () => menu.openSound(),
+      F6: () => menu.quickSave(), F7: () => menu.endGame(), F9: () => menu.quickLoad(), F10: () => menu.quit() })[e.key]?.();
     return;
   }
   if (title && menu) {
@@ -301,7 +306,7 @@ async function startAttract(n) {
   if (!demo || demo.wad !== wadKey || !wad.mapNames().includes(demo.map) || net || lobby.role) { title.advance(); return; }
   attract = n;
   try {
-    await startMap(demo.map, true, { skill: demo.skill, seed: demo.seed, keepDemo: true, attract: true });
+    await startMap(demo.map, true, { skill: demo.skill, seed: demo.seed, keepDemo: true, attract: true, fromFrame: true });
     if (attract !== n || !title) return;   // (a game started meanwhile)
     demoPlayer = new DemoPlayer(demo);
   } catch (err) {
@@ -353,6 +358,7 @@ async function loadFromSlot(slot) {
   $('map').value = save.map;
   await startMap(save.map, true);
   running = false;                 // (nothing ticks until the save is back)
+  if (inFrame) await inFrame.catch(() => {});
   try {
     await restoreGame(db, save);
     map.seen = new Set(save.extra?.seen ?? []);
@@ -362,8 +368,7 @@ async function loadFromSlot(slot) {
   } catch (err) {
     setStatus(`Couldn't load that save: ${err.message}`, true);
   }
-  lastTic = performance.now();
-  running = true;
+  resume();
 }
 
 /** M_SizeDisplay: one step of the Screen Size, 3–11 */
@@ -402,6 +407,8 @@ function makeMenu() {
       get slots() { return saveSlots; },
       // (only in a game: not on the title, the intermission or an ending)
       get canSave() { return !!map && !title && !intermission && !finale && !net; },
+      get inGame() { return !!map && !title; },     // (usergame: not the title loop, nor its demos)
+      get netgame() { return !!net; },
       save: (slot, name) => saveToSlot(slot, name).catch((err) => setStatus(`Couldn't save: ${err.message}`, true)),
       load: (slot) => loadFromSlot(slot).catch((err) => setStatus(`Couldn't load: ${err.message}`, true)),
       quit() {
@@ -535,9 +542,12 @@ function startMap(name, newGame, opts) {
   return run;
 }
 
-async function startMapNow(name, newGame, { skill = settings.skill, seed = null, keepDemo = false, netgame = false, attract: forTitle = false } = {}) {
+async function startMapNow(name, newGame, { skill = settings.skill, seed = null, keepDemo = false, netgame = false, attract: forTitle = false, fromFrame = false } = {}) {
   if (net && !netgame) leaveNet('you started another game');
   running = false;
+  // (a start from outside the loop – the menu, the panel, a message – waits for
+  // the frame in flight: its queries must be done before the tables go)
+  if (inFrame && !fromFrame) await inFrame.catch(() => {});
   levelSerial++;
   finale = null;
   intermission = null;
@@ -579,8 +589,7 @@ async function startMapNow(name, newGame, { skill = settings.skill, seed = null,
   setStatus('');
   $('mapname').textContent = name;
   audio.playMusic(musicLumpFor(name));
-  lastTic = performance.now();
-  running = true;
+  resume();
 }
 
 /**
@@ -596,7 +605,7 @@ async function nextLevel(name, newGame) {
     else endPlayback(demoPlayer.done ? 'the demo is over' : 'it is out of step with the game');
   }
   const rec = recorder;
-  await startMap(name, newGame, { seed, keepDemo: true, netgame: !!net });
+  await startMap(name, newGame, { seed, keepDemo: true, netgame: !!net, fromFrame: true });
   rec?.push(['map', name, lastSeed, newGame ? 1 : 0]);
 }
 
@@ -825,7 +834,25 @@ function nextFrame() {
   setTimeout(go, 50);
 }
 
-async function frame() {
+let frames = 0;         // (frame() calls, for the tests' diagnostics)
+let inFrame = null;     // the frame in flight (a map load waits for it: its queries must not meet the DELETEs)
+let loopAlive = false;  // frame() keeps scheduling itself until an error stops it; a map start revives it
+function frame() {
+  inFrame = frameNow().finally(() => { inFrame = null; });
+}
+
+/** running again, and the loop with it if an error had stopped it */
+function resume() {
+  lastTic = performance.now();
+  running = true;
+  if (!loopAlive) {
+    loopAlive = true;
+    nextFrame();
+  }
+}
+
+async function frameNow() {
+  frames++;
   if (!running || document.hidden || (paused && !menu?.active)) {
     lastTic = performance.now();
     nextFrame();
@@ -1043,7 +1070,7 @@ async function frame() {
     if (amMsg) amMsg.tics -= tics;
     if (amMsg && amMsg.tics <= 0) amMsg = null;
     const msg = amMsg?.text ?? hud.MSG;
-    if (msg && settings.messages) drawText(renderer, msg, 2, 2);
+    if (msg && (settings.messages || amMsg?.always)) drawText(renderer, msg, 2, 2);
     if (paused) drawText(renderer, 'PAUSED', 136, 80);
     if ((net || attract) && menu?.active) {
       for (let i = 0; i < tics; i++) menu.tick();
@@ -1057,6 +1084,7 @@ async function frame() {
     console.error(err);
     setStatus(`Error: ${err.message}`, true);
     running = false;
+    loopAlive = false;
     return;
   }
   nextFrame();
@@ -1084,6 +1112,22 @@ function updateStats() {
 function amSay(key) {
   const strings = parseDehStrings(wad.dehacked() + '\n' + (dehPatch?.text ?? ''));
   amMsg = { text: strings.get(key) ?? AM_STRINGS[key], tics: 4 * 35 };   // (HU_MSGTIMEOUT)
+}
+
+/** A message of the page's own (F5, F8, F11), like the game's; ALWAYS shows it even with messages off (message_dontfuckwithme) */
+function pageSay(text, always = false) {
+  amMsg = { text, tics: 4 * 35, always };
+}
+
+/** F11 (and the setting): usegamma, the presenter's palettes through the gamma table, with its message */
+function setGamma(level, say = false) {
+  settings.gamma = Math.max(0, Math.min(4, level | 0));
+  saveSettings();
+  renderer?.setGamma(settings.gamma);
+  if (say) {
+    const strings = parseDehStrings(wad.dehacked() + '\n' + (dehPatch?.text ?? ''));
+    pageSay(strings.get(`GAMMALVL${settings.gamma}`) ?? (settings.gamma ? `Gamma: level ${settings.gamma}` : 'Gamma: off'));
+  }
 }
 
 function drawAutomap(tics = 1) {
@@ -1233,6 +1277,7 @@ async function loadWads() {
   res = await loadResources(db, wad, { width: view().w, height: view().h, projy: view().scaledW / 2, dehacked: dehPatch?.text ?? '' });
   await setRenderer(db, settings.renderer === 'bsp');
   renderer = new Renderer(wad, res);
+  renderer.setGamma(settings.gamma);
   renderer.attach(presenter);
   // every present goes through here: a new state melts in from the last screen shown
   const present = renderer.present.bind(renderer);
@@ -1305,6 +1350,9 @@ async function boot() {
       // endings excepted: they end the game)
       get menu() { return menu; },
       get automap() { return { view: amView, open: showMap, message: amMsg?.text ?? null }; },
+      get gamma() { return settings.gamma; },
+      get debug() { return { running, paused, frames, loopAlive, menu: !!menu?.active, melt: !!melt, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, error: net.ls.error } }; },
+      get message() { return amMsg?.text ?? hud?.MSG ?? null; },
       get files() { return { base: baseWad?.label, pwads: pwads.map((p) => p.name), deh: dehPatch?.name ?? null }; },
       addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await reloadWads(); },
       useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await reloadWads(); },
@@ -1337,7 +1385,7 @@ async function boot() {
     };
     await loadGame(settings.game);
     goTitle();   // DOOM starts on its title screen; a key brings up the menu
-    nextFrame();
+    resume();    // (the loop is running since the first map; this would start it otherwise)
   } catch (err) {
     console.error(err);
     setStatus(err.message, true);
