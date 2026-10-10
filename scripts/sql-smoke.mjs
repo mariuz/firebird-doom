@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
+import { expandWalls, visplaneMarks } from '../src/renderer.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const wadPath = process.env.WAD ?? path.join(root, 'public/wads/freedoom1.wad');
@@ -107,7 +108,37 @@ assert(a.rows[0].N === b.rows[0].N && a.rows[0].H === b.rows[0].H,
   `BSP+solidsegs (procedural clip) and brute force (window-function clip) agree (${a.rows[0].N} slices)`);
 
 const vp = (await db.query(
-  'SELECT COUNT(DISTINCT col) c, SUM(c_bot - c_top) + SUM(f_bot - f_top) px FROM frame_walls WHERE c_bot > c_top OR f_bot > f_top')).rows[0];
+  'SELECT COUNT(DISTINCT col) c, SUM(c_bot - c_top) + SUM(f_bot - f_top) px FROM render_walls WHERE c_bot > c_top OR f_bot > f_top')).rows[0];
+
+// FRAME_WALLS sends five values a slice; the browser works out the opening, the
+// clip window (expandWalls) and the visplane rows (visplaneMarks) as RENDER_SLICES
+// and RENDER_WALLS do: every one of them must come out the same
+const marksAgree = async () => {
+  const arr = { rowMode: 'array' };
+  const [v] = (await db.query('SELECT vc.h, vc.projy, p.view_z FROM viewcfg vc JOIN player p ON p.id = vc.player_id WHERE vc.id = 1')).rows;
+  const map = {
+    lines: new Map((await db.query('SELECT id, front_side, back_side FROM linedefs', [], arr)).rows.map((r) => [r[0], { fs: r[1], bs: r[2] }])),
+    sides: new Map((await db.query('SELECT id, sector_id FROM sidedefs', [], arr)).rows.map((r) => [r[0], { sector: r[1] }])),
+    sectors: new Map((await db.query('SELECT id, floor_h, ceil_h, sky FROM sectors', [], arr)).rows.map((r) => [r[0], { floor: r[1], ceil: r[2], sky: r[3] === 1 }])),
+  };
+  const full = (await db.query('SELECT col, depth, u, line_id, back_view, open_top, open_bot, clip_top, clip_bot, fsec, c_top, c_bot, f_top, f_bot FROM render_walls', [], arr)).rows;
+  const sent = (await db.query('SELECT * FROM frame_walls', [], arr)).rows;
+  const whole = expandWalls(sent, map, v.VIEW_Z, v.H, v.PROJY);
+  let bad = sent.length === full.length ? 0 : 1;
+  for (let i = 0; i < full.length && !bad; i++) {
+    const r = full[i];
+    const w = whole[i];
+    const yTop = Math.max(0, Math.ceil(w[7]));
+    const yBot = Math.min(v.H, Math.ceil(w[8]));
+    const fs = map.sectors.get(r[9]);
+    const scale = v.PROJY / w[1];
+    const marks = yTop < yBot ? visplaneMarks(yTop, yBot, v.H / 2 - (fs.ceil - v.VIEW_Z) * scale, v.H / 2 - (fs.floor - v.VIEW_Z) * scale) : r.slice(10);
+    if (w.join() !== r.slice(0, 9).join() || marks.join() !== r.slice(10).join()) bad++;
+  }
+  return { bad, n: full.length, cols: sent[0]?.length };
+};
+const ma = await marksAgree();
+assert(ma.bad === 0 && ma.cols === 5, `FRAME_WALLS sends ${ma.cols} values a slice; the openings, clip windows and visplane rows the browser works out match RENDER_WALLS' on all ${ma.n} slices`);
 const planes = (await db.query('SELECT COUNT(*) n FROM frame_visplanes')).rows[0].N;
 assert(vp.C === 320 && planes > 0, `visplane spans in every column (${planes} visplanes, ${vp.PX} pixels)`);
 
@@ -115,9 +146,10 @@ assert(vp.C === 320 && planes > 0, `visplane spans in every column (${planes} vi
 for (let a = 0; a < 8; a++) {
   await tic([1, 0, 0, Math.PI / 4, 0, 0, 0, 0]);
   const r = await db.query(
-    'SELECT COUNT(DISTINCT col) c FROM frame_walls WHERE MAXVALUE(clip_top, open_top) >= MINVALUE(clip_bot, open_bot)',
+    'SELECT COUNT(DISTINCT col) c FROM render_walls WHERE MAXVALUE(clip_top, open_top) >= MINVALUE(clip_bot, open_bot)',
   );
-  assert(r.rows[0].C === 320, `heading ${a * 45}°: all columns closed by a wall`);
+  const mk = await marksAgree();
+  assert(r.rows[0].C === 320 && mk.bad === 0, `heading ${a * 45}°: all columns closed by a wall, and the browser's slices match (${mk.n})`);
 }
 
 // every monster projectile hurts (a NULL damage once aborted the whole tic)

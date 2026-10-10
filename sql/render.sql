@@ -578,8 +578,16 @@ END^
 
 SET TERM ; ^
 
+-- What the browser is sent: five values a slice – which column, how deep,
+-- the texture column, the line and the side seen. The hand-off to JavaScript
+-- costs per value (about 0.4 µs each), and the other nine are arithmetic on
+-- these and the sector heights the browser has from FRAME_SECTORS: the
+-- opening (as RENDER_SLICES works it out), the clip window (the openings in
+-- front, down the column, as RENDER_WALLS carries it) and the visplane rows.
+-- expandWalls and visplaneMarks in renderer.js do it; the smoke test holds
+-- them to RENDER_WALLS, slice by slice.
 CREATE OR ALTER VIEW frame_walls AS
-SELECT * FROM render_walls;
+SELECT col, depth, u, line_id, back_view FROM render_walls;
 
 -- The same clipping, stated declaratively: running MAX/MIN window aggregates
 -- over everything in front. Equivalent to FRAME_WALLS (the smoke test checks)

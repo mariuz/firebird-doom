@@ -96,6 +96,61 @@ export function lightNum(light, extralight = 0) {
   return Math.max(0, Math.min(LIGHTLEVELS - 1, (light >> 4) + extralight));
 }
 
+/**
+ * FRAME_WALLS' five values a slice [col, depth, u, line, backView], in order
+ * down each column (front to back), made whole again:
+ * [col, depth, u, line, backView, openTop, openBot, clipTop, clipBot].
+ * The opening is RENDER_SLICES': none (h, 0) for a one-sided line or a closed
+ * two-sided one, else the screen y of the lower ceiling and the higher floor
+ * (with the sky hack: two sky ceilings count as one). The clip window is
+ * RENDER_WALLS': what the openings in front of it leave open. MAP gives the
+ * lines, sides and this frame's sectors; VZ is the view's height.
+ */
+export function expandWalls(rows, map, vz, h, projy) {
+  if (rows.length && rows[0].length > 5) return rows;   // (already whole)
+  const hh = h / 2;
+  const out = new Array(rows.length);
+  let col = -1;
+  let clipTop = 0;
+  let clipBot = 1e9;
+  for (let i = 0; i < rows.length; i++) {
+    const [c, depth, u, lineId, backView] = rows[i];
+    if (c !== col) {
+      col = c;
+      clipTop = 0;
+      clipBot = 1e9;
+    }
+    const L = map.lines.get(lineId);
+    const fs = map.sectors.get(map.sides.get(backView ? L.bs : L.fs).sector);
+    const bs = L.bs == null ? null : map.sectors.get(map.sides.get(backView ? L.fs : L.bs).sector);
+    let openTop = h;
+    let openBot = 0;
+    if (bs) {
+      const bc = fs.sky && bs.sky ? fs.ceil : bs.ceil;
+      if (!(bc <= bs.floor || bc <= fs.floor || bs.floor >= fs.ceil)) {
+        const s = projy / depth;
+        openTop = hh - (Math.min(fs.ceil, bc) - vz) * s;
+        openBot = hh - (Math.max(fs.floor, bs.floor) - vz) * s;
+      }
+    }
+    out[i] = [c, depth, u, lineId, backView, openTop, openBot, clipTop, clipBot];
+    clipTop = Math.max(clipTop, openTop);
+    clipBot = Math.min(clipBot, openBot);
+  }
+  return out;
+}
+
+/**
+ * R_StoreWallRange's markceiling / markfloor, as RENDER_WALLS works them out:
+ * the rows [cTop, cBot) of the front sector's ceiling and [fTop, fBot) of its
+ * floor, between the clip window's rows [yTop, yBot) and the wall. YFC and YFF
+ * are the screen y of the front sector's ceiling and floor at the slice's
+ * scale (h/2 − (height − viewz) × projy / depth).
+ */
+export function visplaneMarks(yTop, yBot, yfc, yff) {
+  return [yTop, Math.min(yBot, Math.max(yTop, Math.ceil(yfc))), Math.max(yTop, Math.min(yBot, Math.ceil(yff))), yBot];
+}
+
 /** scalelight[lightnum][index]: walls and sprites, by their projected scale (index = scale >> 12).
  *  R_ExecuteSetViewSize builds it for the view's width on the screen (viewwidth << detailshift). */
 export function scaleLight(lightnum, index, scaledWidth = 320) {
@@ -227,13 +282,15 @@ export class Renderer {
   /**
    * Draw one frame.
    *   view:    { x, y, z, angle, tic, fixedColormap }
-   *   walls:   FRAME_WALLS rows [col, depth, u, line, backView, openTop, openBot, clipTop, clipBot,
-   *                               fsec, cTop, cBot, fTop, fBot]  (the last four: visplane rows)
+   *   walls:   FRAME_WALLS rows [col, depth, u, line, backView]: the opening, the clip window
+   *            and the visplane rows are worked out here (expandWalls, visplaneMarks), as
+   *            RENDER_SLICES and RENDER_WALLS have them
    *   sprites: FRAME_SPRITES rows [id, depth, lump, flip, x1, x2, y1, y2, light, fuzz, tr]
    *   map:     { lines: Map, sides: Map, sectors: Map, skyTex }
    */
-  drawView(view, walls, sprites, map) {
+  drawView(view, frameWalls, sprites, map) {
     const { w, h, fb, proj, projy } = this;
+    const walls = expandWalls(frameWalls, map, view.z, h, projy);
     // R_SetupFrame: a fixed colormap (32, INVERSECOLORMAP, while invulnerable)
     // replaces the light levels – except on the sky, as in vanilla
     this.fixedCm = view.fixedColormap ?? null;
@@ -252,7 +309,7 @@ export class Renderer {
     const colStart = new Int32Array(w + 1).fill(-1);
 
     for (let i = 0; i < walls.length; i++) {
-      const [col, depth, u, lineId, backView, openTop, openBot, clipTop, clipBot, , cTop, cBot, fTop, fBot] = walls[i];
+      const [col, depth, u, lineId, backView, openTop, openBot, clipTop, clipBot] = walls[i];
       if (colStart[col] < 0) colStart[col] = i;
       const L = map.lines.get(lineId);
       const S = map.sides.get(backView ? L.bs : L.fs);
@@ -265,6 +322,7 @@ export class Renderer {
       if (yTop >= yBot) continue;
       const yfc = hh - (fs.ceil - vz) * scale;
       const yff = hh - (fs.floor - vz) * scale;
+      const [cTop, cBot, fTop, fBot] = visplaneMarks(yTop, yBot, yfc, yff);
 
       // R_FindPlane / R_CheckPlane: Firebird told us which rows of this column
       // the front sector's ceiling and floor fill; file them under a visplane.

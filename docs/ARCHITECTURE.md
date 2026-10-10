@@ -89,13 +89,18 @@ The page sees it in the `DOOM_TIC` row and takes over with the intermission.
 
 ## A frame
 
-After the tic, the page queries `FRAME_WALLS`, `FRAME_SECTORS`, `FRAME_SPRITES` and the new
+After the tic, the page queries `FRAME_SECTORS`, then `FRAME_WALLS`, `FRAME_SPRITES` and the new
 `SOUND_EVENTS` together, so the Worker never idles between them.
 
 - `FRAME_WALLS` reads `RENDER_WALLS`. That reads slices from `RENDER_SLICES_BSP` (or
   `RENDER_SLICES`, chosen by `viewcfg.use_bsp`), walks each column front to back carrying the
-  open window, and emits one row per visible slice. A row carries depth, texture u, the line,
-  the clip window, and the rows of ceiling and floor that slice uncovers (the visplane data).
+  open window, and emits one row per visible slice. `RENDER_WALLS` gives fourteen values a
+  slice. `FRAME_WALLS` passes on five (column, depth, texture u, line, side), because the
+  hand-off costs per value; `expandWalls` and `visplaneMarks` in `renderer.js` work out the
+  opening, the clip window and the visplane rows again from those and `FRAME_SECTORS`.
+- The page asks `FRAME_SECTORS` first. When the view (position, angle, height, size, renderer)
+  and every sector's floor, ceiling and sky are as they were for the last `FRAME_WALLS`, it
+  draws that answer again instead of asking.
 - `FRAME_SPRITES` projects things in front of the camera and picks the rotation frame. It adds
   the light level, and the `fuzz` flag for `MF_SHADOW`.
 - `renderer.drawView` draws walls column by column, groups the visplane rows into visplanes

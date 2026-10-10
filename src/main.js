@@ -107,6 +107,8 @@ let lastSoundId = 0;
 for (const ev of ['keydown', 'pointerdown', 'touchstart']) window.addEventListener(ev, () => audio.unlock(), { capture: true });
 document.addEventListener('visibilitychange', () => audio.suspend(document.hidden));
 let lastFrame = { tic: 0, walls: 0, sprites: 0, draw: 0, rows: 0 };
+let wallCache = null;                // FRAME_WALLS' last answer and what it answered ({ key, walls })
+let wallsReused = 0;                 // frames drawn from it without asking again
 // a netgame (net.js): { me, players, deathmatch, timer, ls: Lockstep, links: Map(player → link) }; null alone
 let net = null;
 // before it starts: the host's links so far and its open invite, or the guest's link
@@ -1067,8 +1069,18 @@ async function frameNow() {
       t = performance.now();
       return [r.rows, ms];
     });
-    const [[walls, wallMs], [sectors], [sprites, spriteMs], [sounds]] = await Promise.all([
-      q('SELECT * FROM frame_walls'), q('SELECT * FROM frame_sectors'), q('SELECT * FROM frame_sprites'),
+    // FRAME_WALLS depends on the view (where you stand and look, the view's
+    // size, the renderer) and on the sectors' heights; the rest of what it
+    // reads is the map's own. While none of that changes (standing still, no
+    // door or lift moving) its answer is the same, so the last one is kept.
+    const [sectors] = await q('SELECT * FROM frame_sectors');
+    const wallKey = [levelSerial, settings.renderer, renderer.w, renderer.h, net?.me ?? 1, hud.PX, hud.PY, hud.PANGLE, hud.VIEW_Z,
+      sectors.map((r) => `${r[1]},${r[2]},${r[6]}`).join(';')].join('|');
+    const reuse = wallCache?.key === wallKey;
+    if (reuse) wallsReused++;
+    t = performance.now();
+    const [[walls, wallMs], [sprites, spriteMs], [sounds]] = await Promise.all([
+      reuse ? [wallCache.walls, 0] : q('SELECT * FROM frame_walls'), q('SELECT * FROM frame_sprites'),
       q(`SELECT id, sound, origin, x, y FROM sound_events WHERE id > ${lastSoundId} AND COALESCE(listener, ${net?.me ?? 1}) = ${net?.me ?? 1} ORDER BY id`),
     ]);
     // the listener; on map 8 (E?M8, MAP08) S_AdjustSoundParams never quite fades a sound out
@@ -1093,6 +1105,7 @@ async function frameNow() {
       ? (await db.query('SELECT p.id, t.x, t.y, t.angle, p.invis_tics invis FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id',
         [], { rowMode: 'object' })).rows.map((r) => ({ id: r.ID, x: r.X, y: r.Y, angle: r.ANGLE, invis: r.INVIS }))
       : null;
+    wallCache = { key: wallKey, walls };
     lastFrame.walls = wallMs;
     lastFrame.sprites = spriteMs;
     lastFrame.rows = walls.length;
@@ -1428,7 +1441,7 @@ async function boot() {
       get gamma() { return settings.gamma; },
       // the mouse, for tests: DOM-style moves and buttons, as under pointer lock
       mouse: { move: (dx, dy) => mouse.move(dx, dy, settings.mouse), button: (b, down) => mouse.button(b, down) },
-      get debug() { return { running, paused, frames, loopAlive, levelSerial, shownState, menu: !!menu?.active, melt: !!melt, keys: [...keys], mouseTurn, showMap, amFollow: amView?.follow, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, error: net.ls.error } }; },
+      get debug() { return { running, paused, frames, wallsReused, loopAlive, levelSerial, shownState, menu: !!menu?.active, melt: !!melt, keys: [...keys], mouseTurn, showMap, amFollow: amView?.follow, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, error: net.ls.error } }; },
       get message() { return amMsg?.text ?? hud?.MSG ?? null; },
       get files() { return { base: baseWad?.label, pwads: pwads.map((p) => p.name), deh: dehPatch?.name ?? null }; },
       addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await reloadWads(); },
@@ -1436,6 +1449,8 @@ async function boot() {
       get demo() { return { recording: !!recorder, playing: !!demoPlayer && !attract, attract, played: demoPlayer?.index ?? 0, last: lastDemo }; },
       get chat() { return net && { on: net.chat.on, line: net.chat.line.text, queued: net.chat.queue.length }; },
       get net() { return net && { me: net.me, players: net.players, deathmatch: net.deathmatch, timer: net.timer, nomonsters: net.nomonsters, respawn: net.respawn, fast: net.fast, tic: net.ls.executed, error: net.ls.error, sums: Object.fromEntries(net.sums) }; },
+      // the walls the page drew last, against FRAME_WALLS asked now (the kept answer must be the same)
+      wallsMatch: async () => JSON.stringify(wallCache?.walls) === JSON.stringify((await db.query('SELECT * FROM frame_walls', [], { rowMode: 'array' })).rows),
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },
       get melting() { return !!melt; },

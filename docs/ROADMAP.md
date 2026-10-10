@@ -9,8 +9,8 @@ items as they land, and add what you find missing.
 The vanilla features on this list are all done. What's left is engineering, in the order it
 would be noticed:
 
-- **Performance** of `FRAME_WALLS` (Rendering): ~22–33 ms a frame, with outliers near 90 ms; a
-  measured plan is written there.
+- **Performance** of `FRAME_WALLS` (Rendering): ~22 ms a frame now (from ~26), nothing at all
+  while standing still; what's left of the plan is written there.
 - **Save compatibility** (Tooling): a fixture of older saves, loaded by the current code.
 - **A TURN relay** for multiplayer behind strict NATs (needs a server; the page has none): a
   Cloudflare Worker minting TURN credentials, with short room codes for the invites.
@@ -96,29 +96,27 @@ Everything else below is done.
 
 ## Rendering
 
-- **Performance.** A plan, measurement first (the machine is noisy, so alternate runs): (a) count
-  what `FRAME_WALLS` sends per row and derive what can be derived on the JS side – the JSON
-  hand-off is a third of the time and costs per value; (b) prototype reusing the previous frame's
-  visible set when the view hasn't moved much; (c) raise a binary result transfer with
-  `firebird-wasm`, with a measurement of what it would save. Each with a number to beat; the
-  bench below.
-  Measure with `node scripts/frame-bench.mjs E1M1 E1M2 …` (every monster awake,
-  eight spots per map looking four ways, the fastest of three). `DOOM_TIC` was halved by keying
-  the BLOCKMAP by cell (10 ms on average over E1M1–E1M3 and E2M2, from 22; E1M2 15 ms, from 42).
-  `FRAME_WALLS` is still about 22 ms on average, with outliers near 90 ms. About 9 ms of a typical
-  frame is the BSP walk and the solid coverage; the rest is per column: each visible column of each
-  seg is a `SUSPEND`ed row (about 1000–2000 a frame), sorted and clipped again by `RENDER_WALLS`.
-  Shaving statements off the per-column loop (hoisting the closed-seg opening, skipping covered
-  runs with `POSITION`) measured no better: the cost is per row, not per statement.
-  Where `FRAME_WALLS`' ~23 ms goes (E1M1–E1M3, 24 views, ~990 rows): the BSP walk and column
-  projection ~10–11 ms; `RENDER_WALLS`' sort and clip ~3 ms; and handing the rows to JavaScript
-  ~9–10 ms. `firebird-wasm` sends results as JSON, and the cost is per value (~0.4 µs), so short
-  integers cost as much as 17-digit doubles. Tried and measured no better: folding the clipping
-  into the BSP pass with per-column clip strings (`OVERLAY`/`SUBSTRING` cost more than the layer
-  they save: 27 ms), `FOR SELECT` instead of the cursor (the same), sending the clip values as
-  whole rows (the same). Ideas left: fewer values per row (some of the 14 could be derived), a
-  binary result transfer in `firebird-wasm` (outside this repo), caching static per-map work,
-  reusing the previous frame's visible set. Moving the per-column stepping to JS (about 3× faster
+- **Performance.** The plan was measurement first (the machine is noisy, so alternate runs):
+  (a) count what `FRAME_WALLS` sends per row and derive what can be derived on the JS side;
+  (b) reuse the previous frame's visible set when the view hasn't moved; (c) a binary result
+  transfer in `firebird-wasm`. Measure with `node scripts/frame-bench.mjs E1M1 E1M2 …` (every
+  monster awake, eight spots per map looking four ways, the fastest of three).
+  - ~~(a)~~ Done: `FRAME_WALLS` sends 5 values a slice, not 14. The opening, the clip window and
+    the visplane rows are worked out again in `renderer.js` (`expandWalls`, `visplaneMarks`),
+    exactly: the smoke test compares them with `RENDER_WALLS`, and every map of both WADs (1,020
+    views, 964,338 slices) agreed. Interleaved, E1M1–E1M3 and E2M2: 25.6 → 21.6 ms.
+  - ~~(b)~~ Done, exactly: while the view and the sectors' heights are unchanged, the page draws
+    the last answer again (0 ms standing still). Reusing it when the view has moved only a little
+    would draw something Firebird didn't decide, so it isn't done.
+  - (c) Open, outside this repo: the same query without sending any rows takes 17.9 ms, so a
+    binary transfer could save at most ~3.7 ms of the 21.6.
+  What's left is the work itself: the BSP walk and column projection ~10–11 ms, and
+  `RENDER_WALLS`' sort and clip ~3 ms. `DOOM_TIC` was halved by keying the BLOCKMAP by cell (10 ms
+  on average over E1M1–E1M3 and E2M2, from 22). Tried and measured no better: shaving statements
+  off the per-column loop (the cost is per row, not per statement), folding the clipping into the
+  BSP pass with per-column clip strings (`OVERLAY`/`SUBSTRING` cost more than the layer they
+  save: 27 ms), `FOR SELECT` instead of the cursor, sending the clip values as whole rows. Ideas
+  left: caching static per-map work. Moving the per-column stepping to JS (about 3× faster
   walls) was considered and turned down: Firebird decides, JavaScript draws.
 - ~~**Automap.**~~ Done: zoom (= -), the whole-level view (0), follow mode and panning (F, arrows),
   the grid (G) and marks (M, C), as `AM_Responder` and `AM_Ticker` have them.

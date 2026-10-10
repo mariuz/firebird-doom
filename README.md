@@ -109,6 +109,22 @@ SELECT *
 The smoke test checks that `FRAME_WALLS_WINDOWED` matches `FRAME_WALLS` slice for slice. The
 game uses the procedural clip because Firebird's window sort costs about twice as much.
 
+`FRAME_WALLS` sends the browser five values a visible slice: the column, the depth, the
+texture column, the line and the side seen. Handing rows from Firebird to JavaScript costs per
+value, about 0.4 µs each, and everything else `RENDER_WALLS` knows about a slice is arithmetic on
+those five and the sector heights the browser already has. That covers the opening, the clip
+window (the openings in front of it, down the column) and the rows of ceiling and floor it
+uncovers. `expandWalls` and `visplaneMarks` in `renderer.js` redo that arithmetic in the same
+order. The smoke test holds them to `RENDER_WALLS` value for value, and a check over every map
+of both WADs, 1,020 views and 964,338 slices, found no difference. Sending five values instead
+of fourteen took `FRAME_WALLS` from about 25.6 to 21.6 ms (E1M1–E1M3 and E2M2, 32 views).
+Firebird still decides what's visible: which slices, how deep, and which texture column.
+
+`FRAME_WALLS` depends only on the view and the sectors' heights; the rest it reads is the map's
+own. So while you stand still and no door or lift moves, the page draws its last answer again
+instead of asking. It fetches the sector heights first, and compares them, the view and its
+size with what the last answer was for.
+
 Two Firebird-specific performance lessons:
 
 * **Derived tables are inlined.** Each reference to a computed CTE column re-evaluates its whole

@@ -255,6 +255,22 @@ try {
     assert(a3.ANGLE !== a2b.ANGLE && Math.hypot(a3.X - a2b.X, a3.Y - a2b.Y) < 2, 'no button: the mouse turns, as before');
   }
 
+  // standing still, FRAME_WALLS' last answer is drawn again; a ceiling that moves asks anew
+  {
+    await doom(() => window.doom.sql("UPDATE things SET momx = 0, momy = 0 WHERE kind = 'player'"));
+    await page.waitForTimeout(1000);
+    const r0 = await doom(() => window.doom.debug.wallsReused);
+    await page.waitForTimeout(1000);
+    const r1 = await doom(() => window.doom.debug.wallsReused);
+    const same = await doom(() => window.doom.wallsMatch());
+    await doom(() => window.doom.sql("UPDATE sectors SET ceil_h = ceil_h + 24 WHERE id = (SELECT t.sector_id FROM things t WHERE t.kind = 'player')"));
+    await page.waitForTimeout(500);
+    const moved = await doom(() => window.doom.wallsMatch());
+    await doom(() => window.doom.sql("UPDATE sectors SET ceil_h = ceil_h - 24 WHERE id = (SELECT t.sector_id FROM things t WHERE t.kind = 'player')"));
+    assert(r1 - r0 >= 3 && same && moved,
+      `standing still the walls are drawn from the last answer (${r1 - r0} frames in a second), the same as asking again; the ceiling moved, they're asked anew`);
+  }
+
   // the automap
   await key('Tab', 300);
   assert(await doom(() => window.doom.automap.open), 'Tab opens the automap');
