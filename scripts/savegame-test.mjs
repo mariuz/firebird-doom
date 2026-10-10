@@ -4,8 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
-import { createSchema, loadResources, loadMap } from '../src/loader.js';
-import { captureGame, restoreGame, saveStore, mantissaExponent, exportSaves, importSaves, SAVE_VERSION } from '../src/savegame.js';
+import { createSchema, loadResources, loadMap, insertRows } from '../src/loader.js';
+import { captureGame, restoreGame, saveStore, exportSaves, importSaves, SAVE_VERSION } from '../src/savegame.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -75,12 +75,19 @@ try { for (let i = 0; i < 35; i++) { await tic(1, 0.05, 1); ran++; } } catch (er
 const p = await one('SELECT p.health, t.x, t.y FROM player p JOIN things t ON t.id = p.thing_id');
 assert(fresh > maxId && ran === 35 && p.HEALTH > 0, `after loading, a new thing gets id ${fresh} (> ${maxId}) and the game plays on (${ran} tics)`);
 
-// fractions go back as m × 2^e: that rebuilds every double exactly
+// a double bound as a parameter (firebird-wasm 0.4's binary binding) comes back bit for bit;
+// as decimal text, Firebird's parser lands some of them a bit off – what saves had to work round
 {
-  const values = [216.47363339883418, Math.PI, -Math.E, 0.1, -1e-300, 5e-324, 1.7976931348623157e308, 2 ** -60];
-  for (let i = 0; i < 10000; i++) values.push((Math.random() - 0.5) * 10 ** Math.floor(Math.random() * 12 - 4));
-  const wrong = values.filter((v) => { const [m, e] = mantissaExponent(v); return m * 2 ** e !== v || !Number.isSafeInteger(m); });
-  assert(wrong.length === 0, `m × 2^e rebuilds ${values.length} doubles exactly, subnormals and extremes included${wrong.length ? ` (wrong: ${wrong.slice(0, 3)})` : ''}`);
+  const values = [216.47363339883418, Math.PI, -Math.E, 0.1, -1e-300, 1.7976931348623157e308, 2 ** -60, -0];
+  for (let i = 0; i < 3000; i++) values.push((Math.random() - 0.5) * 10 ** Math.floor(Math.random() * 12 - 4));
+  await db.exec('CREATE TABLE dbl_probe (id INTEGER NOT NULL PRIMARY KEY, v DOUBLE PRECISION, t DOUBLE PRECISION)');
+  await db.execBatch('INSERT INTO dbl_probe (id, v) VALUES (?, ?)', values.map((v, i) => [i, v]));
+  await insertRows(db, 'dbl_probe', ['id', 't'], values.map((v, i) => [i + values.length, v]));
+  const back = (await db.query('SELECT id, v, t FROM dbl_probe ORDER BY id', [], { rowMode: 'array' })).rows;
+  const wrong = back.filter((r) => r[0] < values.length && !Object.is(r[1], values[r[0]]) && !(r[1] === 0 && values[r[0]] === 0));
+  const textWrong = back.filter((r) => r[0] >= values.length && r[2] !== values[r[0] - values.length]).length;
+  await db.exec('DROP TABLE dbl_probe');
+  assert(wrong.length === 0, `${values.length} doubles bound as parameters come back exactly${wrong.length ? ` (wrong: ${wrong.slice(0, 3).map((r) => r[1])})` : ''}; as text literals ${textWrong} came back a bit off`);
 }
 
 // a save from before armour types (no ARMOR_TYPE column) gets one from its points

@@ -24,7 +24,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `sql/game.sql` | The simulation, as PSQL procedures. `DOOM_TIC` is the entry point (see below). |
 | `sql/render.sql` | The visibility half of the renderer: `RENDER_SLICES` (brute force), `RENDER_SLICES_BSP` (BSP walk with solidsegs), `RENDER_WALLS` (clipping and visplane rows), `RENDER_SPRITES`, and the views `FRAME_WALLS`, `FRAME_WALLS_WINDOWED`, `FRAME_SPRITES`, `FRAME_SECTORS`, `FRAME_VISPLANES`. |
 | `src/main.js` | The page: boots Firebird, loads WADs and maps, reads input, runs the frame loop, and owns the intermission and finale objects, the settings and the cheats. |
-| `src/loader.js` | WAD → Firebird: `createSchema`, `loadResources` (textures, flats, sprites, thing types), `loadMap` (one level's lumps plus `INIT_MAP`), `setView`, `setRenderer`. Inserts in chunks of 200 (see the gotchas). |
+| `src/loader.js` | WAD → Firebird: `createSchema`, `loadResources` (textures, flats, sprites, thing types), `loadMap` (one level's lumps plus `INIT_MAP`), `setView`, `setRenderer`. Bulk inserts go through `execBatch`, with every value bound as a parameter. |
 | `src/wad.js` | The WAD reader: lumps, maps, pictures (column-major `pix` plus `alpha`), texture composition, `COLORMAP`. `new Wad(iwad, ...pwads)` merges files like `W_AddFile` (each lump knows its `file`); `dehacked()` is every file's patch in order. |
 | `src/thinginfo.js` | DOOM's `mobjinfo`, trimmed: every thing type's sprite, size, health, speed, frames, attacks, sounds, flags (`hang`, `floats`, `shadow`, `mass`). Loaded into `THING_TYPES`. |
 | `src/renderer.js` | The rasteriser: walls, visplanes (`R_MakeSpans`/`R_MapPlane`), sky, masked middles and sprites, fuzz, HUD patches, automap lines. **Works in palette indices.** |
@@ -192,8 +192,9 @@ GitHub Pages.
 
 - **`db.exec` splits on `;`.** Wrap an `EXECUTE BLOCK` in `SET TERM ^ ;` … `SET TERM ; ^`, or send
   it with `db.query`.
-- **256 contexts per statement.** One `EXECUTE BLOCK` can't hold more than about 256 `INSERT`s,
-  hence the chunks of 200 in `insertRows`.
+- **256 contexts per statement.** One `EXECUTE BLOCK` can't hold more than about 256 `INSERT`s.
+  Bulk inserts don't need one: `insertRows` and `restoreGame` use `db.execBatch`, one statement
+  prepared once and run for every row in a single call (Firebird's `IBatch`).
 - **CTEs are inlined, not materialised.** A recursive or reused CTE gets recomputed per reference.
   Use PSQL generator procedures (`SUSPEND` in a loop) instead.
 - **Join order matters.** A plain join to `screen_cols` once took 65 s. Pin the order with
@@ -210,10 +211,10 @@ GitHub Pages.
 - **Evaluation order isn't guaranteed.** Guard divisions with `NULLIF` even when a `WHERE` "should"
   have filtered the zero.
 - **A fractional double doesn't survive a trip through text.** Firebird can parse
-  `216.47363339883418` back one bit off, as a literal or as a bound parameter, since
-  `firebird-wasm` sends parameters as text. Where exactness matters (save and load), send a
-  fraction as `m * POWER(2e0, e)`, with `m` a whole number of at most 53 bits. See
-  `mantissaExponent` in `src/savegame.js`.
+  `216.47363339883418` back one bit off when it's written into the SQL as a literal (about one
+  value in ten). Bind it as a parameter instead: `firebird-wasm` 0.4 and later binds a number in
+  binary where the column is a double or an integer, and it lands exactly. (Before 0.4 parameters
+  travelled as text too, and saves sent fractions as `m * POWER(2e0, e)`.)
 - **Procedure parameters can have defaults** (`src INTEGER = NULL`), which keeps old call sites
   working.
 

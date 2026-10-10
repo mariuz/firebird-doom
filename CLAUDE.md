@@ -81,13 +81,15 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   call (there's no profiler plugin in the WASM build), and compare runs alternately: the machine
   is noisy.
 - **Firebird:** `db.exec` splits on `;` (use `SET TERM` or `db.query` for `EXECUTE BLOCK`). About
-  256 contexts per statement (insert in chunks of 200). CTEs are inlined (use PSQL generators).
+  256 contexts per statement (an `EXECUTE BLOCK` of `INSERT`s; bulk inserts use `execBatch`). CTEs are inlined (use PSQL generators).
   Pin join order (`LEFT JOIN`/`LATERAL`). Qualify columns and use `:var`. `FOR SELECT` cursors are
   stable, so `MONSTERS_THINK` re-reads live state per thing. Idle things think every 8 tics. `IIF`
   over two literals of different lengths pads the shorter, so `TRIM` it. `MINVALUE`/`MAXVALUE`
-  propagate `NULL`. Guard divisions with `NULLIF`. Fractional doubles sent as text (literals, or
-  parameters, which `firebird-wasm` passes as text) can come back one bit off: send them as
-  `m * POWER(2e0, e)` when exactness matters (`src/savegame.js`).
+  propagate `NULL`. Guard divisions with `NULLIF`. Fractional doubles written into SQL as
+  text literals can come back one bit off (about one in ten). Bind them as parameters instead:
+  since `firebird-wasm` 0.4 a number parameter is bound in binary and lands exactly. For many
+  rows use `db.execBatch(sql, rows)`, one prepared statement for every row in one call
+  (`insertRows`, `restoreGame`).
 - **Editing from the shell:** backticks and `${…}` inside `node -e "…"` or unquoted heredocs get
   eaten by bash. Write a `.cjs` patch script with the file tool and run it, or use the Edit tool.
   Patch scripts should `throw` when an anchor is missing, so nothing half-applies.

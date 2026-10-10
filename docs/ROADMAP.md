@@ -109,7 +109,9 @@ Everything else below is done.
     the last answer again (0 ms standing still). Reusing it when the view has moved only a little
     would draw something Firebird didn't decide, so it isn't done.
   - (c) Open, outside this repo: the same query without sending any rows takes 17.9 ms, so a
-    binary transfer could save at most ~3.7 ms of the 21.6.
+    binary transfer could save at most ~3.7 ms of the 21.6. `firebird-wasm` 0.4 binds parameters
+    in binary but still sends results as JSON ("a typed binary result ABI" is on its own list);
+    the page is on 0.4.1, using the binary parameters and `execBatch` for loads and saves.
   What's left is the work itself: the BSP walk and column projection ~10–11 ms, and
   `RENDER_WALLS`' sort and clip ~3 ms. `DOOM_TIC` was halved by keying the BLOCKMAP by cell (10 ms
   on average over E1M1–E1M3 and E2M2, from 22). Tried and measured no better: shaving statements

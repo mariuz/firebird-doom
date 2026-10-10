@@ -37,49 +37,13 @@ export async function captureGame(db, extra = {}) {
   return { version: SAVE_VERSION, map: g.MAP_NAME.trim(), skill: g.SKILL, seq: Number(seq), tables, extra };
 }
 
-// A save must restore exactly, but a fractional double written as decimal
-// (even as a bound parameter, which travels as text) comes back from
-// Firebird's parser up to a bit off. So a non-integer goes back as m × 2^e:
-// m a whole number of at most 53 bits and e an integer – both exact as text –
-// and multiplying by a power of two is exact.
-export function mantissaExponent(v) {
-  const dv = new DataView(new ArrayBuffer(8));
-  dv.setFloat64(0, v);
-  const hi = dv.getUint32(0);
-  const lo = dv.getUint32(4);
-  const biased = (hi >>> 20) & 0x7ff;
-  let m = (hi & 0xfffff) * 2 ** 32 + lo;
-  let e;
-  if (biased === 0) e = -1074;              // subnormal
-  else { m += 2 ** 52; e = biased - 1075; }
-  while (m !== 0 && m % 2 === 0) { m /= 2; e += 1; }   // (keep m small)
-  return [v < 0 ? -m : m, e];
-}
-
-/**
- * Run one statement per row, \`per\` rows to an EXECUTE BLOCK, each row's values
- * bound as parameters: whole numbers and strings as they are, fractions as m × 2^e.
- */
-async function perRow(db, rows, per, statement) {
-  for (let i = 0; i < rows.length; i += per) {
-    const chunk = rows.slice(i, i + per);
-    const decl = [];
-    const params = [];
-    const body = chunk.map((row, r) => statement(row.map((v, k) => {
-      const name = `p${r}_${k}`;
-      if (typeof v === 'number' && !Number.isInteger(v) && Number.isFinite(v)) {
-        const [m, e] = mantissaExponent(v);
-        decl.push(`${name}m BIGINT = ?`, `${name}e INTEGER = ?`);
-        params.push(m, e);
-        return `(:${name}m * POWER(2e0, :${name}e))`;
-      }
-      decl.push(`${name} ${typeof v === 'number' ? 'BIGINT' : 'VARCHAR(8191)'} = ?`);
-      params.push(typeof v === 'number' && !Number.isFinite(v) ? null : v);
-      return `:${name}`;
-    }))).join('\n');
-    await db.query(`EXECUTE BLOCK (${decl.join(', ')}) AS BEGIN\n${body}\nEND`, params);
-  }
-}
+// A save must restore exactly. Its values go back as bound parameters, a
+// statement prepared once per table and run for every row (execBatch), and
+// firebird-wasm (0.4 on) binds a number in binary where the column is a
+// double or an integer, so every double comes back bit for bit. (Before, a
+// parameter travelled as text, Firebird's parser could land a fraction a bit
+// off, and fractions were sent as m × 2^e.) A non-finite number goes in as NULL.
+const bound = (row) => row.map((v) => (typeof v === 'number' && !Number.isFinite(v) ? null : v));
 
 /**
  * G_LoadGame: write a capture back. The map must have just been loaded with
@@ -90,13 +54,12 @@ export async function restoreGame(db, save) {
   for (const t of WHOLE) {
     await db.exec(`DELETE FROM ${t}`);
     const { cols, rows } = save.tables[t] ?? { cols: [], rows: [] };   // (older saves: no frags, no respawn queue)
-    await perRow(db, rows, 10, (p) => `INSERT INTO ${t} (${cols.join(', ')}) VALUES (${p.join(', ')});`);
+    if (rows.length) await db.execBatch(`INSERT INTO ${t} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, rows.map(bound));
   }
   for (const t of Object.keys(MOVING)) {
     const { cols, rows } = save.tables[t];
     const set = cols.slice(1);
-    // (a statement holds at most 256 contexts, and an UPDATE takes more than one)
-    await perRow(db, rows, 50, (p) => `UPDATE ${t} SET ${set.map((c, k) => `${c} = ${p[k + 1]}`).join(', ')} WHERE id = ${p[0]};`);
+    if (rows.length) await db.execBatch(`UPDATE ${t} SET ${set.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, rows.map((r) => bound([...r.slice(1), r[0]])));
   }
   // saves from before armour types: green's for up to 100 points, blue's above
   if (!save.tables.player.cols.some((c) => c.toLowerCase() === 'armor_type')) {

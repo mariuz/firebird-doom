@@ -665,6 +665,14 @@ fit. DOOM has no such thing: its saves were already files (`DOOMSAV0.DSG`…). H
 IndexedDB, so this is how to back them up or move them. `npm run test:savegame` checks the round
 trip, the refusals, and that an imported save restores exactly.
 
+A load writes every saved row back as bound parameters: one statement per table, prepared once
+and run for every row in a single call (`firebird-wasm`'s `execBatch`). Since `firebird-wasm` 0.4
+a number is bound in binary, so every double, positions and momentum included, comes back bit
+for bit. Written out as decimal text, Firebird's parser lands about one fraction in ten a bit off:
+the save test measures both. Maps and resources load the same way, about three times faster than
+the `EXECUTE BLOCK`s of `INSERT`s they replaced: Freedoom 2's resources in 83 ms instead of 484,
+MAP11 in 1.1 s instead of 3.3.
+
 ### Demos
 
 A demo is the input of a game (after `G_RecordDemo`/`G_DoPlayDemo`, in this port's own format,

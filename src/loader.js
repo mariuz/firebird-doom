@@ -31,11 +31,6 @@ const itemMessage = (sprite, strings) => {
   return m ? (strings.get(m[0]) ?? m[1]).replace(/\n/g, ' ').slice(0, 80) : sprite;
 };
 
-const lit = (v) =>
-  v === null || v === undefined ? 'NULL'
-    : typeof v === 'number' ? (Number.isFinite(v) ? String(v) : 'NULL')
-      : `'${String(v).replace(/'/g, "''")}'`;
-
 /**
  * REJECT, re-cut into one row per sector: [sector, hex digits of the sectors
  * it can't see (digit k: sectors 4k–4k+3, lowest bit first)]. A short lump
@@ -58,16 +53,16 @@ export function rejectRows(bytes, n) {
   return rows;
 }
 
-/** Bulk insert: one EXECUTE BLOCK per chunk, so one Worker round trip each. */
-// Each INSERT is one "context" and a block may hold at most 256 of them.
-export async function insertRows(db, table, cols, rows, chunk = 200) {
-  for (let i = 0; i < rows.length; i += chunk) {
-    const body = rows
-      .slice(i, i + chunk)
-      .map((r) => `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${r.map(lit).join(', ')});`)
-      .join('\n');
-    await db.exec(`SET TERM ^ ;\nEXECUTE BLOCK AS BEGIN\n${body}\nEND^\nSET TERM ; ^`);
-  }
+/**
+ * Bulk insert: one INSERT prepared once and run for every row, in one call to
+ * the engine (firebird-wasm's execBatch, on Firebird's IBatch). The values are
+ * bound as parameters, numbers in binary, so a double lands exactly – written
+ * out as text, Firebird's parser puts about one fraction in ten a bit off.
+ */
+export async function insertRows(db, table, cols, rows) {
+  if (!rows.length) return;
+  const bound = rows.map((r) => r.map((v) => (v === undefined || (typeof v === 'number' && !Number.isFinite(v)) ? null : v)));
+  await db.execBatch(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, bound);
 }
 
 export async function createSchema(db, sql) {
