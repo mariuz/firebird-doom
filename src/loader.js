@@ -159,14 +159,20 @@ export async function setRenderer(db, useBsp) {
 /**
  * P_SetupLevel: map NAME into Firebird. PLAYERS (a netgame: 2–4) sets how
  * many players the game has; left out, it keeps what the game had (1 to start).
- * DEATHMATCH (0 co-op, 1, 2 for -altdeath) and TIMER (-timer, minutes) likewise.
+ * DEATHMATCH (0 co-op, 1, 2 for -altdeath) and TIMER (-timer, minutes) likewise, and
+ * the launch options NOMONSTERS, RESPAWN and FAST (0 or 1).
  * SEED sets P_RANDOM's state before the map loads (left out: it carries on).
  */
-export async function loadMap(db, wad, res, name, { skill = 3, newGame = true, players = null, deathmatch = null, timer = null, seed = null } = {}) {
+export async function loadMap(db, wad, res, name, {
+  skill = 3, newGame = true, players = null, deathmatch = null, timer = null, nomonsters = null, respawn = null, fast = null, seed = null,
+} = {}) {
   const m = wad.map(name);
   if (players != null) await db.exec(`UPDATE game SET players = ${Math.max(1, Math.min(4, players | 0))} WHERE id = 1`);
   if (deathmatch != null) await db.exec(`UPDATE game SET deathmatch = ${Math.max(0, Math.min(2, deathmatch | 0))} WHERE id = 1`);
   if (timer != null) await db.exec(`UPDATE game SET time_limit = ${Math.max(0, timer | 0)} WHERE id = 1`);
+  for (const [col, v] of [['nomonsters', nomonsters], ['respawn', respawn], ['fast', fast]]) {
+    if (v != null) await db.exec(`UPDATE game SET ${col} = ${v ? 1 : 0} WHERE id = 1`);
+  }
   const tex = (n) => (n && n !== '-' ? res.texId.get(n) ?? 0 : 0);
   const flat = (n) => res.flatId.get(n) ?? null;
 

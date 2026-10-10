@@ -8,7 +8,6 @@ items as they land, and add what you find missing.
 
 In the order they'd be noticed. The vanilla features first:
 
-- **Netgame launch options** (Simulation): `-nomonsters`, `-respawn`, `-fast` for the panel.
 - **Netgame chat** (Screens): `hu_stuff.c`'s T to talk, the chat macros, the colour-named players.
 - **The automap in netgames** (Rendering): every player's arrow in co-op, only your own in
   deathmatch.
@@ -98,11 +97,10 @@ Everything else below is done.
 - ~~**PWADs.**~~ Done: PWADs on top of the main WAD (`-file`, with flats and sprites merged as
   `-merge` does), and a `.deh` patch (`-deh`). They're remembered across reloads too (IndexedDB, with
   their main WAD).
-- **Netgame launch options.** Vanilla's setup screen (and command line) had `-nomonsters` (no
-  monsters at all), `-respawn` (monsters come back, as on Nightmare) and `-fast` (Nightmare's
-  monster speed) for any netgame. Three checkboxes in the panel, sent in the start message like
-  the game type and timer; in SQL, `GAME` columns that `INIT_MAP` (skip the monsters) and
-  `WORLD_TIC` (the Nightmare paths, already there) read.
+- ~~**Netgame launch options.**~~ Done: `-nomonsters`, `-respawn` and `-fast` as three checkboxes
+  in the panel, sent in the start message like the game type and timer, kept in `GAME` for
+  `INIT_MAP` (no monsters), `WORLD_TIC` (the respawns) and `MONSTERS_THINK` (the Nightmare
+  speed, which `-fast` now shares) to read.
 
 ## Rendering
 

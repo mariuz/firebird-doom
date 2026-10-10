@@ -2250,8 +2250,8 @@ DECLARE spd DOUBLE PRECISION;
 DECLARE flight DOUBLE PRECISION;
 BEGIN
   SELECT speed FROM thing_types WHERE thing_type = :mtype INTO spd;
-  -- Nightmare (-fast): imp, cacodemon and baron fireballs fly at 20
-  IF (mtype IN (9000, 9001, 9002) AND (SELECT g.skill FROM game g WHERE g.id = 1) = 5) THEN spd = 20;
+  -- Nightmare or -fast: imp, cacodemon and baron fireballs fly at 20
+  IF (mtype IN (9000, 9001, 9002) AND EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND (g.skill = 5 OR g.fast = 1))) THEN spd = 20;
   EXECUTE PROCEDURE spawn_thing(mtype, sx + COS(ang) * (rad + 8), sy + SIN(ang) * (rad + 8), sz + 32, ang)
     RETURNING_VALUES mid;
   -- momz = (dest z − source z) / tics of flight: feet to feet, so a missile
@@ -2690,6 +2690,7 @@ DECLARE fl SMALLINT;
 DECLARE grav SMALLINT;
 DECLARE nsec INTEGER;
 DECLARE skill SMALLINT;
+DECLARE fast SMALLINT;
 DECLARE pinvis SMALLINT;
 DECLARE tshadow SMALLINT;
 DECLARE shadowed SMALLINT;
@@ -2702,6 +2703,8 @@ DECLARE hitp SMALLINT;
 BEGIN
   SELECT g.skill FROM game g WHERE g.id = 1 INTO skill;
   SELECT g.players FROM game g WHERE g.id = 1 INTO nplayers;
+  -- G_InitNew: Nightmare plays as -fast (and -fast as Nightmare, for the monsters)
+  fast = IIF(skill = 5 OR EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.fast = 1), 1, 0);
 
   FOR SELECT t.id, t.kind, t.x, t.y, t.z, t.angle, t.st, t.st_tics, t.st_len, t.step, t.reaction,
              t.radius, t.height, t.momx, t.momy, t.owner_id, t.flags, t.frame, t.momz,
@@ -2978,7 +2981,7 @@ BEGIN
       BEGIN
         st = 'chase';
         st_tics = 0;
-        reaction = IIF(skill = 5, 0, 3);   -- (A_Chase: Nightmare attacks again at once)
+        reaction = IIF(fast = 1, 0, 3);    -- (A_Chase: on Nightmare or -fast, attacks again at once)
       END
     END
     ELSE IF (k = 'fx') THEN
@@ -3148,7 +3151,7 @@ BEGIN
       BEGIN
         st = 'chase';
         st_tics = 0;
-        reaction = IIF(skill = 5, 0, 2);   -- (Nightmare: no hesitation)
+        reaction = IIF(fast = 1, 0, 2);    -- (Nightmare, -fast: no hesitation)
         -- A_Look: the Spider Mastermind and the Cyberdemon are heard at full volume
         IF (ttype IN (7, 16)) THEN EXECUTE PROCEDURE play_sound(see_snd, NULL, NULL, NULL);
         ELSE EXECUTE PROCEDURE play_sound(see_snd, id, x, y);
@@ -3158,7 +3161,7 @@ BEGIN
     BEGIN
       st_tics = st_tics - 1;
       ang = ATAN2(py - y, px - x);
-      idx = MINVALUE(CHAR_LENGTH(atk_fr) - 1, (st_len - st_tics) / IIF(skill = 5 AND ttype IN (3002, 58), 4, 8));
+      idx = MINVALUE(CHAR_LENGTH(atk_fr) - 1, (st_len - st_tics) / IIF(fast = 1 AND ttype IN (3002, 58), 4, 8));
       frame = SUBSTRING(atk_fr FROM 1 + idx FOR 1);
       -- A_FatAttack1/2/3: the mancubus fires three volleys of two fireballs,
       -- as each "H" frame of its GHI GHI GHI G attack begins. FATSPREAD is
@@ -3265,7 +3268,7 @@ BEGIN
       BEGIN
         st = 'chase';
         st_tics = 0;
-        reaction = IIF(skill = 5, 0, 3);   -- (A_Chase: Nightmare attacks again at once)
+        reaction = IIF(fast = 1, 0, 3);    -- (A_Chase: on Nightmare or -fast, attacks again at once)
       END
     END
     ELSE IF (st = 'chase') THEN
@@ -3273,8 +3276,8 @@ BEGIN
       st_tics = st_tics - 1;
       IF (st_tics <= 0) THEN
       BEGIN
-        -- Nightmare (-fast) halves the demons' run states: double speed
-        st_tics = IIF(skill = 5 AND ttype IN (3002, 58), 1 + MOD(step, 2), IIF(spd >= 10, 3, 4));
+        -- Nightmare and -fast halve the demons' run states: double speed
+        st_tics = IIF(fast = 1 AND ttype IN (3002, 58), 1 + MOD(step, 2), IIF(spd >= 10, 3, 4));
         step = step + 1;
         frame = SUBSTRING(walk_fr FROM 1 + MOD(step, CHAR_LENGTH(walk_fr)) FOR 1);
         IF (reaction > 0) THEN reaction = reaction - 1;
@@ -3355,8 +3358,8 @@ BEGIN
         ELSE IF (pdead = 0 AND reaction = 0 AND dist < 2048
             AND ((atk_kind = 'melee' AND dist < melee_range)
                  OR (melee_fr IS NOT NULL AND dist < melee_range)
-                 -- a missile attack waits for MOVECOUNT to run out (not on Nightmare)
-                 OR ((movecount = 0 OR skill = 5) AND (
+                 -- a missile attack waits for MOVECOUNT to run out (not on Nightmare or -fast)
+                 OR ((movecount = 0 OR fast = 1) AND (
                     (atk_kind IN ('hitscan', 'missile')
                      AND (dist < melee_range OR p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 2)))
                     -- P_CheckMissileRange: the arch-vile only reaches 14 × 64 units
@@ -3378,7 +3381,7 @@ BEGIN
           BEGIN
             st = 'attack';
             IF (atk_kind <> 'melee') THEN just_attacked = 1;   -- (a missile state)
-            st_len = IIF(atk_kind = 'skull', 10, CHAR_LENGTH(atk_fr) * IIF(skill = 5 AND ttype IN (3002, 58), 4, 8));
+            st_len = IIF(atk_kind = 'skull', 10, CHAR_LENGTH(atk_fr) * IIF(fast = 1 AND ttype IN (3002, 58), 4, 8));
             st_tics = st_len;
             frame = SUBSTRING(atk_fr FROM 1 FOR 1);
             IF (ttype = 67) THEN EXECUTE PROCEDURE play_sound('DSMANATK', id, x, y);
@@ -3705,7 +3708,8 @@ AS
 BEGIN
   EXECUTE PROCEDURE movers_think;
   EXECUTE PROCEDURE monsters_think(tic);
-  IF (MOD(tic, 32) = 0 AND (SELECT g.skill FROM game g WHERE g.id = 1) = 5) THEN
+  -- (G_InitNew: respawnmonsters on Nightmare, or with -respawn)
+  IF (MOD(tic, 32) = 0 AND EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND (g.skill = 5 OR g.respawn = 1))) THEN
     EXECUTE PROCEDURE nightmare_respawn(tic);
   IF (MOD(tic, 2) = 0) THEN EXECUTE PROCEDURE lights_think(tic);
   IF ((SELECT g.deathmatch FROM game g WHERE g.id = 1) = 2) THEN EXECUTE PROCEDURE respawn_specials(tic);
@@ -3887,6 +3891,7 @@ END^
 CREATE OR ALTER PROCEDURE init_map (map_name VARCHAR(8), skill_bit INTEGER, new_game SMALLINT, skill SMALLINT = 3)
 AS
 DECLARE np SMALLINT;
+DECLARE nomon SMALLINT;
 DECLARE dm SMALLINT;
 DECLARE i SMALLINT;
 DECLARE tid INTEGER;
@@ -3997,7 +4002,7 @@ BEGIN
   EXECUTE PROCEDURE spawn_door_specials;
 
   -- the players in the game: rows 1…GAME.PLAYERS
-  SELECT g.players, g.deathmatch FROM game g WHERE g.id = 1 INTO np, dm;
+  SELECT g.players, g.deathmatch, g.nomonsters FROM game g WHERE g.id = 1 INTO np, dm, nomon;
   DELETE FROM player p WHERE p.id > :np;
   i = 1;
   WHILE (i <= np) DO
@@ -4017,6 +4022,7 @@ BEGIN
     FROM map_things m JOIN thing_types tt ON tt.thing_type = m.ttype
    WHERE (BIN_AND(m.flags, 16) = 0 OR :np > 1) AND BIN_AND(m.flags, :skill_bit) <> 0 AND tt.kind <> 'player'
      AND NOT (:dm > 0 AND tt.pickup = 'key')            -- (MF_NOTDMATCH: no keys in deathmatch)
+     AND NOT (:nomon = 1 AND (tt.count_kill = 1 OR m.ttype = 3006))   -- (-nomonsters: P_SpawnMapThing skips MF_COUNTKILL and the lost soul)
    ORDER BY m.id;                                       -- (the same ids on every load)
   DELETE FROM respawn_queue;
   -- G_DoLoadLevel: the frags start over with the level

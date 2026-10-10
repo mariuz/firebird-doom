@@ -362,6 +362,64 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
     'co-op: keys on the map, no cards given, players at their own starts; a placed shotgun stays and gives five clips here too');
 }
 
+// ── the launch options: -nomonsters, -respawn, -fast ──
+{
+  // -nomonsters: P_SpawnMapThing leaves out MF_COUNTKILL things and lost souls
+  const placed = (await one("SELECT COUNT(*) n FROM map_things m JOIN thing_types tt ON tt.thing_type = m.ttype WHERE tt.count_kill = 1 OR m.ttype = 3006")).N;
+  await loadMap(db, wad, res, map, { skill: 3, players: 2, deathmatch: 0, nomonsters: 1 });
+  const left = (await one("SELECT COUNT(*) n FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE tt.count_kill = 1 OR t.thing_type = 3006")).N;
+  const g = await one('SELECT nomonsters, respawn, fast, total_kills, total_items FROM game');
+  assert(placed > 0 && left === 0 && g.NOMONSTERS === 1 && g.RESPAWN === 0 && g.FAST === 0 && g.TOTAL_KILLS === 0 && g.TOTAL_ITEMS > 0,
+    `-nomonsters: none of the map's ${placed} monsters spawn, nothing to kill, the items still there (P_SpawnMapThing)`);
+  await tic([IDLE, IDLE]);
+  assert((await one("SELECT COUNT(*) n FROM things WHERE kind = 'monster'")).N === 0, 'and the game runs without them');
+
+  // -fast: Nightmare's monsters at any skill (G_InitNew's fastparm)
+  await loadMap(db, wad, res, map, { skill: 3, players: 2, nomonsters: 0, fast: 1 });
+  const m0 = await thing(1);
+  await db.exec("UPDATE things SET st = 'dead', solid = 0 WHERE kind = 'monster'");   // (quiet: the rest stay out of it)
+  const imp = await spawn(3001, m0.X - 200, m0.Y);
+  await db.exec(`EXECUTE PROCEDURE monster_missile(${imp}, 9000, ${m0.X + 300}, ${m0.Y + 300}, ${m0.Z}, 20, 0, ${m0.X + 500}, ${m0.Y + 300}, ${m0.Z})`);
+  const ball = await one('SELECT SQRT(momx * momx + momy * momy) v FROM things WHERE thing_type = 9000 ORDER BY id DESC ROWS 1');
+  await db.exec('DELETE FROM things WHERE thing_type = 9000');
+  const spawnReaction = (await one("SELECT MAX(reaction) r FROM things WHERE kind = 'monster' AND spawn_x IS NOT NULL")).R;
+  const stepsAt = async (fast) => {
+    await db.exec(`UPDATE game SET fast = ${fast} WHERE id = 1`);
+    const demon = await spawn(3002, m0.X + 96, m0.Y);
+    const steps = [];
+    for (let i = 0; i < 6; i++) {
+      await db.exec(`UPDATE things SET st = 'chase', st_tics = 1, reaction = 9, hp = 1000 WHERE id = ${demon}`);
+      await tic([IDLE, IDLE]);
+      steps.push((await one(`SELECT st_tics FROM things WHERE id = ${demon}`)).ST_TICS);
+    }
+    await db.exec(`DELETE FROM things WHERE id = ${demon}`);
+    return steps;
+  };
+  const quick = await stepsAt(1);
+  const usual = await stepsAt(0);
+  assert(Math.abs(ball.V - 20) < 0.01 && quick.every((s) => s >= 1 && s <= 2) && usual.every((s) => s === 3) && spawnReaction === 2,
+    `-fast at skill 3: imp fireballs at ${ball.V.toFixed(0)}, demons step every 1–2 tics (${quick.join(' ')}; without it ${usual.join(' ')}), but the monsters keep their reaction time (P_SpawnMobj: Nightmare alone drops it)`);
+
+  // -respawn: a corpse rises as on Nightmare (G_InitNew's respawnmonsters)
+  await loadMap(db, wad, res, map, { skill: 3, players: 2, fast: 0, respawn: 1 });
+  await db.exec("DELETE FROM things WHERE kind = 'monster'");
+  await db.exec('DELETE FROM sound_events');
+  const r0 = await thing(1);
+  const corpse = await spawn(3001, r0.X + 64, r0.Y);
+  await db.exec(`UPDATE things SET st = 'dead', hp = 0, solid = 0, frame = 'M', dead_tic = 0, spawn_x = x, spawn_y = y, spawn_angle = 1.5 WHERE id = ${corpse}`);
+  // the next P_RANDOM is 0 from this state (the tic's only draw is P_NightmareRespawn's 4-in-256 roll), at a tic that's a multiple of 32
+  const rise = async (respawn) => {
+    await db.exec(`UPDATE game SET tic = 1023, rng = 2088216195, respawn = ${respawn} WHERE id = 1`);
+    await tic([IDLE, IDLE]);
+    return (await one(`SELECT st, hp, solid, dead_tic FROM things WHERE id = ${corpse}`));
+  };
+  const stays = await rise(0);
+  const up = await rise(1);
+  const tele = (await one("SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSTELEPT'")).N;
+  assert(stays.ST === 'dead' && up.ST === 'idle' && up.HP === 60 && up.SOLID === 1 && up.DEAD_TIC === null && tele === 1,
+    `-respawn at skill 3: the imp's corpse stays down without it, and rises with it at tic 1024, in teleport fog (P_NightmareRespawn)`);
+}
+
 // and alone it's still player 1 and DOOM_TIC
 await loadMap(db, wad, res, map, { skill: 3, players: 1 });
 const n = (await one('SELECT COUNT(*) n FROM player')).N;

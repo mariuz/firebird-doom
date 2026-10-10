@@ -22,7 +22,12 @@ CREATE TABLE game (
   skill         SMALLINT DEFAULT 3 NOT NULL,    -- 1 (easiest) … 5 (nightmare: fast, respawning)
   players       SMALLINT DEFAULT 1 NOT NULL,    -- players in the game (netgame: more than 1); ids 1…players
   deathmatch    SMALLINT DEFAULT 0 NOT NULL,    -- 0 single player or co-op, 1 deathmatch, 2 -altdeath (items respawn)
-  time_limit    INTEGER DEFAULT 0 NOT NULL      -- -timer: minutes until the level ends on its own (0: never)
+  time_limit    INTEGER DEFAULT 0 NOT NULL,     -- -timer: minutes until the level ends on its own (0: never)
+  -- the launch options of a netgame (any skill): -nomonsters, -respawn
+  -- (monsters come back as on Nightmare), -fast (Nightmare's monster speed)
+  nomonsters    SMALLINT DEFAULT 0 NOT NULL,
+  respawn       SMALLINT DEFAULT 0 NOT NULL,
+  fast          SMALLINT DEFAULT 0 NOT NULL
 );
 
 -- player->frags[]: who killed whom this level (a player's own row and column

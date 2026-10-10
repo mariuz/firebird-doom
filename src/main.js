@@ -570,7 +570,10 @@ async function startMapNow(name, newGame, { skill = settings.skill, seed = null,
   const t0 = performance.now();
   // P_RANDOM's seed: a demo's own, or a fresh one for a new game (a new level carries on)
   const s = seed ?? (newGame ? 1 + Math.floor(Math.random() * 2147483646) : null);
-  await loadMap(db, wad, res, name, { skill, newGame, players: net?.players ?? 1, deathmatch: net?.deathmatch ?? 0, timer: net?.timer ?? 0, seed: s });
+  await loadMap(db, wad, res, name, {
+    skill, newGame, players: net?.players ?? 1, deathmatch: net?.deathmatch ?? 0, timer: net?.timer ?? 0,
+    nomonsters: net?.nomonsters ?? 0, respawn: net?.respawn ?? 0, fast: net?.fast ?? 0, seed: s,
+  });
   await db.exec(`UPDATE viewcfg SET player_id = ${net?.me ?? 1} WHERE id = 1`);   // (consoleplayer)
   lastSeed = s;
   map = { name, skyTex: skyFor(name) };
@@ -681,8 +684,11 @@ async function netStats() {
   return { players, me: net.me, deathmatch: net.deathmatch };
 }
 
-/** G_InitNew for a netgame: everyone the same map, skill and seed; me is this browser's player. */
-async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, timer = 0 }, links) {
+/**
+ * G_InitNew for a netgame: everyone the same map, skill, seed and options
+ * (-nomonsters, -respawn, -fast); me is this browser's player.
+ */
+async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, timer = 0, nomonsters = 0, respawn = 0, fast = 0 }, links) {
   if (recorder) finishRecording();
   demoPlayer = null;
   paused = false;
@@ -690,7 +696,7 @@ async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, tim
     if (to === 'all') for (const l of links.values()) l.send(m);
     else links.get(to)?.send(m);
   };
-  net = { me, players, deathmatch, timer, links, ls: new Lockstep({ me, players, send }), sums: new Map() };
+  net = { me, players, deathmatch, timer, nomonsters, respawn, fast, links, ls: new Lockstep({ me, players, send }), sums: new Map() };
   netWait = 0;
   for (const [pid, link] of links) {
     link.onmessage = (m) => net?.links === links && net.ls.receive(pid, m);
@@ -784,7 +790,8 @@ $('net-connect').addEventListener('click', async () => {
         // (from the network: check it all before it goes anywhere near the game)
         const ok = m.wad === wadKey && wad.mapNames().includes(m.map) && [1, 2, 3, 4, 5].includes(m.skill)
           && Number.isInteger(m.seed) && Number.isInteger(m.you) && m.you >= 2 && m.you <= m.players && m.players <= MAX_PLAYERS
-          && [0, 1, 2].includes(m.dm) && Number.isInteger(m.timer) && m.timer >= 0 && m.timer < 1000;
+          && [0, 1, 2].includes(m.dm) && Number.isInteger(m.timer) && m.timer >= 0 && m.timer < 1000
+          && [m.nomonsters, m.respawn, m.fast].every((v) => v === 0 || v === 1);
         if (!ok) {
           l.send({ t: 'desync', why: `player ${m.you} has another WAD loaded` });
           netPanel(`The host is playing ${String(m.wad).split('|')[0]}: load that, and join again.`);
@@ -794,7 +801,9 @@ $('net-connect').addEventListener('click', async () => {
         lobby.role = null;
         $('net-mode').value = String(m.dm);
         $('net-timer').value = String(m.timer);
-        beginNet({ me: m.you, players: m.players, mapName: m.map, skill: m.skill, seed: m.seed, deathmatch: m.dm, timer: m.timer }, new Map([[1, l]]))
+        for (const o of NET_OPTIONS) $(`net-${o}`).checked = m[o] === 1;
+        beginNet({ me: m.you, players: m.players, mapName: m.map, skill: m.skill, seed: m.seed, deathmatch: m.dm, timer: m.timer,
+          nomonsters: m.nomonsters, respawn: m.respawn, fast: m.fast }, new Map([[1, l]]))
           .catch((err) => setStatus(err.message, true));
       };
       l.onclose = () => { if (!net) { lobby.guest = null; lobby.role = null; netPanel('The host went away.'); } };
@@ -803,6 +812,8 @@ $('net-connect').addEventListener('click', async () => {
     netPanel(`That didn't work: ${err.message}`);
   }
 });
+// the launch options (-nomonsters, -respawn, -fast): a checkbox each, the host's choice for all
+const NET_OPTIONS = ['nomonsters', 'respawn', 'fast'];
 $('net-start').addEventListener('click', () => {
   if (lobby.role !== 'host' || !lobby.links.length || !db || !wad) return;
   const players = lobby.links.length + 1;
@@ -811,11 +822,12 @@ $('net-start').addEventListener('click', () => {
   const seed = 1 + Math.floor(Math.random() * 2147483646);
   const dm = Number($('net-mode').value) || 0;
   const timer = Math.max(0, Math.min(999, Number($('net-timer').value) || 0));
+  const opts = Object.fromEntries(NET_OPTIONS.map((o) => [o, $(`net-${o}`).checked ? 1 : 0]));
   const links = new Map(lobby.links.map(({ pid, link }) => [pid, link]));
   lobby.invite?.cancel();
   Object.assign(lobby, { role: null, links: [], invite: null, guest: null });
-  for (const [pid, link] of links) link.send({ t: 'start', you: pid, players, map: mapName, skill, seed, wad: wadKey, dm, timer });
-  beginNet({ me: 1, players, mapName, skill, seed, deathmatch: dm, timer }, links).catch((err) => setStatus(err.message, true));
+  for (const [pid, link] of links) link.send({ t: 'start', you: pid, players, map: mapName, skill, seed, wad: wadKey, dm, timer, ...opts });
+  beginNet({ me: 1, players, mapName, skill, seed, deathmatch: dm, timer, ...opts }, links).catch((err) => setStatus(err.message, true));
 });
 $('net-leave').addEventListener('click', () => {
   const was = !!net;
@@ -1364,7 +1376,7 @@ async function boot() {
       addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await reloadWads(); },
       useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await reloadWads(); },
       get demo() { return { recording: !!recorder, playing: !!demoPlayer && !attract, attract, played: demoPlayer?.index ?? 0, last: lastDemo }; },
-      get net() { return net && { me: net.me, players: net.players, deathmatch: net.deathmatch, timer: net.timer, tic: net.ls.executed, error: net.ls.error, sums: Object.fromEntries(net.sums) }; },
+      get net() { return net && { me: net.me, players: net.players, deathmatch: net.deathmatch, timer: net.timer, nomonsters: net.nomonsters, respawn: net.respawn, fast: net.fast, tic: net.ls.executed, error: net.ls.error, sums: Object.fromEntries(net.sums) }; },
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },
       get melting() { return !!melt; },

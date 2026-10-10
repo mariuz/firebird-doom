@@ -3,8 +3,8 @@
 // the Co-op panel, Start, both browsers in the same game (each through its
 // own player's eyes), the guest's keys moving the guest on both screens, the
 // consistency checks agreeing for hundreds of tics, and the host told when
-// the guest leaves. Then a deathmatch: the mode and timer from the panel,
-// the players at deathmatch starts with every key, a frag in both games.
+// the guest leaves. Then a deathmatch: the mode, timer and launch options from
+// the panel, the players at deathmatch starts with every key, a frag in both games.
 //
 //   npm run test:coop
 //
@@ -211,6 +211,8 @@ try {
   await until(host, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 30000);
   await host.selectOption('#net-mode', '1');
   await host.fill('#net-timer', '5');
+  // (and the launch options: -nomonsters and -fast on, -respawn off)
+  await host.evaluate(() => { for (const o of ['nomonsters', 'fast']) document.getElementById(`net-${o}`).checked = true; });
   await host.evaluate(() => document.getElementById('net-start').click());
   for (const p of [host, guest]) {
     try {
@@ -226,11 +228,16 @@ try {
   }
   const dm = await Promise.all([host, guest].map((p) => p.evaluate(async () => ({
     net: window.doom.net,
-    game: (await window.doom.sql('SELECT deathmatch, time_limit, map_name FROM game'))[0],
+    game: (await window.doom.sql('SELECT deathmatch, time_limit, map_name, nomonsters, respawn, fast FROM game'))[0],
     players: await window.doom.sql('SELECT p.id, p.keycards, t.x, t.y FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id'),
     starts: await window.doom.sql('SELECT x, y FROM map_things WHERE ttype = 11'),
+    monsters: (await window.doom.sql("SELECT COUNT(*) n FROM things WHERE kind = 'monster'"))[0].N,
     mode: document.getElementById('net-mode').value, timer: document.getElementById('net-timer').value,
+    boxes: ['nomonsters', 'respawn', 'fast'].map((o) => document.getElementById(`net-${o}`).checked),
   }))));
+  assert(dm.every((d) => d.net.nomonsters === 1 && d.net.respawn === 0 && d.net.fast === 1 && d.game.NOMONSTERS === 1 && d.game.RESPAWN === 0 && d.game.FAST === 1
+    && d.monsters === 0 && JSON.stringify(d.boxes) === '[true,false,true]'),
+    `the host's launch options reach the guest's panel and both games: -nomonsters (${dm.map((d) => d.monsters).join('/')} monsters) and -fast on, -respawn off`);
   const onStart = (d) => d.players.every((p) => d.starts.some((s) => s.X === p.X && s.Y === p.Y));
   assert(dm.every((d) => d.net.deathmatch === 1 && d.net.timer === 5 && d.game.DEATHMATCH === 1 && d.game.TIME_LIMIT === 5 && d.mode === '1' && d.timer === '5'
     && onStart(d) && d.players.every((p) => p.KEYCARDS === 7)) && JSON.stringify(dm[0].players) === JSON.stringify(dm[1].players),

@@ -733,6 +733,16 @@ that many minutes, through the intermission to the next map. The frags start ove
 as in DOOM. Not in DOOM, and not here: a frag limit, and an obituary when someone dies. No deathmatch
 starts in a map means the player starts instead (DOOM refuses a map with fewer than four).
 
+The three checkboxes beside the timer are DOOM's launch options, the host's choice for everyone,
+at any skill: **No monsters** is `-nomonsters` (`P_SpawnMapThing` leaves out everything that
+counts as a kill, and the lost souls, so there's nothing to kill and the intermission says so),
+**Respawn** is `-respawn` (dead monsters get back up as on Nightmare, `P_NightmareRespawn`) and
+**Fast** is `-fast` (the monsters move and attack at Nightmare's pace: demons at double speed,
+imp, cacodemon and baron fireballs at 20, no waiting between attacks; only Nightmare itself also
+takes away their reaction time when they spawn, as in `P_SpawnMobj`). They go in the start
+message with the game type and timer, and sit in `GAME` (`NOMONSTERS`, `RESPAWN`, `FAST`) for
+`INIT_MAP`, `WORLD_TIC` and `MONSTERS_THINK` to read, where Nightmare already took those paths.
+
 The others look as they did in DOOM. Each player's sprite goes through `info.c`'s `S_PLAY` states,
 moved on a tic at a time by `PLAYER_ANIM`: standing (A), running (A to D, 4 tics a frame), a shot
 (F, the muzzle flash, for 6 tics, then E for 12), pain (G), dying (H to N) or, below -100 health,
