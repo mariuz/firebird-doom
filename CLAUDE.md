@@ -58,8 +58,9 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   paragraph, a commit on `main` with a descriptive message, a push, and a green CI run (`gh run
   watch`). End commit messages with the attribution line the harness gives you.
 - **The browser test** (`scripts/browser-test.mjs`) drives the real page. Waiting for a new level:
-  `doom.screen` reads `level` while the next map is still loading, so wait for `doom.melting` to
-  start and then to stop (every level load melts in). Playwright is pinned to the version whose
+  `doom.screen` reads `level` while the next map is still loading, and melts queue up (a level
+  loaded behind another screen's melt gets its own after), so wait for `doom.settled` (the screen
+  shown is the current one and no melt is running) before pressing keys – a melt drops them. Playwright is pinned to the version whose
   Chromium is installed here (`/opt/pw-browsers`); CI installs its own.
 - **Check live when you can.** The desktop app's browser pane runs the dev server. The game loop
   pauses while the page is hidden (`document.hidden`), so if the pane is hidden, say so and verify

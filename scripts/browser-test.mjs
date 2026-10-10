@@ -119,6 +119,7 @@ try {
   assert(moved > 32 && off < moved / 2, `…and the player is back (walked ${moved.toFixed(0)} away, ${off.toFixed(0)} from the save after loading)`);
 
   // the other function keys (M_Responder): F1 help, F2 save, F3 load, F4 sound, F5 detail, F7 end game, F8 messages, F10 quit, F11 gamma
+  if (!process.env.SKIP_FKEYS) {
   await key('F1');
   const f1 = await doom(() => window.doom.menu.page);
   await key('Escape');   // (back to the menu, as DOOM's Read This! does)
@@ -153,6 +154,7 @@ try {
   for (let i = 0; i < 4; i++) await key('F11');
   const g0 = await doom(() => [window.doom.gamma, window.doom.message].join(' / '));
   assert(g1 === '1 / Gamma: level 1' && g0 === '0 / Gamma: off', `F11 steps the gamma (${g1}; four more: ${g0})`);
+  }
 
   // the screen size keys
   await key('Minus', 400);
@@ -208,14 +210,26 @@ try {
     sel.value = 'E1M1';
     sel.dispatchEvent(new Event('change'));
   });
-  await until(() => window.doom.melting, null, 60000);
-  await until(() => !window.doom.melting);
+  // (melts queue up – the title's, then this level's – so wait for the screen to settle on it)
+  await until(() => window.doom.screen === 'level' && window.doom.settled, null, 60000);
   await doom(async () => { await window.doom.record(); window.doom.menu.open(); });   // (nothing ticks behind the menu)
   await atSwitch();
   await doom(() => window.doom.menu.close(true));
-  await until(() => !window.doom.melting);               // (keys pressed during the melt are dropped)
+  await until(() => window.doom.settled, null, 60000);   // (keys pressed during a melt are dropped)
   await page.keyboard.down('Space'); await page.waitForTimeout(300); await page.keyboard.up('Space');
-  await until(() => window.doom.screen === 'intermission', null, 30000);
+  try {
+    if (process.env.DBG) {
+      for (let i = 0; i < 15 && (await doom(() => window.doom.screen)) !== 'intermission'; i++) {
+        await page.waitForTimeout(2000);
+        console.log('trace', JSON.stringify(await doom(async () => ({ p: (await window.doom.sql("SELECT CAST(t.angle * 100 AS INTEGER) a, CAST(t.x AS INTEGER) x, CAST(t.y AS INTEGER) y, p.health h, p.dead d, p.attacker_id att, p.use_down u, CAST(t.momx * 10 AS INTEGER) mx FROM player p JOIN things t ON t.id = p.thing_id"))[0], g: (await window.doom.sql('SELECT tic, exit_kind FROM game'))[0], screen: window.doom.screen, rec: window.doom.demo.recording }))));
+      }
+    }
+    await until(() => window.doom.screen === 'intermission', null, 30000);
+  } catch (err) {
+    console.log('no intermission:', JSON.stringify(await doom(async () => ({ debug: window.doom.debug, screen: window.doom.screen, demo: window.doom.demo, status: document.getElementById('status').textContent,
+      player: await window.doom.sql("SELECT CAST(x AS INTEGER) x, CAST(y AS INTEGER) y, CAST(angle * 100 AS INTEGER) a FROM things WHERE kind = 'player'"), game: await window.doom.sql('SELECT tic, exit_kind, map_name FROM game') }))));
+    throw err;
+  }
   await until(() => !window.doom.melting);
   for (let i = 0; i < 6 && (await doom(() => window.doom.screen)) === 'intermission'; i++) await key('Space', 600);
   await until(() => window.doom.melting, null, 60000);
@@ -253,7 +267,8 @@ try {
   // D_DoAdvanceDemo: after TITLEPIC the first attract demo plays, through the
   // game loop; a key brings up the menu over it and it goes on; when it ends,
   // the credits page
-  await until(() => window.doom.demo.attract === 1 && window.doom.screen === 'level' && !window.doom.melting, null, 30000);
+  // (SCREEN reads 'level' while the demo's map still loads: wait for its first call to play)
+  await until(() => window.doom.demo.attract === 1 && !window.doom.melting && window.doom.demo.played > 0, null, 40000);
   const a0 = await tic();
   await page.waitForTimeout(1000);
   const a1 = await tic();

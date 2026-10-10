@@ -305,6 +305,7 @@ async function startAttract(n) {
   // (not while players are gathering for a netgame, or in one: the map is theirs)
   if (!demo || demo.wad !== wadKey || !wad.mapNames().includes(demo.map) || net || lobby.role) { title.advance(); return; }
   attract = n;
+  frameStarting = true;
   try {
     await startMap(demo.map, true, { skill: demo.skill, seed: demo.seed, keepDemo: true, attract: true, fromFrame: true });
     if (attract !== n || !title) return;   // (a game started meanwhile)
@@ -313,7 +314,7 @@ async function startAttract(n) {
     attract = 0;
     title?.advance();
     throw err;
-  }
+  } finally { frameStarting = false; }
   updateDemoButtons();
 }
 
@@ -546,8 +547,10 @@ async function startMapNow(name, newGame, { skill = settings.skill, seed = null,
   if (net && !netgame) leaveNet('you started another game');
   running = false;
   // (a start from outside the loop – the menu, the panel, a message – waits for
-  // the frame in flight: its queries must be done before the tables go)
-  if (inFrame && !fromFrame) await inFrame.catch(() => {});
+  // the frame in flight: its queries must be done before the tables go. Not
+  // for a frame that's waiting on a start of its own, queued behind this one.)
+  if (inFrame && !fromFrame && !frameStarting) await inFrame.catch(() => {});
+  if (forTitle && !attract) return;   // (the title loop's demo, called off while it waited its turn)
   levelSerial++;
   finale = null;
   intermission = null;
@@ -605,7 +608,10 @@ async function nextLevel(name, newGame) {
     else endPlayback(demoPlayer.done ? 'the demo is over' : 'it is out of step with the game');
   }
   const rec = recorder;
-  await startMap(name, newGame, { seed, keepDemo: true, netgame: !!net, fromFrame: true });
+  frameStarting = true;
+  try {
+    await startMap(name, newGame, { seed, keepDemo: true, netgame: !!net, fromFrame: true });
+  } finally { frameStarting = false; }
   rec?.push(['map', name, lastSeed, newGame ? 1 : 0]);
 }
 
@@ -836,6 +842,7 @@ function nextFrame() {
 
 let frames = 0;         // (frame() calls, for the tests' diagnostics)
 let inFrame = null;     // the frame in flight (a map load waits for it: its queries must not meet the DELETEs)
+let frameStarting = false;   // …unless that frame is itself waiting on a map start (its queries are done)
 let loopAlive = false;  // frame() keeps scheduling itself until an error stops it; a map start revives it
 function frame() {
   inFrame = frameNow().finally(() => { inFrame = null; });
@@ -1351,16 +1358,19 @@ async function boot() {
       get menu() { return menu; },
       get automap() { return { view: amView, open: showMap, message: amMsg?.text ?? null }; },
       get gamma() { return settings.gamma; },
-      get debug() { return { running, paused, frames, loopAlive, menu: !!menu?.active, melt: !!melt, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, error: net.ls.error } }; },
+      get debug() { return { running, paused, frames, loopAlive, levelSerial, shownState, menu: !!menu?.active, melt: !!melt, keys: [...keys], mouseTurn, showMap, amFollow: amView?.follow, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, error: net.ls.error } }; },
       get message() { return amMsg?.text ?? hud?.MSG ?? null; },
       get files() { return { base: baseWad?.label, pwads: pwads.map((p) => p.name), deh: dehPatch?.name ?? null }; },
       addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await reloadWads(); },
       useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await reloadWads(); },
-      get demo() { return { recording: !!recorder, playing: !!demoPlayer && !attract, attract, last: lastDemo }; },
+      get demo() { return { recording: !!recorder, playing: !!demoPlayer && !attract, attract, played: demoPlayer?.index ?? 0, last: lastDemo }; },
       get net() { return net && { me: net.me, players: net.players, deathmatch: net.deathmatch, timer: net.timer, tic: net.ls.executed, error: net.ls.error, sums: Object.fromEntries(net.sums) }; },
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },
       get melting() { return !!melt; },
+      // the screen shown is the current one, no melt pending or running (melts queue up: a
+      // level loaded behind another's melt gets its own after)
+      get settled() { return !melt && shownState === screenState(); },
       get screen() { return screenState().replace(/ \d+$/, ''); },   // title, level, intermission, finale
       finale(name, secret = false) {
         if (!Finale.available(wad, name, secret)) return `no screen after ${name}${secret ? "'s secret exit" : ''} in this WAD`;
