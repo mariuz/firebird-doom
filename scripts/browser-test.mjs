@@ -14,10 +14,61 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { MouseInput, moveCommand, mouseRate, MOUSEX_RAD } from '../src/mouse.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
 const assert = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) failures++; };
+
+// G_BuildTiccmd's mouse, before the page: DOOM's buttons from the browser's, the
+// double click, the strafe, mousey, and the clamp to MAXPLMOVE
+{
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  const turnOnly = new MouseInput();
+  turnOnly.move(10, 0);
+  const t = turnOnly.take(1);
+  assert(near(t.turn, -10 * 0.0035) && t.side === 0 && t.forward === 0 && near(mouseRate(5) * MOUSEX_RAD, 0.0035),
+    `the mouse's X turns as it always did here (${t.turn.toFixed(4)} rad for 10 pixels at sensitivity 5)`);
+  const st = new MouseInput();
+  st.button(2, true);                  // (the browser's right button: DOOM's button 2)
+  st.move(10, 0);
+  const s1 = st.take(1);
+  assert(s1.strafe && s1.turn === 0 && near(s1.side, 20 * mouseRate(5)), `button 2 held: the X strafes instead (side += mousex × 2: ${s1.side.toFixed(1)} units)`);
+  const fw = new MouseInput();
+  fw.button(1, true);                  // (the middle button: DOOM's button 3)
+  const f1 = fw.take(1);
+  const f2 = fw.take(1, { run: 1 });
+  assert(f1.forward === 25 && f2.forward === 50 && !f1.fire, 'button 3 held: forwardmove, 25 walking and 50 running');
+  const quick = new MouseInput();
+  quick.button(0, true);
+  quick.button(0, false);
+  assert(quick.take(1).fire && !quick.take(1).fire, 'a click between two frames still fires once');
+  const my = new MouseInput();
+  my.move(0, -10);
+  const off = my.take(1);
+  my.move(0, -10);
+  const on = my.take(1, { mousey: true });
+  assert(off.forward === 0 && near(on.forward, 10 * mouseRate(5)), `the mouse's Y walks only with the option on (${on.forward.toFixed(1)} units for 10 pixels up)`);
+  // a double click on button 3 is use (dclicktime > 1 between changes, both within 20 tics)
+  const clicks = (gaps) => {
+    const m = new MouseInput();
+    let uses = 0;
+    m.take(30);
+    for (const [down, frames] of gaps) {
+      m.button(1, down);
+      for (let i = 0; i < frames; i++) if (m.take(2).use) uses++;
+    }
+    return uses;
+  };
+  const dbl = clicks([[true, 2], [false, 2], [true, 3], [false, 3]]);
+  const slow = clicks([[true, 2], [false, 15], [true, 3], [false, 3]]);
+  assert(dbl === 1 && slow === 0, `a double click on button 3 uses once (${dbl}); with half a second between, not at all (${slow})`);
+  const c1 = moveCommand(50, 0, 0);
+  const c2 = moveCommand(10, 0, 0);
+  const c3 = moveCommand(100, -100, 0);
+  assert(c1.fwd === 1 && c1.run === 1 && c2.fwd === 0.4 && c2.run === 0 && c3.fwd === 1 && c3.side === -1 && c3.run === 1,
+    'past walking speed the ticcmd says running, and it all clamps to MAXPLMOVE (50)');
+}
 
 const port = await new Promise((resolve) => {
   const s = net.createServer().listen(0, () => { const p = s.address().port; s.close(() => resolve(p)); });
@@ -161,6 +212,48 @@ try {
   const small = await doom(() => window.doom.renderer.scaledW);
   await key('Equal', 400);
   assert(small === 288 && await doom(() => window.doom.renderer.scaledW) === 320, `- shrinks the view (${small} wide), = grows it back`);
+
+  // the mouse in play (as under pointer lock): button 2 strafes, button 3 walks, the X turns
+  {
+    const facing = () => doom(() => window.doom.sql("SELECT x, y, angle FROM things WHERE kind = 'player'").then((r) => r[0]));
+    const still = () => doom(() => window.doom.sql("UPDATE things SET momx = 0, momy = 0 WHERE kind = 'player'"));
+    const along = (a, b) => {   // how far from A to B, forward and to the right of A's facing
+      const dx = b.X - a.X;
+      const dy = b.Y - a.Y;
+      return { fwd: dx * Math.cos(a.ANGLE) + dy * Math.sin(a.ANGLE), right: dx * Math.sin(a.ANGLE) - dy * Math.cos(a.ANGLE) };
+    };
+    await doom(() => window.doom.sql("UPDATE things SET hp = 0, st = 'dead', solid = 0 WHERE kind = 'monster'"));
+    await still();
+    const a0 = await facing();
+    await doom(() => window.doom.mouse.button(2, true));
+    for (let i = 0; i < 6; i++) { await doom(() => window.doom.mouse.move(4, 0)); await page.waitForTimeout(50); }
+    await page.waitForTimeout(300);   // (a frame takes the last move before the button goes up: after, it would turn)
+    await doom(() => window.doom.mouse.button(2, false));
+    await page.waitForTimeout(300);
+    const a1 = await facing();
+    const s1 = along(a0, a1);
+    await doom((p) => window.doom.sql(`UPDATE things SET x = ${p.X}, y = ${p.Y}, momx = 0, momy = 0 WHERE kind = 'player'`), a0);   // (back to the open floor)
+    await page.waitForTimeout(100);
+    const a1b = await facing();
+    const held = await tic();
+    await doom(() => window.doom.mouse.button(1, true));
+    for (let i = 0; i < 100 && (await tic()) < held + 8; i++) await page.waitForTimeout(20);
+    await doom(() => window.doom.mouse.button(1, false));
+    await page.waitForTimeout(300);
+    const a2 = await facing();
+    const s2 = along(a1b, a2);
+    await still();
+    await page.waitForTimeout(100);
+    const a2b = await facing();
+    await doom(() => window.doom.mouse.move(40, 0));
+    await page.waitForTimeout(200);
+    const a3 = await facing();
+    if (process.env.DBG) console.log(JSON.stringify({ a0, a1, a2, a3, s1, s2 }));
+    assert(s1.right > 8 && Math.abs(s1.fwd) < s1.right / 3 && a1.ANGLE === a0.ANGLE,
+      `right button held, the mouse moved right: a strafe to the right (${s1.right.toFixed(0)} units), no turn`);
+    assert(s2.fwd > 8 && Math.abs(s2.right) < s2.fwd / 3 && a2.ANGLE === a1.ANGLE, `middle button held: forward (${s2.fwd.toFixed(0)} units)`);
+    assert(a3.ANGLE !== a2b.ANGLE && Math.hypot(a3.X - a2b.X, a3.Y - a2b.Y) < 2, 'no button: the mouse turns, as before');
+  }
 
   // the automap
   await key('Tab', 300);

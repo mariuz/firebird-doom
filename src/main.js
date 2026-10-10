@@ -27,6 +27,7 @@ import { createPresenter } from './present.js';
 import { Melt } from './wipe.js';
 import { Lockstep, createInvite, acceptInvite, MAX_PLAYERS } from './net.js';
 import { Chat, chatStrings, HU_MSGTIMEOUT } from './chat.js';
+import { MouseInput, moveCommand } from './mouse.js';
 
 const $ = (id) => document.getElementById(id);
 let canvas = $('screen');   // replaced by a fresh element when the display kind changes
@@ -47,7 +48,7 @@ let running = false;
 let paused = false;
 let lastTic = 0;
 // settings, remembered per browser
-const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, synth: 'opl2', display: 'webgl', smooth: false, skill: 3, messages: true, mouse: 5, screenSize: 10, gamma: 0 };
+const settings = { game: 'freedoom1', detail: 'high', renderer: 'bsp', audio: true, sfx: 70, music: 50, synth: 'opl2', display: 'webgl', smooth: false, skill: 3, messages: true, mouse: 5, mousey: false, screenSize: 10, gamma: 0 };
 try {
   Object.assign(settings, JSON.parse(localStorage.getItem('firebird-doom:settings') || '{}'));
 } catch { /* storage unavailable: defaults */ }
@@ -120,8 +121,9 @@ function setStatus(msg, isError = false) {
 
 // ── input ────────────────────────────────────────────────────────────────
 const keys = new Set();
-let mouseTurn = 0;
-let fireClick = false;
+let mouseTurn = 0;                   // (touch: the right half's drag)
+let fireClick = false;               // (touch: a tap on the right half)
+const mouse = new MouseInput();      // the mouse under pointer lock: its moves and DOOM's three buttons
 let weaponSel = 0;
 const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
   'Space', 'KeyE', 'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'Tab', 'Digit1', 'Digit2',
@@ -219,20 +221,23 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyM' && !showMap) setAudio(!settings.audio);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
-window.addEventListener('blur', () => keys.clear());
+window.addEventListener('blur', () => { keys.clear(); mouse.release(); });
 function bindCanvas(c) {
   c.addEventListener('click', () => {
     // (some embedded browsers refuse pointer lock; the keyboard still works)
     if (running && document.pointerLockElement !== c) c.requestPointerLock?.()?.catch?.(() => {});
   });
   c.addEventListener('mousedown', (e) => {
-    if (document.pointerLockElement === c && e.button === 0) fireClick = true;
+    if (document.pointerLockElement !== c) return;
+    e.preventDefault();
+    mouse.button(e.button, true);
   });
+  c.addEventListener('contextmenu', (e) => { if (document.pointerLockElement === c) e.preventDefault(); });
   c.addEventListener('touchstart', touchStart, { passive: false });
   c.addEventListener('touchmove', touchMove, { passive: false });
   c.addEventListener('touchend', touchEnd, { passive: false });
 }
-window.addEventListener('mouseup', () => { fireClick = false; });
+window.addEventListener('mouseup', (e) => mouse.button(e.button, false));
 // letting go of the mouse in play (Esc, or switching away) brings up the menu, as Esc would
 document.addEventListener('pointerlockchange', () => {
   if (!document.pointerLockElement && running && menu && !menu.active && !title) {
@@ -448,7 +453,7 @@ function makeMenu() {
 }
 window.addEventListener('mousemove', (e) => {
   // (mouse sensitivity 0–9 from the Options menu; 5 is the old fixed rate)
-  if (document.pointerLockElement === canvas) mouseTurn -= e.movementX * 0.0035 * ((settings.mouse + 1) / 6);
+  if (document.pointerLockElement === canvas) mouse.move(e.movementX, e.movementY, settings.mouse);
 });
 
 // Touch: left half moves, right half turns, tap on the right fires.
@@ -514,18 +519,27 @@ function readInput(tics) {
   const arrow = (c) => !panning && k(c);
   let fwd = (k('KeyW') || arrow('ArrowUp') ? 1 : 0) - (k('KeyS') || arrow('ArrowDown') ? 1 : 0);
   let side = (k('KeyD') || k('Period') ? 1 : 0) - (k('KeyA') || k('Comma') ? 1 : 0);
-  const turnKeys = (arrow('ArrowLeft') ? 1 : 0) - (arrow('ArrowRight') ? 1 : 0);
-  const run = k('ShiftLeft') || k('ShiftRight') ? 1 : 0;
+  let turnKeys = (arrow('ArrowLeft') ? 1 : 0) - (arrow('ArrowRight') ? 1 : 0);
+  let run = k('ShiftLeft') || k('ShiftRight') ? 1 : 0;
   if (touch.move) {
     fwd = Math.max(-1, Math.min(1, -touch.move.dy / 40));
     side = Math.max(-1, Math.min(1, touch.move.dx / 40));
   }
+  // G_BuildTiccmd's mouse: button 2 held strafes (the turn keys too), button 3
+  // moves forward, a double click on either uses; the X turns or strafes, the Y
+  // (if chosen) walks. Then forward and side clamp to MAXPLMOVE
+  const m = mouse.take(tics, { run, mousey: settings.mousey });
+  if (m.strafe) {
+    side -= turnKeys;
+    turnKeys = 0;
+  }
+  if (m.forward || m.side) ({ fwd, side, run } = moveCommand(fwd * (run ? 50 : 25) + m.forward, side * (run ? 50 : 25) + m.side, run));
   // angleturn 640/1280 per tic in DOOM ≈ 0.061 / 0.123 rad
-  const turn = turnKeys * (run ? 0.123 : 0.07) * tics + mouseTurn;
+  const turn = turnKeys * (run ? 0.123 : 0.07) * tics + mouseTurn + m.turn;
   mouseTurn = 0;
-  const fire = k('ControlLeft') || k('ControlRight') || (k('KeyF') && !showMap) || fireClick ? 1 : 0;
+  const fire = k('ControlLeft') || k('ControlRight') || (k('KeyF') && !showMap) || fireClick || m.fire ? 1 : 0;
   if (fireClick === 'tap') fireClick = false;
-  const use = k('Space') || k('KeyE') || k('TapUse') ? 1 : 0;
+  const use = k('Space') || k('KeyE') || k('TapUse') || m.use ? 1 : 0;
   keys.delete('TapUse');
   const w = weaponSel;
   weaponSel = 0;
@@ -1412,6 +1426,8 @@ async function boot() {
       get menu() { return menu; },
       get automap() { return { view: amView, open: showMap, message: amMsg?.text ?? null, arrows: amArrows }; },
       get gamma() { return settings.gamma; },
+      // the mouse, for tests: DOM-style moves and buttons, as under pointer lock
+      mouse: { move: (dx, dy) => mouse.move(dx, dy, settings.mouse), button: (b, down) => mouse.button(b, down) },
       get debug() { return { running, paused, frames, loopAlive, levelSerial, shownState, menu: !!menu?.active, melt: !!melt, keys: [...keys], mouseTurn, showMap, amFollow: amView?.follow, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, error: net.ls.error } }; },
       get message() { return amMsg?.text ?? hud?.MSG ?? null; },
       get files() { return { base: baseWad?.label, pwads: pwads.map((p) => p.name), deh: dehPatch?.name ?? null }; },
@@ -1609,6 +1625,8 @@ $('saves-file').addEventListener('change', async (e) => {
 updateDemoButtons();
 $('display').value = settings.display;
 $('smooth').checked = settings.smooth;
+$('mousey').checked = settings.mousey;
+$('mousey').addEventListener('change', (e) => { settings.mousey = e.target.checked; saveSettings(); });
 $('display').addEventListener('change', (e) => {
   settings.display = e.target.value;
   saveSettings();

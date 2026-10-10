@@ -982,9 +982,18 @@ launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggl
 <kbd>3</kbd> again the super shotgun. A change takes the old weapon down and the new one up. <kbd>Tab</kbd> shows the
 automap (type IDDT on it to reveal everything), <kbd>P</kbd> pauses, <kbd>Esc</kbd> opens the menu, and the function keys do what DOOM's do: <kbd>F1</kbd> help, <kbd>F2</kbd> save, <kbd>F3</kbd> load, <kbd>F4</kbd> sound volume, <kbd>F5</kbd> detail, <kbd>F6</kbd>/<kbd>F9</kbd> quicksave and quickload, <kbd>F7</kbd> end game, <kbd>F8</kbd> messages on/off, <kbd>F10</kbd> quit, <kbd>F11</kbd> gamma correction. Under the view you can set **Detail** (320 or 160 columns),
 **Renderer** (BSP + solidsegs, or brute force), **Skill** (1–5), **Display** (WebGL palette shader or Canvas 2D),
-**Smooth upscaling**, **Audio** on/off (<kbd>M</kbd>), and **Sound** and **Music** volume. These settings
+**Smooth upscaling**, **Mouse moves forward**, **Audio** on/off (<kbd>M</kbd>), and **Sound** and **Music** volume. These settings
 are remembered in your browser. The SQL console under the game queries the live game
 database. Try the `IDKFA` button.
+
+The mouse works as `G_BuildTiccmd` has it, with DOOM's default buttons. The left button fires.
+Holding the right button (DOOM's button 2) turns the mouse's sideways motion into a strafe, and
+the turn keys strafe too while it's held. Holding the middle button (button 3) walks forward. A
+double click on either is use, as in DOOM: two presses with each change more than a tic after
+the last, within 20 tics. Strafing and walking can add up to more than the keys give, up to
+DOOM's limit (`MAXPLMOVE`, running speed). In DOOM, pushing the mouse forward walked you forward
+(`mousey`). Most players turned that off, so here it's **Mouse moves forward**, off unless you
+choose it. `src/mouse.js` holds the mouse's half of the ticcmd.
 
 ## Deploying
 

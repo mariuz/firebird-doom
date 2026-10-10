@@ -6,12 +6,8 @@ items as they land, and add what you find missing.
 
 ## Still open
 
-In the order they'd be noticed. The vanilla features first:
-
-- **Mouse buttons 2 and 3** (Game flow and menus): strafe and forward; mouse-Y movement as an
-  option.
-
-Then the engineering:
+The vanilla features on this list are all done. What's left is engineering, in the order it
+would be noticed:
 
 - **Performance** of `FRAME_WALLS` (Rendering): ~22–33 ms a frame, with outliers near 90 ms; a
   measured plan is written there.
@@ -51,10 +47,9 @@ Everything else below is done.
 - ~~**The function keys.**~~ Done: `M_Responder`'s F1 help, F2 save, F3 load, F4 sound volume,
   F5 detail, F7 end game, F8 messages, F10 quit and F11 gamma, each with its sound and message,
   through the menu's entry points (`openReadThis`, `openSave`, …).
-- **Mouse buttons 2 and 3.** Vanilla's defaults: button 2 strafes (held: the mouse's X moves you
-  sideways), button 3 moves forward; and the mouse's Y moved the player (`mousey`), which most
-  people turned off (the "novert" hacks). The buttons are a line each in `readInput`; mouse-Y
-  movement as a remembered setting, off by default, with a note that vanilla had it on.
+- ~~**Mouse buttons 2 and 3.**~~ Done (`src/mouse.js`): button 2 held strafes (the X, and the
+  turn keys), button 3 walks, a double click on either uses, all clamped to `MAXPLMOVE`; the
+  mouse's Y walking (`mousey`) is the **Mouse moves forward** setting, off by default.
 
 ## Simulation (`sql/game.sql`)
 
