@@ -9,8 +9,10 @@ items as they land, and add what you find missing.
 The vanilla features on this list are all done. What's left is engineering, in the order it
 would be noticed:
 
-- **Performance** of `FRAME_WALLS` (Rendering): ~22 ms a frame now (from ~26), nothing at all
-  while standing still; what's left of the plan is written there.
+- **Performance** of `FRAME_WALLS` (Rendering): ~21 ms a frame now (from ~26), nothing at all
+  while standing still. The plan's three steps are done or measured out; what's left is the
+  engine's own work (~17 ms: the BSP walk, the projection, the clip), with the ideas tried
+  written there.
 - **Save compatibility** (Tooling): a fixture of older saves, loaded by the current code.
 - **A TURN relay** for multiplayer behind strict NATs (needs a server; the page has none): a
   Cloudflare Worker minting TURN credentials, with short room codes for the invites.
@@ -108,10 +110,16 @@ Everything else below is done.
   - ~~(b)~~ Done, exactly: while the view and the sectors' heights are unchanged, the page draws
     the last answer again (0 ms standing still). Reusing it when the view has moved only a little
     would draw something Firebird didn't decide, so it isn't done.
-  - (c) Open, outside this repo: the same query without sending any rows takes 17.9 ms, so a
-    binary transfer could save at most ~3.7 ms of the 21.6. `firebird-wasm` 0.4 binds parameters
-    in binary but still sends results as JSON ("a typed binary result ABI" is on its own list);
-    the page is on 0.4.1, using the binary parameters and `execBatch` for loads and saves.
+  - ~~(c)~~ Measured and not worth doing. Timed inside `firebird-wasm` 0.4.1 (E1M1–E1M3 and
+    E2M2, 32 views): of `FRAME_WALLS`' ~20 ms, the browser's side – copying the JSON out of the
+    heap and parsing it – is ~0.5 ms; the rest is the engine. Returning rows at all costs ~1.3 µs
+    a row whatever they hold (three integer columns: +1.5 ms over a bare `COUNT(*)`), and
+    doubles cost no more than integers (two double columns +2.1 ms, the same cast to integers
+    +2.2 ms), so formatting them isn't the cost either. A binary result encoding would remove
+    the formatting and parsing, ~0.5–1 ms of the 20, and keep the per-row fetch. That agrees
+    with `firebird-wasm`'s own plan (`docs/plans/typed-results.md` in `mariuz/electric-firebird`),
+    which argues against replacing its JSON results. The page is on 0.4.1, using its binary
+    parameters and `execBatch` for loads and saves.
   What's left is the work itself: the BSP walk and column projection ~10–11 ms, and
   `RENDER_WALLS`' sort and clip ~3 ms. `DOOM_TIC` was halved by keying the BLOCKMAP by cell (10 ms
   on average over E1M1–E1M3 and E2M2, from 22). Tried and measured no better: shaving statements
