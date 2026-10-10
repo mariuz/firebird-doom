@@ -127,5 +127,6 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 | Save and load | `src/savegame.js` (what's saved: its `WHOLE`/`MOVING` lists; **add a column there if the simulation starts changing a new one**), `saveToSlot`/`loadFromSlot` in `main.js` |
 | DeHackEd, rules a patch can change | `src/dehacked.js`, the `RULES` table (SQL reads it instead of hard-coding those numbers) |
 | Demos | `src/demo.js`; recording and playback in `main.js` (`startRecording`, `playDemo`, the frame loop); the title loop's in `scripts/record-attract.mjs` (`startAttract` in `main.js`) |
+| Netgame chat | `src/chat.js` (`hu_stuff.c`'s responder, queue and ticker); the `chatchar` rides as the ticcmd's 8th field in `netTics` |
 | Title screen, menus, options | `src/menu.js`; the actions (new game, settings) are wired in `main.js`'s `makeMenu` |
 | Previewing screens in the browser | `doom.finale('E3M8')`, `doom.intermission('E2M3', 'E2M4')` in the console |

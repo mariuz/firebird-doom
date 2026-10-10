@@ -1,7 +1,8 @@
 // net.js – co-op over the network, the way DOOM played it: lockstep.
 //
 // Nothing about the game crosses the wire but each player's ticcmd, once a
-// tic: [fwd, side, turn, fire, use, weapon, run]. Every peer runs the same
+// tic: [fwd, side, turn, fire, use, weapon, run, chatchar] (the last, a chat
+// character, for hu_stuff.c: chat.js). Every peer runs the same
 // simulation (Firebird's NET_TIC) on the same commands from the same start,
 // and the same game unfolds on every screen – what d_net.c did over IPX.
 //
@@ -16,7 +17,7 @@
 // (the host's invite, the guest's reply): an SDP offer and answer, sent once
 // ICE gathering has finished, through a public STUN server.
 
-export const NET_VERSION = 1;
+export const NET_VERSION = 2;   // (2: the launch options, and the chatchar in the ticcmd)
 export const MAX_PLAYERS = 4;
 const IDLE = [0, 0, 0, 0, 0, 0, 0];
 

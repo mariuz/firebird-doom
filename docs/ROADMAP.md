@@ -8,7 +8,6 @@ items as they land, and add what you find missing.
 
 In the order they'd be noticed. The vanilla features first:
 
-- **Netgame chat** (Screens): `hu_stuff.c`'s T to talk, the chat macros, the colour-named players.
 - **The automap in netgames** (Rendering): every player's arrow in co-op, only your own in
   deathmatch.
 - **Mouse buttons 2 and 3** (Game flow and menus): strafe and forward; mouse-Y movement as an
@@ -152,11 +151,10 @@ Everything else below is done.
   placeholders. Check them with a real `doom.wad`: `doom.intermission('E1M3', 'E1M4')` in the
   console. Better: let `intermission-test` and `finale-test` take `WAD=` pointing at an id WAD
   (never shipped), so whoever has one runs the check in a minute.
-- **Netgame chat.** `hu_stuff.c`: T opens a line to everyone (and, in vanilla, G/I/B/R to one
-  player), Alt+0–9 send the chat macros (`chatmacros[]`, the `HUSTR_CHATMACRO` defaults, or a
-  PWAD's), and a message shows as "Green: …" by the sender's colour (`player_names[]`). The text
-  travels with the lockstep (a message in the ticcmd stream, as DOOM's `BT_SPECIAL`/`BTS_…`
-  carried it, or alongside it), drawn over the view like the game's own messages.
+- ~~**Netgame chat.**~~ Done: `hu_stuff.c`'s T to everyone, G/I/B/R to one player (with three
+  or more), Alt+0–9 the macros (our own defaults, a DEHACKED's `HUSTR_CHATMACRO`s over them), the
+  sender named by the DEHACKED's `player_names[]`. The text goes a character a tic in the ticcmd's
+  `chatchar`, as DOOM sent it (`src/chat.js`).
 - ~~**Screen wipe.**~~ Done ([src/wipe.js](../src/wipe.js)): the column melt between the title,
   the game, the intermission and the endings, and on every level load.
 - **Doom I endings' text with id's WADs.** They go straight to the art. They could borrow Freedoom

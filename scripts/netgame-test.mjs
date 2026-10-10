@@ -11,6 +11,7 @@ import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
 import { captureGame } from '../src/savegame.js';
 import { Lockstep } from '../src/net.js';
+import { Chat, chatStrings, HU_BROADCAST } from '../src/chat.js';
 import { TRANSLATIONS } from '../src/renderer.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -418,6 +419,69 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   const tele = (await one("SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSTELEPT'")).N;
   assert(stays.ST === 'dead' && up.ST === 'idle' && up.HP === 60 && up.SOLID === 1 && up.DEAD_TIC === null && tele === 1,
     `-respawn at skill 3: the imp's corpse stays down without it, and rises with it at tic 1024, in teleport fog (P_NightmareRespawn)`);
+}
+
+// ── chat (hu_stuff.c): a character a tic in the ticcmd, put together on the other side ──
+{
+  const said = { 1: [], 2: [], 3: [] };
+  const peer = (me, players = 3, strings) => new Chat({ me, players, strings, say: (text, forMe) => said[me].push([text, !!forMe]) });
+  const [a, b, c] = [peer(1), peer(2), peer(3)];
+  const type = (chat, keys) => keys.map((k) => (Array.isArray(k) ? chat.key(k[0], true) : chat.key(k)));
+  // a tic: each peer's next chatchar, the same set to every peer (as the lockstep delivers it)
+  const run = (n = 200) => {
+    for (let i = 0; i < n; i++) {
+      const chars = [a, b, c].map((p) => p.dequeue());
+      for (const p of [a, b, c]) p.ticker(chars);
+    }
+  };
+  const ate = type(a, ['t', 'h', 'i', 'Backspace', 'e', 'y', ' ', '1', 'ArrowUp', '{', 'Enter']);
+  assert(ate.join() === 'true,true,true,true,true,true,true,true,false,false,true' && !a.on,
+    'T opens the line, letters, space, digits, Backspace and Enter are taken; an arrow key and a { go on to the game (HUlib_keyInIText)');
+  assert(a.queue.length === 9 && a.queue[0] === HU_BROADCAST, `the line queues for the ticcmds: the destination (everyone) first, then 8 characters (${a.queue.length})`);
+  run();
+  assert(JSON.stringify(said[1]) === '[["HEY 1",false]]' && JSON.stringify(said[2]) === '[["g:HEY 1",true]]' && JSON.stringify(said[3]) === '[["g:HEY 1",true]]',
+    `the sender sees their own line, the others "g:HEY 1" by the sender's colour, for them, with the beep (${JSON.stringify(said)})`);
+  // to one player: B is player 3 (brown); player 2 hears nothing
+  for (const k of Object.keys(said)) said[k] = [];
+  type(a, ['b', 'p', 's', 't', 'Enter']);
+  run();
+  assert(said[3].length === 1 && said[3][0][0] === 'g:PST' && said[2].length === 0, 'B talks to brown alone: player 3 hears it, player 2 doesn\'t');
+  // your own colour's key: talking to yourself, and the game still sees the key
+  for (const k of Object.keys(said)) said[k] = [];
+  const self = a.key('g');
+  assert(self === false && !a.on && said[1].length === 1 && a.queue.length === 0, `G for green, as green: "${said[1][0]?.[0]}", and no chat (HUSTR_TALKTOSELF)`);
+  // two players: G/I/B/R aren't chat keys at all
+  const two = new Chat({ me: 1, players: 2 });
+  assert(two.key('i') === false && !two.on && two.key('t') === true && two.on, 'with two players only T talks (the colour keys need three)');
+  // Alt+digit: a macro, after an Enter that sends what was typed so far
+  for (const k of Object.keys(said)) said[k] = [];
+  type(b, ['t', 'o', 'k', ['3']]);
+  run();
+  const macro = chatStrings().macros[3];
+  assert(!b.on && JSON.stringify(said[2]) === JSON.stringify([[macro, false]])
+    && JSON.stringify(said[1].map((m) => m[0])) === JSON.stringify(['i:OK', `i:${macro.toUpperCase()}`]),
+    `Alt+3 sends "${macro}" (chat_macros[3]), and first what was typed: ${JSON.stringify(said[1].map((m) => m[0]))}`);
+  // Escape closes the line without an Enter: the others keep what came, and it leads the next one (as in DOOM)
+  for (const k of Object.keys(said)) said[k] = [];
+  type(c, ['t', 'a', 'b', 'Escape']);
+  run();
+  type(c, ['t', 'c', 'Enter']);
+  run();
+  assert(said[1].length === 1 && said[1][0][0] === 'b:ABC', `Escape drops the line here, not there: the next one arrives as "${said[1][0]?.[0]}"`);
+  // a DEHACKED names the players and the macros
+  const deh = chatStrings(new Map([['HUSTR_PLRGREEN', 'Verde: '], ['HUSTR_CHATMACRO0', 'Nein']]));
+  const d1 = peer(1, 2, deh);
+  const d2 = peer(2, 2, deh);
+  for (const k of Object.keys(said)) said[k] = [];
+  d1.key('t'); d1.key('0', true);
+  for (let i = 0; i < 20; i++) { const ch = [d1.dequeue(), d2.dequeue()]; d1.ticker(ch); d2.ticker(ch); }
+  assert(said[2].length === 1 && said[2][0][0] === 'Verde: NEIN' && said[1][0][0] === 'Nein', `a DEHACKED's HUSTR_PLRGREEN and HUSTR_CHATMACRO0: "${said[2][0]?.[0]}"`);
+  // the line holds 80 characters, the queue 127
+  const long = peer(1);
+  long.key('t');
+  for (let i = 0; i < 200; i++) long.key('x');
+  assert(long.line.text.length === 80 && long.queue.length === 127 && said[1].at(-1)[0] === chatStrings().unsent,
+    `a long line stops at 80 characters (HU_MAXLINELENGTH); the queue at 127, then "${chatStrings().unsent}" (HUSTR_MSGU)`);
 }
 
 // and alone it's still player 1 and DOOM_TIC

@@ -26,6 +26,7 @@ import { DoomAudio, musicLumpFor } from './audio.js';
 import { createPresenter } from './present.js';
 import { Melt } from './wipe.js';
 import { Lockstep, createInvite, acceptInvite, MAX_PLAYERS } from './net.js';
+import { Chat, chatStrings, HU_MSGTIMEOUT } from './chat.js';
 
 const $ = (id) => document.getElementById(id);
 let canvas = $('screen');   // replaced by a fresh element when the display kind changes
@@ -162,6 +163,13 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     openMenu();
     return;
+  }
+  // HU_Responder (G_Responder, in a level): T talks to everyone, G/I/B/R to one
+  // player; while the line is open it takes what it can type, and the rest
+  // still reaches the game. (Alt+digit by the key's place, whatever Alt makes it type.)
+  if (net?.chat && !intermission && !finale) {
+    const k = e.altKey && /^Digit\d$/.test(e.code) ? e.code.slice(5) : e.key;
+    if (net.chat.key(k, e.altKey)) { e.preventDefault(); return; }
   }
   if (GAME_KEYS.has(e.code)) e.preventDefault();
   keys.add(e.code);
@@ -638,7 +646,10 @@ async function netTics(tics) {
   const [, fwd, side, turn, fire, use, w, run] = readInput(tics);
   if (net.ls.error) return false;
   const mine = menu?.active ? IDLE_CMD : [fwd, side, turn / tics, fire, use, w, run];
-  for (let i = 0; i < tics && net.ls.canSubmit(); i++) net.ls.submit(i === 0 ? mine : [...mine.slice(0, 5), 0, mine[6]]);
+  // (G_BuildTiccmd: each tic's command carries the next chat character, cmd->chatchar)
+  for (let i = 0; i < tics && net.ls.canSubmit(); i++) {
+    net.ls.submit([...(i === 0 ? mine : [...mine.slice(0, 5), 0, mine[6]]), net.chat.dequeue()]);
+  }
   let ran = 0;
   while (ran < 12) {
     const r = net.ls.take();
@@ -651,6 +662,7 @@ async function netTics(tics) {
       ${rows.map((v) => `INSERT INTO ticcmd (player_id, fwd, side, turn, fire, use_key, weapon_sel, run) VALUES (${v.join(', ')});`).join('\n')} END`);
     hud = (await db.query('SELECT * FROM net_tic', [], { rowMode: 'object' })).rows[0];
     lastFire = rows[net.me - 1][4] === 1;
+    net.chat.ticker(r.cmds.map((c) => num(c[7], 0, 127) | 0));   // (HU_Ticker)
     ran++;
     // the consistency check (d_net.c's consistancy): the host compares everyone's
     if (r.tic % 35 === 0) {
@@ -696,7 +708,9 @@ async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, tim
     if (to === 'all') for (const l of links.values()) l.send(m);
     else links.get(to)?.send(m);
   };
-  net = { me, players, deathmatch, timer, nomonsters, respawn, fast, links, ls: new Lockstep({ me, players, send }), sums: new Map() };
+  const strings = chatStrings(parseDehStrings(wad.dehacked() + '\n' + (dehPatch?.text ?? '')));
+  const chat = new Chat({ me, players, strings, say: chatSay });
+  net = { me, players, deathmatch, timer, nomonsters, respawn, fast, links, chat, ls: new Lockstep({ me, players, send }), sums: new Map() };
   netWait = 0;
   for (const [pid, link] of links) {
     link.onmessage = (m) => net?.links === links && net.ls.receive(pid, m);
@@ -1090,6 +1104,9 @@ async function frameNow() {
     if (amMsg && amMsg.tics <= 0) amMsg = null;
     const msg = amMsg?.text ?? hud.MSG;
     if (msg && (settings.messages || amMsg?.always)) drawText(renderer, msg, 2, 2);
+    // (w_chat: HU_INPUTY, a line of the font below the message)
+    const typing = net?.chat?.shown;
+    if (typing) drawText(renderer, typing, 2, 2 + (renderer.pictureByName('STCFN065')?.h ?? 7) + 1);
     if (paused) drawText(renderer, 'PAUSED', 136, 80);
     if ((net || attract) && menu?.active) {
       for (let i = 0; i < tics; i++) menu.tick();
@@ -1134,6 +1151,19 @@ function amSay(key) {
 }
 
 /** A message of the page's own (F5, F8, F11), like the game's; ALWAYS shows it even with messages off (message_dontfuckwithme) */
+/**
+ * A chat line: your own as a message like any other; another player's for
+ * you stays up (message_nottobefuckedwith), shows with messages off, and
+ * beeps: DSRADIO in DOOM II, DSTINK in DOOM.
+ */
+function chatSay(text, forMe = false) {
+  amMsg = { text, tics: HU_MSGTIMEOUT, always: forMe };
+  if (forMe) {
+    const lump = wad.mapNames().some((m) => m.startsWith('MAP')) ? 'DSRADIO' : 'DSTINK';
+    audio.playEvents([[0, lump, 'menu', null, null]], { x: 0, y: 0, angle: 0 });
+  }
+}
+
 function pageSay(text, always = false) {
   amMsg = { text, tics: 4 * 35, always };
 }
@@ -1376,6 +1406,7 @@ async function boot() {
       addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await reloadWads(); },
       useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await reloadWads(); },
       get demo() { return { recording: !!recorder, playing: !!demoPlayer && !attract, attract, played: demoPlayer?.index ?? 0, last: lastDemo }; },
+      get chat() { return net && { on: net.chat.on, line: net.chat.line.text, queued: net.chat.queue.length }; },
       get net() { return net && { me: net.me, players: net.players, deathmatch: net.deathmatch, timer: net.timer, nomonsters: net.nomonsters, respawn: net.respawn, fast: net.fast, tic: net.ls.executed, error: net.ls.error, sums: Object.fromEntries(net.sums) }; },
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),
       get title() { return title; },

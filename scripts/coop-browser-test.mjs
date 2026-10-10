@@ -144,6 +144,24 @@ try {
   assert(nets.every((n) => !n.error) && Math.min(nets[0].tic, nets[1].tic) >= firing + 175,
     `${Math.min(nets[0].tic, nets[1].tic)} tics in lockstep, the last 175 both firing, and every consistency check agrees`);
 
+  // chat: T, a line, Enter. Its characters go a tic at a time in the host's
+  // ticcmds; the guest's page shows it by the host's colour. The W in it
+  // doesn't walk player 1: the open line takes the key
+  const p1 = (await players(host))[0];
+  await host.keyboard.press('t');
+  const typing = await host.evaluate(() => window.doom.chat.on);
+  await host.keyboard.type('wow, hi');
+  const typed = await host.evaluate(() => window.doom.chat.line);
+  await host.keyboard.press('Enter');
+  await until(guest, () => window.doom.message === 'g:WOW, HI', null, 20000);
+  const heard = await Promise.all([host, guest].map((p) => p.evaluate(() => ({ message: window.doom.message, chat: window.doom.chat }))));
+  const p1after = (await players(host))[0];
+  assert(typing && typed === 'WOW, HI' && heard[0].message === 'WOW, HI' && heard[1].message === 'g:WOW, HI' && !heard[0].chat.on && heard[0].chat.queued === 0
+    && p1after.X === p1.X && p1after.Y === p1.Y,
+    `the host chats: "${heard[0].message}" on their screen, "${heard[1].message}" on the guest's, and the W typed didn't move player 1`);
+  const chatted = await agree();
+  assert(chatted.same && !(await host.evaluate(() => window.doom.net.error)), `the chat changed nothing in the game: the checksums still agree at tic ${chatted.tic}`);
+
   // a level exit: everyone to the intermission, then on to the next map together. (The
   // nearest line ahead of player 1 becomes a W1 exit on both pages, before anyone reaches it:
   // a change to the map that's the same in both games.)

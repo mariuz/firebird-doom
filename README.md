@@ -743,6 +743,20 @@ takes away their reaction time when they spawn, as in `P_SpawnMobj`). They go in
 message with the game type and timer, and sit in `GAME` (`NOMONSTERS`, `RESPAWN`, `FAST`) for
 `INIT_MAP`, `WORLD_TIC` and `MONSTERS_THINK` to read, where Nightmare already took those paths.
 
+**Chat** is `hu_stuff.c`'s. **T** opens a line to everyone, and with three or more players
+**G**, **I**, **B** or **R** opens one to green, indigo, brown or red alone (your own colour's key
+gets you talking to yourself). You type, Backspace takes a character back, and Enter sends the
+line. While it's open, **Alt+0**–**9** sends a chat macro instead (`chat_macros[]`). DOOM's own
+macros are id's text, so these are ours, and a DEHACKED's `HUSTR_CHATMACRO0`–`9` replace them.
+As in DOOM, the text travels inside the ticcmds, one character a tic (`chatchar`, from
+`HU_dequeueChatChar`), so it needs nothing beside the lockstep and never touches the game.
+Every peer puts the other players' lines together (`HU_Ticker`), and a finished one meant for you
+shows by the sender's colour with a beep (DSTINK, or DSRADIO in DOOM II). It stays up over the
+game's own messages and shows even with messages off. The colour names come from the WAD's
+DEHACKED: Freedoom calls the players `g:`, `i:`, `b:` and `r:`. The line you're typing shows under
+the message line, with its cursor. Keys the line can't take, like the arrows, still reach the
+game, and Esc opens the menu, as they did in DOOM. `src/chat.js` holds it all.
+
 The others look as they did in DOOM. Each player's sprite goes through `info.c`'s `S_PLAY` states,
 moved on a tic at a time by `PLAYER_ANIM`: standing (A), running (A to D, 4 tics a frame), a shot
 (F, the muzzle flash, for 6 tics, then E for 12), pain (G), dying (H to N) or, below -100 health,
