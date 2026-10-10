@@ -6,10 +6,29 @@ items as they land, and add what you find missing.
 
 ## Still open
 
-- **Performance** of `FRAME_WALLS` (Rendering, below): ~22 ms a frame, with outliers near 90 ms.
-- **A TURN relay** for multiplayer behind strict NATs (needs a server; the page has none).
-- **Two checks that need id's WADs** (Screens, below): DOOM I's episode maps at the intermission,
-  and whether its endings should borrow Freedoom's text.
+In the order they'd be noticed. The vanilla features first:
+
+- **The function keys** (Game flow and menus, below): only F6 and F9 work. `M_Responder` has
+  F1–F5, F7, F8, F10 and F11 too.
+- **Gamma correction** (Rendering): F11's five levels, nowhere in the code yet.
+- **Netgame launch options** (Simulation): `-nomonsters`, `-respawn`, `-fast` for the panel.
+- **Netgame chat** (Screens): `hu_stuff.c`'s T to talk, the chat macros, the colour-named players.
+- **The automap in netgames** (Rendering): every player's arrow in co-op, only your own in
+  deathmatch.
+- **Mouse buttons 2 and 3** (Game flow and menus): strafe and forward; mouse-Y movement as an
+  option.
+
+Then the engineering:
+
+- **Performance** of `FRAME_WALLS` (Rendering): ~22–33 ms a frame, with outliers near 90 ms; a
+  measured plan is written there.
+- **Save compatibility** (Tooling): a fixture of older saves, loaded by the current code.
+- **A TURN relay** for multiplayer behind strict NATs (needs a server; the page has none): a
+  Cloudflare Worker minting TURN credentials, with short room codes for the invites.
+- **Two checks that need id's WADs** (Screens): DOOM I's episode maps at the intermission, and
+  whether its endings should borrow Freedoom's text – with a `WAD=` for the screen tests so they
+  can be run against a real `doom.wad` where one is to hand.
+- **A browser matrix** (Tooling): what's known to work outside Chromium.
 - **Declined extras**, noted where they come up: random sound pitch, the OPL3's rhythm mode and
   4-operator channels, a frag limit and obituaries (none of them vanilla 1.9).
 
@@ -36,6 +55,15 @@ Everything else below is done.
   Demos go on from level to level, as DOOM's do.
 - ~~**The end of the game.**~~ Done: as in vanilla, Doom I's E?M8 ending is the end of the game.
   Its picture stays until the menu starts a new game, and Doom II's cast call loops.
+- **The function keys.** `M_Responder`'s: F1 help (Read This!), F2 save, F3 load, F4 sound
+  volume, F5 detail (toggled, with its message), F7 end game, F8 messages on/off (with
+  `MSGON`/`MSGOFF`), F10 quit, F11 gamma (Rendering, below). Only F6 (quicksave) and F9
+  (quickload) are wired, in `main.js`'s keydown; everything the others open exists in the menu
+  already. Each key's sound as vanilla plays it (`sfx_swtchn`).
+- **Mouse buttons 2 and 3.** Vanilla's defaults: button 2 strafes (held: the mouse's X moves you
+  sideways), button 3 moves forward; and the mouse's Y moved the player (`mousey`), which most
+  people turned off (the "novert" hacks). The buttons are a line each in `readInput`; mouse-Y
+  movement as a remembered setting, off by default, with a note that vanilla had it on.
 
 ## Simulation (`sql/game.sql`)
 
@@ -75,10 +103,21 @@ Everything else below is done.
 - ~~**PWADs.**~~ Done: PWADs on top of the main WAD (`-file`, with flats and sprites merged as
   `-merge` does), and a `.deh` patch (`-deh`). They're remembered across reloads too (IndexedDB, with
   their main WAD).
+- **Netgame launch options.** Vanilla's setup screen (and command line) had `-nomonsters` (no
+  monsters at all), `-respawn` (monsters come back, as on Nightmare) and `-fast` (Nightmare's
+  monster speed) for any netgame. Three checkboxes in the panel, sent in the start message like
+  the game type and timer; in SQL, `GAME` columns that `INIT_MAP` (skip the monsters) and
+  `WORLD_TIC` (the Nightmare paths, already there) read.
 
 ## Rendering
 
-- **Performance.** Measure with `node scripts/frame-bench.mjs E1M1 E1M2 …` (every monster awake,
+- **Performance.** A plan, measurement first (the machine is noisy, so alternate runs): (a) count
+  what `FRAME_WALLS` sends per row and derive what can be derived on the JS side – the JSON
+  hand-off is a third of the time and costs per value; (b) prototype reusing the previous frame's
+  visible set when the view hasn't moved much; (c) raise a binary result transfer with
+  `firebird-wasm`, with a measurement of what it would save. Each with a number to beat; the
+  bench below.
+  Measure with `node scripts/frame-bench.mjs E1M1 E1M2 …` (every monster awake,
   eight spots per map looking four ways, the fastest of three). `DOOM_TIC` was halved by keying
   the BLOCKMAP by cell (10 ms on average over E1M1–E1M3 and E2M2, from 22; E1M2 15 ms, from 42).
   `FRAME_WALLS` is still about 22 ms on average, with outliers near 90 ms. About 9 ms of a typical
@@ -98,6 +137,14 @@ Everything else below is done.
   walls) was considered and turned down: Firebird decides, JavaScript draws.
 - ~~**Automap.**~~ Done: zoom (= -), the whole-level view (0), follow mode and panning (F, arrows),
   the grid (G) and marks (M, C), as `AM_Responder` and `AM_Ticker` have them.
+- **The automap in netgames.** `AM_drawPlayers`: in co-op every player's arrow, in their colour
+  (green, grey, brown, red – the sprite translations), a dead player's grey; in deathmatch only
+  your own (the others stay hidden unless you cheat). Today only your arrow is drawn
+  (`drawAutomap` in `main.js`; the other players' positions come with `FRAME_SPRITES`).
+- **Gamma correction.** `I_SetPalette`'s five gamma tables (`gammatable[5][256]`, off and levels
+  1–4), F11 stepping through them with the `GAMMALVL0`–`4` messages, remembered across sessions.
+  It belongs in `present.js`, where `PLAYPAL` is applied: the table over the palette's RGB before
+  it reaches the shader or the canvas.
 - ~~**Light diminishing and colormaps.**~~ Done: the exact `scalelight`/`zlight` tables and
   lookups, low detail's quirk, and the muzzle flash's `extralight`, checked against DOOM's fixed-point
   arithmetic by `npm run test:light`.
@@ -112,7 +159,13 @@ Everything else below is done.
 - **Doom I episode maps with id's WADs.** The intermission's splats, "you are here" pointer and
   animations are implemented, but only tested with stubs, because Freedoom ships them as empty
   placeholders. Check them with a real `doom.wad`: `doom.intermission('E1M3', 'E1M4')` in the
-  console.
+  console. Better: let `intermission-test` and `finale-test` take `WAD=` pointing at an id WAD
+  (never shipped), so whoever has one runs the check in a minute.
+- **Netgame chat.** `hu_stuff.c`: T opens a line to everyone (and, in vanilla, G/I/B/R to one
+  player), Alt+0–9 send the chat macros (`chatmacros[]`, the `HUSTR_CHATMACRO` defaults, or a
+  PWAD's), and a message shows as "Green: …" by the sender's colour (`player_names[]`). The text
+  travels with the lockstep (a message in the ticcmd stream, as DOOM's `BT_SPECIAL`/`BTS_…`
+  carried it, or alongside it), drawn over the view like the game's own messages.
 - ~~**Screen wipe.**~~ Done ([src/wipe.js](../src/wipe.js)): the column melt between the title,
   the game, the intermission and the endings, and on every level load.
 - **Doom I endings' text with id's WADs.** They go straight to the art. They could borrow Freedoom
@@ -135,6 +188,13 @@ Everything else below is done.
   pictures are rendered again and compared pixel for pixel with `docs/screenshots.json`. The
   simulation's `p_random()` makes them come out the same every time. The title loop's demos have
   the same guard (`npm run test:attract`): each replays to the checksum stored in it.
+- **Save compatibility.** Every schema change can break a player's saved games (the frags table
+  needed a guard in `restoreGame`, by hand). A fixture of saves written by earlier versions,
+  loaded by the current code in `savegame-test`, would catch that on CI, and say what each
+  version needs migrating.
+- **A browser matrix.** Everything is verified in headless Chromium. Safari and Firefox differ on
+  the AudioWorklet, WebGL and pointer lock: a short list in the README of what's known to work
+  where, from a manual pass, and the fallbacks each needs.
 - ~~**A test for the live frame loop.**~~ Done (`npm run test:browser`, in CI): headless
   Chromium plays through the title, the menus, a level, quicksave and quickload, the
   intermission, the next level, an ending, End Game and an attract demo; `npm run test:coop`
