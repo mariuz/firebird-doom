@@ -271,6 +271,43 @@ try {
       `standing still the walls are drawn from the last answer (${r1 - r0} frames in a second), the same as asking again; the ceiling moved, they're asked anew`);
   }
 
+  // key bindings (default.cfg's keys): Forward's first key set to I in the Keys panel walks, and W
+  // no longer does; Alt, DOOM's strafe key, makes → strafe
+  {
+    const at = () => doom(() => window.doom.sql("SELECT x, y, angle FROM things WHERE kind = 'player'").then((r) => r[0]));
+    const still = () => doom(() => window.doom.sql("UPDATE things SET momx = 0, momy = 0 WHERE kind = 'player'"));
+    const along = (a, b) => ({ fwd: (b.X - a.X) * Math.cos(a.ANGLE) + (b.Y - a.Y) * Math.sin(a.ANGLE), right: (b.X - a.X) * Math.sin(a.ANGLE) - (b.Y - a.Y) * Math.cos(a.ANGLE) });
+    const hold = async (k, ms) => { await page.keyboard.down(k); await page.waitForTimeout(ms); await page.keyboard.up(k); await page.waitForTimeout(300); };
+    await doom(() => document.getElementById('key-forward-0').click());
+    const waiting = await doom(() => document.getElementById('key-forward-0').textContent);
+    await page.keyboard.press('i');
+    const bound = await doom(() => [window.doom.keys.forward.join(), document.getElementById('key-forward-0').textContent]);
+    await still();
+    const k0 = await at();
+    await hold('i', 400);
+    const k1 = await at();
+    await still();
+    await page.waitForTimeout(200);
+    const k1b = await at();
+    await hold('w', 400);
+    const k2 = await at();
+    await still();
+    await page.waitForTimeout(200);
+    const k2b = await at();
+    await page.keyboard.down('Alt');
+    await hold('ArrowRight', 400);
+    await page.keyboard.up('Alt');
+    const k3 = await at();
+    await doom(() => document.getElementById('keys-defaults').click());
+    const back = await doom(() => window.doom.keys.forward.join());
+    const walked = along(k0, k1);
+    const strafed = along(k2b, k3);
+    assert(/press a key/.test(waiting) && bound[0] === 'KeyI,ArrowUp' && bound[1] === 'I' && walked.fwd > 8 && Math.hypot(k2.X - k1b.X, k2.Y - k1b.Y) < 2,
+      `the Keys panel waits for a key, and Forward on I walks (${walked.fwd.toFixed(0)} units); W does nothing now`);
+    assert(strafed.right > 8 && k3.ANGLE === k2b.ANGLE && back === 'KeyW,ArrowUp',
+      `Alt held (key_strafe) makes → strafe (${strafed.right.toFixed(0)} units, no turn); Defaults puts W back`);
+  }
+
   // the launch options in a game alone (-nomonsters, -fast): ticking one starts a new game on
   // this map with them; a demo keeps them in its header and plays them back, whatever's ticked then
   {

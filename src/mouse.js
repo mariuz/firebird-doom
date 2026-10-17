@@ -74,18 +74,19 @@ export class MouseInput {
    * G_BuildTiccmd's mouse terms for TICS tics (RUN: the speed key):
    * { forward, side } in DOOM's move units, turn in radians (+ is left),
    * fire, use and strafe (button 2 held: the turn keys strafe too).
-   * MOUSEY: the mouse's Y moves you.
+   * MOUSEY: the mouse's Y moves you. STRAFE: the strafe key is held
+   * (key_strafe: the mouse's X strafes then too).
    */
-  take(tics, { run = 0, mousey = false } = {}) {
+  take(tics, { run = 0, mousey = false, strafe: strafeKey = false } = {}) {
     const down = (b) => this.held[b] || this.clicked[b];
-    const strafe = down(1);
+    const strafe = down(1) || strafeKey;
     let forward = 0;
     let side = 0;
     let turn = 0;
     if (down(2)) forward += FORWARDMOVE[run ? 1 : 0];
     // (the double clicks: button 3's, then button 2's)
     let use = this.dclickForward.tick(down(2), tics);
-    use = this.dclickStrafe.tick(strafe, tics) || use;
+    use = this.dclickStrafe.tick(down(1), tics) || use;   // (the button's double click, not the key)
     if (mousey) forward += this.y;
     if (strafe) side += this.x * 2;
     else turn -= this.x * MOUSEX_RAD;

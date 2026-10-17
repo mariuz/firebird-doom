@@ -6,13 +6,9 @@ items as they land, and add what you find missing.
 
 ## Still open
 
-In the order they'd be noticed. Vanilla features found missing on a second pass through
-`g_game.c`, `d_main.c` and `m_misc.c` come first:
-
-- **Key bindings** (Game flow and menus): `default.cfg`'s `key_right`, `key_fire` and the rest,
-  set in vanilla's SETUP.EXE; a remembered setting here.
-
-Then the engineering:
+The vanilla features are all done, including those a second pass through `g_game.c`,
+`d_main.c` and `m_misc.c` found missing. What's left is engineering, in the order it would be
+noticed:
 
 - **Performance** of `FRAME_WALLS` (Rendering): ~21 ms a frame now (from ~26), nothing at all
   while standing still. The plan's three steps are done or measured out; what's left is the
@@ -61,11 +57,10 @@ Everything else below is done.
   step on it with `M_Responder`'s joywait (button 0 Enter, 1 Backspace), and a button on the
   title opens the menu. A second stick (turning on the right, as modern ports do) isn't
   vanilla, and would be asked about first.
-- **Key bindings.** Vanilla kept its keys in `default.cfg` (`key_up`, `key_fire`, `key_use`,
-  `key_strafe`…), set with SETUP.EXE. Here: a remembered setting, a menu page or a panel to set
-  them, and `readInput` reading through the table instead of fixed key codes. Vanilla's strafe
-  key (Alt held turns the turn keys into strafing) would come with it.
-
+- ~~**Key bindings.**~~ Done (`src/keys.js`): `default.cfg`'s ten keys, two slots each, set
+  in the **Keys** panel (click, press; Esc leaves it, Backspace empties it), remembered; a key
+  does one thing, and the page's own keys can't be taken. DOOM's strafe key (Alt) came with it:
+  held, the turn keys and the mouse strafe.
 - ~~**Skill levels.**~~ Done: the **Skill** setting, with spawn flags, half damage and double ammo
   on 1, and Nightmare's fast monsters, instant reactions, respawning and no cheats on 5.
   Dropped items give half (`MF_DROPPED`), as in vanilla.

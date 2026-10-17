@@ -31,6 +31,7 @@ import { Chat, chatStrings, HU_MSGTIMEOUT } from './chat.js';
 import { MouseInput, moveCommand } from './mouse.js';
 import { parseCommandLine, startMapFor } from './cmdline.js';
 import { readJoystick, JoyMenu, JOYB } from './gamepad.js';
+import { ACTIONS, keysFrom, bindKey, actionDown, boundCodes, keyName, reservedKey } from './keys.js';
 
 const $ = (id) => document.getElementById(id);
 let canvas = $('screen');   // replaced by a fresh element when the display kind changes
@@ -140,11 +141,16 @@ let mouseTurn = 0;                   // (touch: the right half's drag)
 let fireClick = false;               // (touch: a tap on the right half)
 const mouse = new MouseInput();      // the mouse under pointer lock: its moves and DOOM's three buttons
 let weaponSel = 0;
-const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-  'Space', 'KeyE', 'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'Tab', 'Digit1', 'Digit2',
-  'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'KeyF', 'Comma', 'Period']);
+// default.cfg's keys (keys.js), remembered; the keys the page keeps from the browser follow them
+let bindings = keysFrom(settings.keys);
+let gameKeys = new Set();
+const updateGameKeys = () => { gameKeys = new Set([...boundCodes(bindings), 'Tab', ...Array.from({ length: 7 }, (_, i) => `Digit${i + 1}`)]); };
+updateGameKeys();
+// the automap's own keys (AM_Responder): with it open they're its, not the game's
+const AM_KEYS = new Set(['KeyF', 'KeyG', 'KeyM', 'KeyC', 'Digit0']);
 
 window.addEventListener('keydown', (e) => {
+  if (keyCapture) { captureKey(e); return; }
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
   if (!running) return;
   // M_Responder: the menu takes every key while it's open; on the title any
@@ -189,7 +195,7 @@ window.addEventListener('keydown', (e) => {
     const k = e.altKey && /^Digit\d$/.test(e.code) ? e.code.slice(5) : e.key;
     if (net.chat.key(k, e.altKey)) { e.preventDefault(); return; }
   }
-  if (GAME_KEYS.has(e.code)) e.preventDefault();
+  if (gameKeys.has(e.code)) e.preventDefault();
   keys.add(e.code);
   if (finale) finaleKey = true;
   if (e.code === 'Tab') showMap = !showMap;
@@ -602,11 +608,14 @@ function applyDisplay() {
 function readInput(tics) {
   const k = (c) => keys.has(c);
   const panning = showMap && amView && !amView.follow;   // (the arrows pan the map instead)
-  const arrow = (c) => !panning && k(c);
-  let fwd = (k('KeyW') || arrow('ArrowUp') ? 1 : 0) - (k('KeyS') || arrow('ArrowDown') ? 1 : 0);
-  let side = (k('KeyD') || k('Period') ? 1 : 0) - (k('KeyA') || k('Comma') ? 1 : 0);
-  let turnKeys = (arrow('ArrowLeft') ? 1 : 0) - (arrow('ArrowRight') ? 1 : 0);
-  let run = k('ShiftLeft') || k('ShiftRight') ? 1 : 0;
+  // the bound keys (keys.js); the automap keeps its own keys while it's open
+  const skip = (c) => (panning && c.startsWith('Arrow')) || (showMap && AM_KEYS.has(c));
+  const on = (a) => actionDown(bindings, a, keys, skip);
+  let fwd = (on('forward') ? 1 : 0) - (on('back') ? 1 : 0);
+  let side = (on('straferight') ? 1 : 0) - (on('strafeleft') ? 1 : 0);
+  let turnKeys = (on('left') ? 1 : 0) - (on('right') ? 1 : 0);
+  let run = on('speed') ? 1 : 0;
+  const strafeKey = on('strafe');
   // G_BuildTiccmd's joystick (gamepad.js): Y walks, X turns – or strafes while
   // joybstrafe is held – and its buttons fire, use and run, as the keys do
   const js = readJoystick(gamepads());
@@ -621,7 +630,7 @@ function readInput(tics) {
   // G_BuildTiccmd's mouse: button 2 held strafes (the turn keys too), button 3
   // moves forward, a double click on either uses; the X turns or strafes, the Y
   // (if chosen) walks. Then forward and side clamp to MAXPLMOVE
-  const m = mouse.take(tics, { run, mousey: settings.mousey });
+  const m = mouse.take(tics, { run, mousey: settings.mousey, strafe: strafeKey });
   // (strafe = key_strafe || mousebuttons[mousebstrafe] || joybuttons[joybstrafe]: any of
   // them turns the turn keys and the stick's X into strafing)
   if (m.strafe || js?.buttons[JOYB.strafe]) {
@@ -632,9 +641,9 @@ function readInput(tics) {
   // angleturn 640/1280 per tic in DOOM ≈ 0.061 / 0.123 rad
   const turn = turnKeys * (run ? 0.123 : 0.07) * tics + mouseTurn + m.turn;
   mouseTurn = 0;
-  const fire = k('ControlLeft') || k('ControlRight') || (k('KeyF') && !showMap) || fireClick || m.fire || js?.buttons[JOYB.fire] ? 1 : 0;
+  const fire = on('fire') || fireClick || m.fire || js?.buttons[JOYB.fire] ? 1 : 0;
   if (fireClick === 'tap') fireClick = false;
-  const use = k('Space') || k('KeyE') || k('TapUse') || m.use || js?.buttons[JOYB.use] ? 1 : 0;
+  const use = on('use') || k('TapUse') || m.use || js?.buttons[JOYB.use] ? 1 : 0;
   keys.delete('TapUse');
   const w = weaponSel;
   weaponSel = 0;
@@ -1636,6 +1645,7 @@ async function boot() {
       get automap() { return { view: amView, open: showMap, message: amMsg?.text ?? null, arrows: amArrows }; },
       get gamma() { return settings.gamma; },
       get options() { return { checked: { ...launchOptions }, game: { ...gameOptions } }; },
+      get keys() { return JSON.parse(JSON.stringify(bindings)); },
       get timedemo() { return timedemo && { ...timedemo }; },
       get commandLine() { return commandLine; },
       // the mouse, for tests: DOM-style moves and buttons, as under pointer lock
@@ -1786,6 +1796,52 @@ $('renderer').addEventListener('change', async (e) => {
 });
 // the skill: a new game on the current map, as DOOM's New Game menu would
 $('skill').value = String(settings.skill);
+// ── the Keys panel: SETUP.EXE's key screen ─────────────────────────────────
+let keyCapture = null;   // { action, slot } while a slot waits for its key
+function keysPanel(say = '') {
+  const list = $('keys-list');
+  list.replaceChildren(...ACTIONS.map(([a, label, cfg]) => {
+    const row = document.createElement('div');
+    row.className = 'keys-row';
+    const name = document.createElement('span');
+    name.textContent = label;
+    name.title = cfg;
+    row.append(name, ...[0, 1].map((slot) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.id = `key-${a}-${slot}`;
+      const waiting = keyCapture?.action === a && keyCapture.slot === slot;
+      b.textContent = waiting ? 'press a key…' : keyName(bindings[a][slot]);
+      b.className = waiting ? 'waiting' : '';
+      b.addEventListener('click', () => { keyCapture = { action: a, slot }; keysPanel('Press the key (Esc: leave it, Backspace: none).'); });
+      return b;
+    }));
+    return row;
+  }));
+  $('keys-status').textContent = say;
+}
+/** the key pressed for the slot waiting: Esc leaves it, Backspace clears it, a key the page keeps is refused */
+function captureKey(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const { action, slot } = keyCapture;
+  keyCapture = null;
+  if (e.code === 'Escape') { keysPanel(); return; }
+  const code = e.code === 'Backspace' ? null : e.code;
+  const why = code && reservedKey(code);
+  if (why) { keysPanel(`${keyName(code)}: ${why}.`); return; }
+  setBindings(bindKey(bindings, action, slot, code));
+  keysPanel();
+}
+function setBindings(next) {
+  bindings = next;
+  settings.keys = bindings;
+  saveSettings();
+  updateGameKeys();
+}
+$('keys-defaults').addEventListener('click', () => { keyCapture = null; setBindings(keysFrom(null)); keysPanel('Back to the defaults.'); });
+keysPanel();
+
 $('skill').addEventListener('change', (e) => {
   settings.skill = Number(e.target.value);
   saveSettings();

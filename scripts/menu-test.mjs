@@ -10,6 +10,7 @@ import { parseDehStrings } from '../src/finale.js';
 import { Menu, TitleLoop } from '../src/menu.js';
 import { parseCommandLine, startMapFor } from '../src/cmdline.js';
 import { readJoystick, JoyMenu } from '../src/gamepad.js';
+import { keysFrom, bindKey, actionDown, boundCodes, reservedKey, keyName, ACTIONS } from '../src/keys.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -396,6 +397,24 @@ for (const file of ['freedoom1.wad', 'freedoom2.wad']) {
     jm.key({ ...down, buttons: [true, false, false, false] }, 12.3 * t), jm.key({ x: 0, y: 0, buttons: [false, true, false, false] }, 17.4 * t)];
   assert(keys.join() === 'ArrowDown,,ArrowDown,ArrowRight,,Enter,Backspace',
     `in the menus the stick repeats after 5 tics (down) or 2 (right), button 0 is Enter over the stick, button 1 Backspace (${keys.join(' ')})`);
+}
+
+// default.cfg's keys (keys.js): ten actions, two keys each; a key does one thing; Ctrl is Ctrl either side
+{
+  const d = keysFrom(null);
+  const held = (...codes) => new Set(codes);
+  assert(ACTIONS.length === 10 && d.forward.join() === 'KeyW,ArrowUp' && d.strafe[0] === 'Alt'
+    && actionDown(d, 'fire', held('ControlRight')) && actionDown(d, 'speed', held('ShiftLeft')) && !actionDown(d, 'fire', held('KeyF'), (c) => c === 'KeyF'),
+    "the defaults are the page's old keys plus Alt to strafe; right Ctrl fires as left does; a key the automap has is skipped");
+  const moved = bindKey(d, 'fire', 1, 'KeyW');
+  const cleared = bindKey(moved, 'use', 0, null);
+  assert(moved.fire[1] === 'KeyW' && moved.forward[0] === null && moved.forward[1] === 'ArrowUp' && cleared.use.join() === ',KeyE' && bindKey(d, 'strafe', 1, 'AltRight').strafe[1] === 'Alt',
+    'W bound to fire leaves forward with ↑ alone; a slot can be emptied; right Alt is Alt');
+  const saved = keysFrom({ forward: ['KeyI', 'Escape'], back: ['KeyI', 'KeyK'], fire: 'nonsense' });
+  assert(saved.forward.join() === 'KeyI,' && saved.back.join() === ',KeyK' && saved.fire.join() === 'Control,KeyF' && saved.left.join() === 'ArrowLeft,',
+    'saved keys are taken as far as they make sense: no reserved key, no key twice, the rest the defaults');
+  assert(reservedKey('Tab') && reservedKey('Digit3') && !reservedKey('KeyQ') && boundCodes(d).has('AltLeft') && boundCodes(d).has('AltRight') && keyName('KeyQ') === 'Q' && keyName('Control') === 'Ctrl',
+    'Tab and the weapon keys stay the page\'s; Alt keeps its browser default away on both sides; keys are named as on the keyboard');
 }
 
 console.log(failures ? `${failures} failure(s)` : 'menu ok');

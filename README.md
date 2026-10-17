@@ -1056,6 +1056,17 @@ DOOM's limit (`MAXPLMOVE`, running speed). In DOOM, pushing the mouse forward wa
 (`mousey`). Most players turned that off, so here it's **Mouse moves forward**, off unless you
 choose it. `src/mouse.js` holds the mouse's half of the ticcmd.
 
+The keys are `default.cfg`'s ten, set in the **Keys** panel under the view as SETUP.EXE set them.
+They are forward, back, turn left and right, strafe left and right, fire, use, run, and the
+strafe key, each with two slots. Click a slot and press the key; Esc leaves it as it was and
+Backspace leaves it empty. A key does one thing, so binding it takes it from wherever it was. The
+defaults are the keys above plus DOOM's **Alt** as the strafe key: held, it turns the turn keys
+and the mouse into strafing (`key_strafe`). Left and right Ctrl, Shift and Alt count as one key
+each, as they did under DOS. The keys the page keeps for itself can't be bound: Esc, Tab, the
+weapon digits, the function keys, `-`, `=`, P, M and T. With the automap open, its own keys (F,
+G, M, C, 0, and the arrows while it pans) are its alone. The bindings are remembered in the
+browser (`src/keys.js`).
+
 A gamepad is DOOM's joystick (`src/gamepad.js`, through the browser's Gamepad API). Vanilla read
 one stick as on or off each way, and so does this: the left stick past halfway, or the d-pad.
 Up and down walk, and left and right turn. Its buttons 0 to 3 are `default.cfg`'s: fire
