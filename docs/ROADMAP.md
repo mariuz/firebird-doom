@@ -9,9 +9,9 @@ items as they land, and add what you find missing.
 In the order they'd be noticed. Vanilla features found missing on a second pass through
 `g_game.c`, `d_main.c` and `m_misc.c` come first:
 
-- **Pause and save in a netgame** (Game flow and menus): vanilla sends both through the
-  ticcmds (`BT_SPECIAL`, `BTS_PAUSE` and `BTS_SAVEGAME`), so every peer pauses, or saves to the
-  same slot, on the same tic.
+- **Loading a netgame** (Game flow and menus): pause and save work in a netgame now; vanilla
+  loaded one with `-loadgame` on every machine at the start, which here would be the host's save
+  in the start message.
 - **The launch options in a game alone** (Game flow and menus): `-nomonsters`, `-respawn` and
   `-fast` work in single player too; today they're only in the netgame panel.
 - **A command line** (Game flow and menus): `d_main.c`'s `-warp`, `-skill`, `-episode`,
@@ -46,13 +46,14 @@ Everything else below is done.
 
 ## Game flow and menus
 
-- **Pause and save in a netgame.** Vanilla pauses a netgame for everyone and saves it on every
-  machine: `G_BuildTiccmd` turns the pause key and a save into `BT_SPECIAL` commands (`BTS_PAUSE`,
-  `BTS_SAVEGAME` with the slot), and `G_Ticker` acts on them on the same tic everywhere. Here the
-  ticcmd would carry them the same way (a ninth value, as the chat character is the eighth), and
-  `netTics` would pause or call `captureGame` when it runs that tic; each peer saves its own copy.
-  Loading a netgame was `-loadgame` at start in vanilla: the host would send the save in the
-  start message instead of a map.
+- ~~**Pause and save in a netgame.**~~ Done: the ticcmd's ninth value is `BT_SPECIAL`
+  (`SPECIAL_PAUSE`, or `SPECIAL_SAVE` + the slot, in `net.js`), with no fire, use or weapon change
+  that tic; `netTics` acts on it as `G_Ticker` does. A pause stops the world on every peer while
+  the tics go round; a save writes the same game into the same slot in every browser after that
+  tic, the saver's description there and NETGAME elsewhere. F3 and F9 refuse, as in DOOM.
+- **Loading a netgame.** Vanilla loaded one with `-loadgame` on every machine at the start. Here
+  the host would send its save in the start message instead of a map, and every peer would
+  `restoreGame` it before the first tic (the guests checking it like the rest of the message).
 - **The launch options in a game alone.** `-nomonsters`, `-respawn` and `-fast` are command-line
   options for any game in vanilla. The `GAME` columns already work at any skill; the page would
   need three settings (or the command line below) passed to `loadMap` for a game alone too.

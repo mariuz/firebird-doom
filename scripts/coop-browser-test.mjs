@@ -162,6 +162,39 @@ try {
   const chatted = await agree();
   assert(chatted.same && !(await host.evaluate(() => window.doom.net.error)), `the chat changed nothing in the game: the checksums still agree at tic ${chatted.tic}`);
 
+  // pause in a netgame (BTS_PAUSE): the host's P pauses both games on the same tic; the
+  // tics still go round, the world stands still; the guest's P lets both go on
+  const gameTic = (p) => p.evaluate(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));
+  await host.evaluate(() => document.activeElement?.blur());
+  await host.keyboard.press('p');
+  await until(host, () => window.doom.net.paused, null, 20000);
+  await until(guest, () => window.doom.net.paused, null, 20000);
+  const held = await Promise.all([host, guest].map(gameTic));
+  const lock0 = await guest.evaluate(() => window.doom.net.tic);
+  await host.waitForTimeout(1500);
+  const stillHeld = await Promise.all([host, guest].map(gameTic));
+  const lock1 = await guest.evaluate(() => window.doom.net.tic);
+  await guest.evaluate(() => document.activeElement?.blur());
+  await guest.keyboard.press('p');
+  await until(host, () => !window.doom.net.paused, null, 20000);
+  await until(guest, () => !window.doom.net.paused, null, 20000);
+  await host.waitForTimeout(800);
+  const going = await Promise.all([host, guest].map(gameTic));
+  assert(held[0] === held[1] && stillHeld[0] === held[0] && stillHeld[1] === held[1] && lock1 > lock0 && going.every((t) => t > held[0]),
+    `the host's P pauses both games at tic ${held[0]} (the tics go round, ${lock0} → ${lock1}, the world doesn't); the guest's P lets both go on (${going.join(', ')})`);
+
+  // save in a netgame (BTS_SAVEGAME): the host saves into slot 5, and both browsers
+  // write the same game into their slot 5 on the same tic, the host's named, the guest's NETGAME
+  await host.evaluate(() => window.doom.menu.actions.save(4, 'COOP TEST'));
+  // (polled from here: waitForFunction takes a promise for a truthy answer)
+  for (const p of [host, guest]) {
+    for (let i = 0; i < 200 && !(await p.evaluate(() => window.doom.saveRecord(4).then((r) => !!r?.save))); i++) await p.waitForTimeout(100);
+  }
+  const recs = await Promise.all([host, guest].map((p) => p.evaluate(() => window.doom.saveRecord(4).then((r) => ({ name: r.name, map: r.map, tables: JSON.stringify(r.save.tables) })))));
+  const savedSame = await agree();
+  assert(recs[0].name === 'COOP TEST' && recs[1].name === 'NETGAME' && recs[0].map === recs[1].map && recs[0].tables === recs[1].tables && savedSame.same,
+    `the host saves: both browsers write the same game into slot 5 (the host's "${recs[0].name}", the guest's "${recs[1].name}"), and play on in step`);
+
   // the automap in co-op: both players' arrows, green and grey (AM_drawPlayers)
   const arrowsNow = async (p) => {
     await p.keyboard.press('Tab');

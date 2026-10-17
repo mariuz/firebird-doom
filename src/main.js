@@ -25,7 +25,7 @@ import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 import { createPresenter } from './present.js';
 import { Melt } from './wipe.js';
-import { Lockstep, createInvite, acceptInvite, MAX_PLAYERS } from './net.js';
+import { Lockstep, createInvite, acceptInvite, MAX_PLAYERS, SPECIAL_PAUSE, SPECIAL_SAVE } from './net.js';
 import { Chat, chatStrings, HU_MSGTIMEOUT } from './chat.js';
 import { MouseInput, moveCommand } from './mouse.js';
 
@@ -147,7 +147,7 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'F5') { pageSay(menu.toggleDetail()); return; }
     if (e.key === 'F8') { pageSay(menu.toggleMessages(), true); return; }
     if (e.key === 'F11') { setGamma((settings.gamma + 1) % 5, true); return; }
-    if ((e.key === 'F6' || e.key === 'F9') && (demoPlayer || net)) return;
+    if ((e.key === 'F6' || e.key === 'F9') && demoPlayer) return;   // (in a netgame F6 saves for everyone, and F9 says it can't load)
     menuBackdrop = renderer.sfb.slice();
     keys.clear();
     ({ F1: () => menu.openReadThis(), F2: () => menu.openSave(), F3: () => menu.openLoad(), F4: () => menu.openSound(),
@@ -219,7 +219,12 @@ window.addEventListener('keydown', (e) => {
     startMap(warp, true).catch((err) => setStatus(err.message, true));
   }
   if (e.code.startsWith('Digit')) weaponSel = Number(e.code.slice(5));
-  if ((e.code === 'KeyP' || e.code === 'Pause') && !net) paused = !paused;
+  // G_Responder's pause key: alone, the game stops here; in a netgame it goes out
+  // as BTS_PAUSE in the next ticcmd, and every peer pauses (or goes on) on that tic
+  if (e.code === 'KeyP' || e.code === 'Pause') {
+    if (!net) paused = !paused;
+    else if (!net.special) net.special = SPECIAL_PAUSE;
+  }
   if (e.code === 'KeyM' && !showMap) setAudio(!settings.audio);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
@@ -358,10 +363,21 @@ async function refreshSlots() {
 
 /** G_SaveGame: the live tables, plus the automap's seen lines and DOOM I's visited secret levels */
 async function saveToSlot(slot, name) {
+  // G_SaveGame in a netgame: not now, but as BTS_SAVEGAME in the next ticcmd, so
+  // every peer saves the same tic into the same slot (G_Ticker, then G_DoSaveGame)
+  if (net) {
+    if (!net.special) { net.special = SPECIAL_SAVE + slot; net.saveName = name; }
+    return;
+  }
+  await writeSave(slot, name);
+  await db.exec("UPDATE player SET msg = 'Game saved.', msg_tics = 70 WHERE id = 1");
+}
+
+/** G_DoSaveGame: the game as it stands, into SLOT of this browser's saves */
+async function writeSave(slot, name) {
   const save = await captureGame(db, { seen: [...map.seen], didSecret: [...didSecret] });
   await saves.put(`${wadKey}|${slot}`, { name, map: save.map, date: new Date().toISOString(), save });
   await refreshSlots();
-  await db.exec("UPDATE player SET msg = 'Game saved.', msg_tics = 70 WHERE id = 1");
 }
 
 /** G_LoadGame: the map afresh, then the save written over it */
@@ -423,7 +439,7 @@ function makeMenu() {
       endGame: () => goTitle(),
       get slots() { return saveSlots; },
       // (only in a game: not on the title, the intermission or an ending)
-      get canSave() { return !!map && !title && !intermission && !finale && !net; },
+      get canSave() { return !!map && !title && !intermission && !finale; },
       get inGame() { return !!map && !title; },     // (usergame: not the title loop, nor its demos)
       get netgame() { return !!net; },
       save: (slot, name) => saveToSlot(slot, name).catch((err) => setStatus(`Couldn't save: ${err.message}`, true)),
@@ -665,7 +681,10 @@ async function netTics(tics) {
   const mine = menu?.active ? IDLE_CMD : [fwd, side, turn / tics, fire, use, w, run];
   // (G_BuildTiccmd: each tic's command carries the next chat character, cmd->chatchar)
   for (let i = 0; i < tics && net.ls.canSubmit(); i++) {
-    net.ls.submit([...(i === 0 ? mine : [...mine.slice(0, 5), 0, mine[6]]), net.chat.dequeue()]);
+    const cmd = [...(i === 0 ? mine : [...mine.slice(0, 5), 0, mine[6]]), net.chat.dequeue(), net.special];
+    // (BT_SPECIAL: cmd->buttons = BT_SPECIAL | …, so no fire, use or weapon change that tic)
+    if (net.special) { cmd[3] = 0; cmd[4] = 0; cmd[5] = 0; net.special = 0; }
+    net.ls.submit(cmd);
   }
   let ran = 0;
   while (ran < 12) {
@@ -675,11 +694,29 @@ async function netTics(tics) {
     const num = (v, lo, hi) => Math.max(lo, Math.min(hi, Number(v) || 0));
     const rows = r.cmds.map((c, i) => [i + 1, num(c[0], -1, 1), num(c[1], -1, 1), num(c[2], -Math.PI, Math.PI),
       num(c[3], 0, 1) | 0, num(c[4], 0, 1) | 0, num(c[5], 0, 9) | 0, num(c[6], 0, 1) | 0]);
-    await db.query(`EXECUTE BLOCK AS BEGIN DELETE FROM ticcmd;
-      ${rows.map((v) => `INSERT INTO ticcmd (player_id, fwd, side, turn, fire, use_key, weapon_sel, run) VALUES (${v.join(', ')});`).join('\n')} END`);
-    hud = (await db.query('SELECT * FROM net_tic', [], { rowMode: 'object' })).rows[0];
-    lastFire = rows[net.me - 1][4] === 1;
+    // G_Ticker's BT_SPECIAL, player by player: BTS_PAUSE flips the pause for
+    // everyone; BTS_SAVEGAME saves once this tic is done (ga_savegame, acted on
+    // before the next). A paused tic still goes round, so a pause can end, but
+    // the world stands still (P_Ticker: if (paused) return)
+    let saveSlot = -1;
+    let saver = 0;
+    r.cmds.forEach((c, i) => {
+      const sp = num(c[8], 0, SPECIAL_SAVE + SLOTS - 1) | 0;
+      if (sp === SPECIAL_PAUSE) net.paused = !net.paused;
+      else if (sp >= SPECIAL_SAVE) { saveSlot = sp - SPECIAL_SAVE; saver = i + 1; }
+    });
+    if (!net.paused) {
+      await db.query(`EXECUTE BLOCK AS BEGIN DELETE FROM ticcmd;
+        ${rows.map((v) => `INSERT INTO ticcmd (player_id, fwd, side, turn, fire, use_key, weapon_sel, run) VALUES (${v.join(', ')});`).join('\n')} END`);
+      hud = (await db.query('SELECT * FROM net_tic', [], { rowMode: 'object' })).rows[0];
+      lastFire = rows[net.me - 1][4] === 1;
+    }
     net.chat.ticker(r.cmds.map((c) => num(c[7], 0, 127) | 0));   // (HU_Ticker)
+    if (saveSlot >= 0) {
+      // (G_DoSaveGame: the one who saved names it; on the other machines it's a net game)
+      await writeSave(saveSlot, saver === net.me ? net.saveName || NETGAME_SAVE : NETGAME_SAVE);
+      pageSay('Game saved.');
+    }
     ran++;
     // the consistency check (d_net.c's consistancy): the host compares everyone's
     if (r.tic % 35 === 0) {
@@ -702,6 +739,9 @@ async function netTics(tics) {
   else if (performance.now() - netWait > 1000) setStatus('Waiting for the other players…');
   return ran > 0 && !!hud;
 }
+
+/** A save made by another player of the netgame, as G_DoSaveGame names it when savedescription is empty */
+const NETGAME_SAVE = 'NETGAME';
 
 /** WI_Start's wbs->plyr[]: every player's kills, items, secrets and frags, for the netgame screens */
 async function netStats() {
@@ -728,7 +768,8 @@ async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, tim
   const strings = chatStrings(parseDehStrings(wad.dehacked() + '\n' + (dehPatch?.text ?? '')));
   const chat = new Chat({ me, players, strings, say: chatSay });
   amCheating = 0;   // (a netgame starts a fresh DOOM: no IDDT carried over from a game alone)
-  net = { me, players, deathmatch, timer, nomonsters, respawn, fast, links, chat, ls: new Lockstep({ me, players, send }), sums: new Map() };
+  net = { me, players, deathmatch, timer, nomonsters, respawn, fast, links, chat, ls: new Lockstep({ me, players, send }), sums: new Map(),
+    special: 0, saveName: '', paused: false };
   netWait = 0;
   for (const [pid, link] of links) {
     link.onmessage = (m) => net?.links === links && net.ls.receive(pid, m);
@@ -1141,7 +1182,7 @@ async function frameNow() {
     // (w_chat: HU_INPUTY, a line of the font below the message)
     const typing = net?.chat?.shown;
     if (typing) drawText(renderer, typing, 2, 2 + (renderer.pictureByName('STCFN065')?.h ?? 7) + 1);
-    if (paused) drawText(renderer, 'PAUSED', 136, 80);
+    if (paused || net?.paused) drawText(renderer, 'PAUSED', 136, 80);
     if ((net || attract) && menu?.active) {
       for (let i = 0; i < tics; i++) menu.tick();
       menu.draw(renderer);
@@ -1448,7 +1489,9 @@ async function boot() {
       useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await reloadWads(); },
       get demo() { return { recording: !!recorder, playing: !!demoPlayer && !attract, attract, played: demoPlayer?.index ?? 0, last: lastDemo }; },
       get chat() { return net && { on: net.chat.on, line: net.chat.line.text, queued: net.chat.queue.length }; },
-      get net() { return net && { me: net.me, players: net.players, deathmatch: net.deathmatch, timer: net.timer, nomonsters: net.nomonsters, respawn: net.respawn, fast: net.fast, tic: net.ls.executed, error: net.ls.error, sums: Object.fromEntries(net.sums) }; },
+      get net() { return net && { me: net.me, players: net.players, deathmatch: net.deathmatch, timer: net.timer, nomonsters: net.nomonsters, respawn: net.respawn, fast: net.fast, tic: net.ls.executed, error: net.ls.error, sums: Object.fromEntries(net.sums), paused: net.paused }; },
+      // a slot's save, for tests: its name, map and the game it holds
+      saveRecord: (slot) => saves.get(`${wadKey}|${slot}`),
       // the walls the page drew last, against FRAME_WALLS asked now (the kept answer must be the same)
       wallsMatch: async () => JSON.stringify(wallCache?.walls) === JSON.stringify((await db.query('SELECT * FROM frame_walls', [], { rowMode: 'array' })).rows),
       record: () => startRecording(), stopDemo: () => $('demo-stop').click(), playDemo: (d = lastDemo) => playDemo(d),

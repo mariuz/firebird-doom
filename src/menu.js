@@ -204,10 +204,14 @@ export class Menu {
     });
   }
 
-  /** M_QuickLoad (F9): asks before loading the quicksave slot, if there is one. */
+  /** M_QuickLoad (F9): asks before loading the quicksave slot, if there is one (not in a netgame). */
   quickLoad() {
     if (this.active) return;
     this.sound('DSSWTCHN');
+    if (this.actions.netgame) {
+      this.say("You can't quickload\nin a netgame.\n\n(press a key)");
+      return;
+    }
     if (this.quickSaveSlot < 0) {
       this.say(this.text('QSAVESPOT', 'No quicksave slot yet:\nF6 picks one.\n\n(press a key)'));
       return;

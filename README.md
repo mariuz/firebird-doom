@@ -744,12 +744,19 @@ and the things marked multiplayer-only appear. Monsters look for any player they
 player but the shooter, so friendly fire is on. Kills count for the player who made them. A dead
 player presses use to come back at their start with a pistol (`G_DoReborn`), and the level goes on.
 A level exit takes everyone to the intermission. Each player hurries their own along, and the
-next map waits for the last of them. The menu doesn't stop a netgame, and there's no pause,
-saving, cheating, demo or warping in one: none of those are in the ticcmds, so they would split
-the game in two. `npm run test:netgame` plays two players in one database, and two peers through a
+next map waits for the last of them. The menu doesn't stop a netgame. Pause and save do work, the
+way DOOM did them: through the ticcmds. The pause key, or a save from the menu or F6, goes out
+as a special command (`BT_SPECIAL` with `BTS_PAUSE` or `BTS_SAVEGAME` and the slot), with no
+fire, use or weapon change that tic. Every peer acts on it on the same tic (`G_Ticker`). A pause
+stops the world everywhere, while the tics keep going round so anyone's next pause press can end
+it. A save makes every browser write the same game into the same slot once that tic has run. It
+carries the saver's description there, and NETGAME on everyone else's. Loading stays out, as in
+DOOM: F3 and F9 say so. Cheating, demos and warping are out too, as they aren't in the ticcmds.
+`npm run test:netgame` plays two players in one database, and two peers through a
 pretend network that delivers late and out of order. `npm run test:coop` connects two real pages
 over WebRTC, with the codes swapped through the panel, and plays them in lockstep through a level
-exit and the intermission into the next map, then a deathmatch.
+exit and the intermission into the next map, then a deathmatch. On the way it pauses from the host
+and goes on from the guest, and saves from the host into both browsers.
 
 ![The deathmatch intermission: killers down the side, victims along the top, each player's frags of each other and their totals](docs/screenshot-deathmatch.png)
 
