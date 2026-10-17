@@ -673,6 +673,17 @@ the save test measures both. Maps and resources load the same way, about three t
 the `EXECUTE BLOCK`s of `INSERT`s they replaced: Freedoom 2's resources in 83 ms instead of 484,
 MAP11 in 1.1 s instead of 3.3.
 
+Saves made by older versions keep working. `scripts/fixtures/saves/` holds a save from every
+version whose saves looked different, twelve of them so far, from the first one that could save
+up to today. `npm run save-fixtures` made them: it checks out each commit that changed the
+schema or the save code into a temporary git worktree, plays E1M1 there with that version's own
+code, and keeps one save per distinct set of tables and columns. The save test loads every one
+of them with today's code. Every saved value must come back and the game must play on. Columns
+added since then take their defaults, and so far every default suits an old game: one player, no
+netgame options, a raised weapon, a fresh chase. A schema change that breaks an old save fails
+the test and names the table and column. After a schema change, `npm run save-fixtures` adds the
+new shape.
+
 ### Demos
 
 A demo is the input of a game (after `G_RecordDemo`/`G_DoPlayDemo`, in this port's own format,

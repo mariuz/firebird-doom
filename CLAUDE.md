@@ -20,7 +20,8 @@ npm run fetch-wad          # Freedoom 0.13.0 → public/wads/ (+ FREEDOOM-COPYIN
 npm test                   # SQL smoke test
 WAD=public/wads/freedoom2.wad npm run test:weapons   # weapons/specials/physics take WAD=: run both WADs
 npm run test:finale && npm run test:intermission && npm run test:menu
-WAD=public/wads/freedoom2.wad npm run test:savegame  # (and without WAD=)
+WAD=public/wads/freedoom2.wad npm run test:savegame  # (and without WAD=); also loads every old save in scripts/fixtures/saves
+npm run save-fixtures      # after a schema change: a save in the new shape (git worktrees of each schema commit)
 npm run test:demo      # determinism (and without WAD=)
 npm run test:attract       # the title loop's demos (public/demos/) replay to their checksums; npm run attract records them
 npm run test:dehacked      # DeHackEd patches
@@ -126,7 +127,7 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 | Colours, palette, upscaling | `src/present.js` |
 | Screens between levels | `src/intermission.js`, `src/finale.js`, `src/progress.js`; the hand-off is in `main.js`'s `frame()` |
 | Cheats | SQL `CHEAT` procedure; readers in `src/cheats.js`; key handling in `main.js` |
-| Save and load | `src/savegame.js` (what's saved: its `WHOLE`/`MOVING` lists; **add a column there if the simulation starts changing a new one**), `saveToSlot`/`loadFromSlot` in `main.js` |
+| Save and load | `src/savegame.js` (what's saved: its `WHOLE`/`MOVING` lists; **add a column there if the simulation starts changing a new one**); after a schema change run `npm run save-fixtures`, and if an old save stops loading, migrate it in `restoreGame`; `saveToSlot`/`loadFromSlot` in `main.js` |
 | DeHackEd, rules a patch can change | `src/dehacked.js`, the `RULES` table (SQL reads it instead of hard-coding those numbers) |
 | Demos | `src/demo.js`; recording and playback in `main.js` (`startRecording`, `playDemo`, the frame loop); the title loop's in `scripts/record-attract.mjs` (`startAttract` in `main.js`) |
 | Netgame chat | `src/chat.js` (`hu_stuff.c`'s responder, queue and ticker); the `chatchar` rides as the ticcmd's 8th field in `netTics` |

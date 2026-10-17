@@ -1,5 +1,6 @@
 // savegame-test.mjs – save, play on, load: the game comes back exactly as it was.
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
@@ -74,6 +75,48 @@ let ran = 0;
 try { for (let i = 0; i < 35; i++) { await tic(1, 0.05, 1); ran++; } } catch (err) { console.log(err.message); }
 const p = await one('SELECT p.health, t.x, t.y FROM player p JOIN things t ON t.id = p.thing_id');
 assert(fresh > maxId && ran === 35 && p.HEALTH > 0, `after loading, a new thing gets id ${fresh} (> ${maxId}) and the game plays on (${ran} tics)`);
+
+// saves written by earlier versions (scripts/fixtures/saves, npm run save-fixtures): today's code
+// loads each, every value saved comes back, and the game plays on from it
+{
+  const dir = path.join(root, 'scripts/fixtures/saves');
+  for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json.gz')).sort()) {
+    const old = JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(dir, file))));
+    const label = `${old.fixture.commit} (${old.fixture.date}, "${old.fixture.subject}")`;
+    if (!wad.mapNames().includes(old.map)) continue;   // (the fixtures are of Freedoom 1's E1M1)
+    let problem = '';
+    try {
+      await loadMap(db, wad, res, old.map, { skill: old.skill });
+      await restoreGame(db, old);
+    } catch (err) { problem = `won't load: ${err.message.split('\n')[0]}`; }
+    const now = problem ? null : await captureGame(db);
+    const added = [];
+    const dropped = [];
+    if (now) {
+      for (const [t, saved] of Object.entries(old.tables)) {
+        const cur = now.tables[t];
+        if (!cur) { dropped.push(`table ${t}`); continue; }
+        for (const c of cur.cols) if (!saved.cols.includes(c)) added.push(`${t}.${c}`);
+        const byId = new Map(cur.rows.map((r) => [JSON.stringify(r[0]), r]));
+        for (const [k, c] of saved.cols.entries()) {
+          const j = cur.cols.indexOf(c);
+          if (j < 0) { dropped.push(`${t}.${c}`); continue; }
+          for (const row of saved.rows) {
+            const back = byId.get(JSON.stringify(row[0]));
+            if (!problem && (!back || JSON.stringify(back[j]) !== JSON.stringify(row[k]))) {
+              problem = `${t} row ${row[0]} ${c}: ${JSON.stringify(row[k])} saved, ${JSON.stringify(back?.[j])} back`;
+            }
+          }
+        }
+      }
+      if (!problem) {
+        try { for (let i = 0; i < 35; i++) await tic(1, 0.05, i % 5 === 0 ? 1 : 0); } catch (err) { problem = `won't play on: ${err.message.split('\n')[0]}`; }
+      }
+    }
+    assert(!problem, `a save from ${label} loads${problem ? `: ${problem}` : `, every saved value back, and plays on`}`
+      + `${added.length ? `; ${added.length} newer columns take their defaults` : ''}${dropped.length ? `; dropped since: ${dropped.join(', ')}` : ''}`);
+  }
+}
 
 // a double bound as a parameter (firebird-wasm 0.4's binary binding) comes back bit for bit;
 // as decimal text, Firebird's parser lands some of them a bit off – what saves had to work round

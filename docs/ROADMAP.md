@@ -6,26 +6,67 @@ items as they land, and add what you find missing.
 
 ## Still open
 
-The vanilla features on this list are all done. What's left is engineering, in the order it
-would be noticed:
+In the order they'd be noticed. Vanilla features found missing on a second pass through
+`g_game.c`, `d_main.c` and `m_misc.c` come first:
+
+- **Pause and save in a netgame** (Game flow and menus): vanilla sends both through the
+  ticcmds (`BT_SPECIAL`, `BTS_PAUSE` and `BTS_SAVEGAME`), so every peer pauses, or saves to the
+  same slot, on the same tic.
+- **The launch options in a game alone** (Game flow and menus): `-nomonsters`, `-respawn` and
+  `-fast` work in single player too; today they're only in the netgame panel.
+- **A command line** (Game flow and menus): `d_main.c`'s `-warp`, `-skill`, `-episode`,
+  `-playdemo` and the rest, as URL parameters, so a link opens a given map at a given skill.
+- **Gamepads** (Game flow and menus): vanilla read a joystick (`joybfire`, `joybstrafe`,
+  `joybuse`, `joybspeed`); the browser's Gamepad API gives the same.
+- **Key bindings** (Game flow and menus): `default.cfg`'s `key_right`, `key_fire` and the rest,
+  set in vanilla's SETUP.EXE; a remembered setting here.
+
+Then the engineering:
 
 - **Performance** of `FRAME_WALLS` (Rendering): ~21 ms a frame now (from ~26), nothing at all
   while standing still. The plan's three steps are done or measured out; what's left is the
   engine's own work (~17 ms: the BSP walk, the projection, the clip), with the ideas tried
   written there.
-- **Save compatibility** (Tooling): a fixture of older saves, loaded by the current code.
 - **A TURN relay** for multiplayer behind strict NATs (needs a server; the page has none): a
   Cloudflare Worker minting TURN credentials, with short room codes for the invites.
 - **Two checks that need id's WADs** (Screens): DOOM I's episode maps at the intermission, and
   whether its endings should borrow Freedoom's text – with a `WAD=` for the screen tests so they
   can be run against a real `doom.wad` where one is to hand.
 - **A browser matrix** (Tooling): what's known to work outside Chromium.
+- **Four players over the network** (Tooling): the co-op test connects two pages; three and
+  four (the host relaying for everyone) aren't tested.
+- **Offline play** (Tooling): the service worker that isolates the page could also cache the
+  engine, the page and the Freedoom WADs, so it plays without a connection once loaded.
+- **A faster test suite** (Tooling): the pre-commit set takes about 25 minutes, one test after
+  another; most of them could run side by side.
 - **Declined extras**, noted where they come up: random sound pitch, the OPL3's rhythm mode and
   4-operator channels, a frag limit and obituaries (none of them vanilla 1.9).
 
 Everything else below is done.
 
 ## Game flow and menus
+
+- **Pause and save in a netgame.** Vanilla pauses a netgame for everyone and saves it on every
+  machine: `G_BuildTiccmd` turns the pause key and a save into `BT_SPECIAL` commands (`BTS_PAUSE`,
+  `BTS_SAVEGAME` with the slot), and `G_Ticker` acts on them on the same tic everywhere. Here the
+  ticcmd would carry them the same way (a ninth value, as the chat character is the eighth), and
+  `netTics` would pause or call `captureGame` when it runs that tic; each peer saves its own copy.
+  Loading a netgame was `-loadgame` at start in vanilla: the host would send the save in the
+  start message instead of a map.
+- **The launch options in a game alone.** `-nomonsters`, `-respawn` and `-fast` are command-line
+  options for any game in vanilla. The `GAME` columns already work at any skill; the page would
+  need three settings (or the command line below) passed to `loadMap` for a game alone too.
+- **A command line.** `d_main.c` reads `-warp`, `-skill`, `-episode`, `-nomonsters`, `-respawn`,
+  `-fast`, `-file`, `-deh`, `-playdemo`, `-timedemo` and `-record`. URL parameters can say the
+  same (`?warp=E1M3&skill=4&fast`), so a link starts a given game, and `-timedemo` would give the
+  performance work a number from the real page.
+- **Gamepads.** Vanilla read a joystick: an axis each for moving and turning, and buttons for fire,
+  strafe, use and run (`joybfire`, `joybstrafe`, `joybuse`, `joybspeed`). The Gamepad API gives
+  the same, polled in `readInput` beside the mouse.
+- **Key bindings.** Vanilla kept its keys in `default.cfg` (`key_up`, `key_fire`, `key_use`,
+  `key_strafe`…), set with SETUP.EXE. Here: a remembered setting, a menu page or a panel to set
+  them, and `readInput` reading through the table instead of fixed key codes. Vanilla's strafe
+  key (Alt held turns the turn keys into strafing) would come with it.
 
 - ~~**Skill levels.**~~ Done: the **Skill** setting, with spawn flags, half damage and double ammo
   on 1, and Nightmare's fast monsters, instant reactions, respawning and no cheats on 5.
@@ -181,10 +222,21 @@ Everything else below is done.
   pictures are rendered again and compared pixel for pixel with `docs/screenshots.json`. The
   simulation's `p_random()` makes them come out the same every time. The title loop's demos have
   the same guard (`npm run test:attract`): each replays to the checksum stored in it.
-- **Save compatibility.** Every schema change can break a player's saved games (the frags table
-  needed a guard in `restoreGame`, by hand). A fixture of saves written by earlier versions,
-  loaded by the current code in `savegame-test`, would catch that on CI, and say what each
-  version needs migrating.
+- ~~**Save compatibility.**~~ Done: `scripts/fixtures/saves/` holds a save in every shape the
+  game has written (twelve, one per distinct set of tables and columns since the first save),
+  made by `npm run save-fixtures` from git worktrees of each schema commit. `savegame-test`
+  loads each with today's code: every saved value back, and 35 tics played on. None needed
+  migrating; newer columns take their defaults.
+- **Four players over the network.** `npm run test:coop` connects two pages. Three and four
+  players go through the host as a star, and nothing tests that relay with more than one guest;
+  the test could open four contexts and check the checksums agree.
+- **Offline play.** The page already has a service worker, which makes it cross-origin isolated
+  on GitHub Pages. It could also cache the page, the engine and the Freedoom WADs, so the game
+  starts without a connection once it has loaded once.
+- **A faster test suite.** The full pre-commit set runs one test after another and takes about
+  25 minutes here. The SQL tests each open their own database, so most could run side by side
+  (`npm run test:all`, with the browser tests on their own ports), and CI could split them
+  across jobs.
 - **A browser matrix.** Everything is verified in headless Chromium. Safari and Firefox differ on
   the AudioWorklet, WebGL and pointer lock: a short list in the README of what's known to work
   where, from a manual pass, and the fallbacks each needs.
