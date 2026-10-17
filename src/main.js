@@ -18,7 +18,8 @@ import { cheatReaders, clevMap, idmusMap } from './cheats.js';
 import { nextMap } from './progress.js';
 import { Finale, parseDehStrings, setFallbackStrings } from './finale.js';
 import { Menu, TitleLoop } from './menu.js';
-import { captureGame, restoreGame, saveStore, exportSaves, importSaves, rememberFiles, recallFiles, SLOTS } from './savegame.js';
+import { captureGame, restoreGame, saveStore, exportSaves, importSaves, rememberFiles, recallFiles, SLOTS,
+  savePlayers, saveSetting, packSave, unpackSave, SAVE_VERSION } from './savegame.js';
 import { DemoPlayer, DemoRecorder, demoProblem, attractDemoFile, ATTRACT_DEMOS } from './demo.js';
 import { Intermission, levelOf, setParOverrides } from './intermission.js';
 import { THING_TYPES } from './thinginfo.js';
@@ -358,7 +359,17 @@ function updateDemoButtons() {
 async function refreshSlots() {
   const key = wadKey;
   const found = await Promise.all(Array.from({ length: SLOTS }, (_, i) => saves.get(`${key}|${i}`).catch(() => null)));
-  if (key === wadKey) saveSlots = found.map((r) => (r ? { name: r.name, map: r.map } : null));
+  if (key === wadKey) saveSlots = found.map((r) => (r ? { name: r.name, map: r.map, players: savePlayers(r.save) } : null));
+  netSaves();
+}
+
+/** The panel's Start from: a new game, or one of this WAD's saves (-loadgame) */
+function netSaves() {
+  const sel = $('net-save');
+  const was = sel.value;
+  sel.replaceChildren(new Option('a new game', '-1'),
+    ...saveSlots.flatMap((s, i) => (s ? [new Option(`save ${i + 1}: ${s.name || '(no name)'}, ${s.map}, ${s.players} player${s.players === 1 ? '' : 's'}`, String(i))] : [])));
+  sel.value = [...sel.options].some((o) => o.value === was) ? was : '-1';
 }
 
 /** G_SaveGame: the live tables, plus the automap's seen lines and DOOM I's visited secret levels */
@@ -584,7 +595,7 @@ function startMap(name, newGame, opts) {
   return run;
 }
 
-async function startMapNow(name, newGame, { skill = settings.skill, seed = null, keepDemo = false, netgame = false, attract: forTitle = false, fromFrame = false } = {}) {
+async function startMapNow(name, newGame, { skill = settings.skill, seed = null, keepDemo = false, netgame = false, attract: forTitle = false, fromFrame = false, restore = null } = {}) {
   if (net && !netgame) leaveNet('you started another game');
   running = false;
   // (a start from outside the loop – the menu, the panel, a message – waits for
@@ -630,6 +641,12 @@ async function startMapNow(name, newGame, { skill = settings.skill, seed = null,
   const ys = rows.flatMap((r) => [r[6], r[8]]);
   amView = new AutomapView({ minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) },
     wad.blockmapOrigin(name) ?? undefined);
+  // a netgame from a save (-loadgame): written back over the map before any tic runs
+  if (restore) {
+    await restoreGame(db, restore);
+    map.seen = new Set(restore.extra?.seen ?? []);
+    for (const e of restore.extra?.didSecret ?? []) didSecret.add(e);
+  }
   await loadSides();
   sidesRev = -1;
   console.log(`[firebird-doom] ${name} loaded in ${(performance.now() - t0).toFixed(0)} ms`);
@@ -757,7 +774,7 @@ async function netStats() {
  * G_InitNew for a netgame: everyone the same map, skill, seed and options
  * (-nomonsters, -respawn, -fast); me is this browser's player.
  */
-async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, timer = 0, nomonsters = 0, respawn = 0, fast = 0 }, links) {
+async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, timer = 0, nomonsters = 0, respawn = 0, fast = 0, save = null }, links) {
   if (recorder) finishRecording();
   demoPlayer = null;
   paused = false;
@@ -783,7 +800,7 @@ async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, tim
   settings.skill = skill;
   $('skill').value = String(skill);
   $('map').value = mapName;
-  await startMap(mapName, true, { skill, seed, netgame: true });
+  await startMap(mapName, true, { skill, seed, netgame: true, restore: save });
   $('net-out').value = '';
   $('net-in').value = '';
   setStatus(`${deathmatch ? 'Deathmatch' : 'Co-op'}: you are player ${me} of ${players}.`);
@@ -858,8 +875,21 @@ $('net-connect').addEventListener('click', async () => {
       const l = await link;
       lobby.guest = l;
       netPanel(`Connected. Waiting for the host to start (load the same WAD: ${$('wadname').textContent}).`);
-      l.onmessage = (m) => {
+      l.onmessage = async (m) => {
         if (m.t !== 'start' || net) return;
+        // a netgame from the host's save: unpacked and checked before anything else
+        let save = null;
+        if (m.save !== undefined) {
+          try {
+            if (typeof m.save !== 'string' || m.save.length > NET_SAVE_MAX) throw new Error('too big');
+            save = await unpackSave(m.save);
+            if (save?.version !== SAVE_VERSION || save.map !== m.map || save.skill !== m.skill || savePlayers(save) !== m.players) throw new Error('not this game');
+          } catch (err) {
+            l.send({ t: 'desync', why: `player ${m.you} couldn't read the host's save (${err.message})` });
+            netPanel(`The host's save didn't arrive whole: ${err.message}.`);
+            return;
+          }
+        }
         // (from the network: check it all before it goes anywhere near the game)
         const ok = m.wad === wadKey && wad.mapNames().includes(m.map) && [1, 2, 3, 4, 5].includes(m.skill)
           && Number.isInteger(m.seed) && Number.isInteger(m.you) && m.you >= 2 && m.you <= m.players && m.players <= MAX_PLAYERS
@@ -876,7 +906,7 @@ $('net-connect').addEventListener('click', async () => {
         $('net-timer').value = String(m.timer);
         for (const o of NET_OPTIONS) $(`net-${o}`).checked = m[o] === 1;
         beginNet({ me: m.you, players: m.players, mapName: m.map, skill: m.skill, seed: m.seed, deathmatch: m.dm, timer: m.timer,
-          nomonsters: m.nomonsters, respawn: m.respawn, fast: m.fast }, new Map([[1, l]]))
+          nomonsters: m.nomonsters, respawn: m.respawn, fast: m.fast, save }, new Map([[1, l]]))
           .catch((err) => setStatus(err.message, true));
       };
       l.onclose = () => { if (!net) { lobby.guest = null; lobby.role = null; netPanel('The host went away.'); } };
@@ -887,20 +917,45 @@ $('net-connect').addEventListener('click', async () => {
 });
 // the launch options (-nomonsters, -respawn, -fast): a checkbox each, the host's choice for all
 const NET_OPTIONS = ['nomonsters', 'respawn', 'fast'];
-$('net-start').addEventListener('click', () => {
+// the most a save may take in the start message (a data channel message tops out near 256 KB)
+const NET_SAVE_MAX = 200000;
+$('net-start').addEventListener('click', async () => {
   if (lobby.role !== 'host' || !lobby.links.length || !db || !wad) return;
   const players = lobby.links.length + 1;
-  const mapName = $('map').value;
-  const skill = settings.skill;
+  let mapName = $('map').value;
+  let skill = settings.skill;
   const seed = 1 + Math.floor(Math.random() * 2147483646);
-  const dm = Number($('net-mode').value) || 0;
-  const timer = Math.max(0, Math.min(999, Number($('net-timer').value) || 0));
-  const opts = Object.fromEntries(NET_OPTIONS.map((o) => [o, $(`net-${o}`).checked ? 1 : 0]));
+  let dm = Number($('net-mode').value) || 0;
+  let timer = Math.max(0, Math.min(999, Number($('net-timer').value) || 0));
+  let opts = Object.fromEntries(NET_OPTIONS.map((o) => [o, $(`net-${o}`).checked ? 1 : 0]));
+  // -loadgame: the game, its map, skill and rules all come from the save
+  const slot = Number($('net-save').value);
+  let save = null;
+  let packed;
+  if (slot >= 0) {
+    const rec = await saves.get(`${wadKey}|${slot}`).catch(() => null);
+    if (!rec?.save) { netPanel('That save is gone.'); return; }
+    if (savePlayers(rec.save) !== players) {
+      netPanel(`That save is for ${savePlayers(rec.save)} player${savePlayers(rec.save) === 1 ? '' : 's'}, and ${players} are here.`);
+      return;
+    }
+    packed = await packSave(rec.save);
+    if (packed.length > NET_SAVE_MAX) { netPanel("That save is too big to send."); return; }
+    save = await unpackSave(packed);   // (the host plays exactly what the others unpack)
+    ({ map: mapName, skill } = save);
+    dm = saveSetting(save, 'deathmatch');
+    timer = saveSetting(save, 'time_limit');
+    opts = Object.fromEntries(NET_OPTIONS.map((o) => [o, saveSetting(save, o) ? 1 : 0]));
+    $('net-mode').value = String(dm);
+    $('net-timer').value = String(timer);
+    for (const o of NET_OPTIONS) $(`net-${o}`).checked = opts[o] === 1;
+  }
+  if (lobby.role !== 'host' || !lobby.links.length) return;   // (someone left while the save was packed)
   const links = new Map(lobby.links.map(({ pid, link }) => [pid, link]));
   lobby.invite?.cancel();
   Object.assign(lobby, { role: null, links: [], invite: null, guest: null });
-  for (const [pid, link] of links) link.send({ t: 'start', you: pid, players, map: mapName, skill, seed, wad: wadKey, dm, timer, ...opts });
-  beginNet({ me: 1, players, mapName, skill, seed, deathmatch: dm, timer, ...opts }, links).catch((err) => setStatus(err.message, true));
+  for (const [pid, link] of links) link.send({ t: 'start', you: pid, players, map: mapName, skill, seed, wad: wadKey, dm, timer, ...opts, ...(packed ? { save: packed } : {}) });
+  beginNet({ me: 1, players, mapName, skill, seed, deathmatch: dm, timer, ...opts, save }, links).catch((err) => setStatus(err.message, true));
 });
 $('net-leave').addEventListener('click', () => {
   const was = !!net;

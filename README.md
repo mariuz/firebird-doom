@@ -684,6 +684,11 @@ netgame options, a raised weapon, a fresh chase. A schema change that breaks an 
 the test and names the table and column. After a schema change, `npm run save-fixtures` adds the
 new shape.
 
+A save from someone else is checked before any of it reaches the database. That covers an
+imported file and a netgame host's save. Its table and column names go into SQL, so each must be
+one this version has, and every row must be whole and hold plain values. Otherwise the load stops
+and says what's wrong.
+
 ### Demos
 
 A demo is the input of a game (after `G_RecordDemo`/`G_DoPlayDemo`, in this port's own format,
@@ -750,13 +755,18 @@ as a special command (`BT_SPECIAL` with `BTS_PAUSE` or `BTS_SAVEGAME` and the sl
 fire, use or weapon change that tic. Every peer acts on it on the same tic (`G_Ticker`). A pause
 stops the world everywhere, while the tics keep going round so anyone's next pause press can end
 it. A save makes every browser write the same game into the same slot once that tic has run. It
-carries the saver's description there, and NETGAME on everyone else's. Loading stays out, as in
-DOOM: F3 and F9 say so. Cheating, demos and warping are out too, as they aren't in the ticcmds.
+carries the saver's description there, and NETGAME on everyone else's. Loading during the game
+stays out, as in DOOM: F3 and F9 say so. A netgame starts from a save instead, as vanilla's
+`-loadgame` did. The host picks one of its saves under **Start from**, and its map, skill and
+rules come with it. The save goes gzipped in the start message, about 20 KB for E1M1. Each guest
+checks it like the rest of the message and restores it before the first tic. A save made in a
+netgame is for that many players, and the panel says so if the count doesn't match. Cheating, demos and warping are out too, as they aren't in the ticcmds.
 `npm run test:netgame` plays two players in one database, and two peers through a
 pretend network that delivers late and out of order. `npm run test:coop` connects two real pages
 over WebRTC, with the codes swapped through the panel, and plays them in lockstep through a level
 exit and the intermission into the next map, then a deathmatch. On the way it pauses from the host
-and goes on from the guest, and saves from the host into both browsers.
+and goes on from the guest, saves from the host into both browsers, and in the end starts a
+netgame again from that save.
 
 ![The deathmatch intermission: killers down the side, victims along the top, each player's frags of each other and their totals](docs/screenshot-deathmatch.png)
 

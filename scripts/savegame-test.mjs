@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap, insertRows } from '../src/loader.js';
-import { captureGame, restoreGame, saveStore, exportSaves, importSaves, SAVE_VERSION } from '../src/savegame.js';
+import { captureGame, restoreGame, saveStore, exportSaves, importSaves, SAVE_VERSION, packSave, unpackSave, savePlayers, saveSetting } from '../src/savegame.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -155,6 +155,30 @@ assert(fresh > maxId && ran === 35 && p.HEALTH > 0, `after loading, a new thing 
 let refused = false;
 try { await restoreGame(db, { ...saved, version: 99 }); } catch { refused = true; }
 assert(refused, 'a save from another version is refused');
+
+// a save from someone else (an imported file, another player's start message) names tables and
+// columns that go into SQL: only this version's own pass, and every row must be whole
+{
+  const bad = (what, change) => {
+    const s2 = JSON.parse(JSON.stringify(saved));
+    change(s2);
+    return restoreGame(db, s2).then(() => `${what}: taken`, (err) => err.message);
+  };
+  const said = [
+    await bad('a column with SQL in it', (s2) => { s2.tables.game.cols[0] = 'tic) VALUES (1); DROP TABLE things; --'; }),
+    await bad('a column of another table', (s2) => { s2.tables.player.cols[1] = 'x'; }),
+    await bad('a short row', (s2) => { s2.tables.things.rows[0].pop(); }),
+    await bad('an object for a value', (s2) => { s2.tables.player.rows[0][1] = { a: 1 }; }),
+  ];
+  const things = (await one('SELECT COUNT(*) n FROM things')).N;
+  assert(/column this version/.test(said[0]) && /column this version/.test(said[1]) && /damaged/.test(said[2]) && /damaged/.test(said[3]) && things > 0,
+    `a save with a column this version doesn't have, a short row or an object for a value is refused before any SQL runs (${said.join('; ')})`);
+  // packed for the wire (a netgame started from a save): gzipped, and back exactly
+  const packed = await packSave(saved);
+  const back = await unpackSave(packed);
+  assert(JSON.stringify(back) === JSON.stringify(saved) && packed.length < JSON.stringify(saved).length / 2 && savePlayers(saved) === 1 && saveSetting(saved, 'deathmatch', 9) === 0,
+    `a save packs for the start message in ${(packed.length / 1024).toFixed(0)} KB (from ${(JSON.stringify(saved).length / 1024).toFixed(0)}) and unpacks exactly; it's for ${savePlayers(saved)} player`);
+}
 
 // the store (memory here, IndexedDB in the page)
 const store = saveStore();

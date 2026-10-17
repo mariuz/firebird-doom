@@ -46,11 +46,63 @@ export async function captureGame(db, extra = {}) {
 const bound = (row) => row.map((v) => (typeof v === 'number' && !Number.isFinite(v) ? null : v));
 
 /**
+ * A save comes from a file someone imported, or from another player of a
+ * netgame: its table and column names go into SQL, so each must be one this
+ * version has, and every row the right length of plain values. Throws saying
+ * what's wrong.
+ */
+async function checkTables(db, save) {
+  if (!save || typeof save !== 'object' || !save.tables || typeof save.tables !== 'object') throw new Error('not a save');
+  const names = [...WHOLE, ...Object.keys(MOVING)];
+  const { rows } = await db.query(`SELECT TRIM(LOWER(rf.rdb$relation_name)) t, TRIM(LOWER(rf.rdb$field_name)) c
+      FROM rdb$relation_fields rf WHERE LOWER(rf.rdb$relation_name) IN (${names.map((n) => `'${n}'`).join(', ')})`);
+  const known = new Map(names.map((n) => [n, new Set()]));
+  for (const r of rows) known.get(r.T)?.add(r.C);
+  for (const t of names) {
+    const tab = save.tables[t];
+    if (tab === undefined && !(t in MOVING)) continue;   // (older saves: no frags, no respawn queue)
+    if (!tab || !Array.isArray(tab.cols) || !Array.isArray(tab.rows)) throw new Error(`the save's ${t} table is damaged`);
+    for (const c of tab.cols) if (typeof c !== 'string' || !known.get(t).has(c)) throw new Error(`the save has a column this version doesn't: ${t}.${String(c)}`);
+    const plain = (v) => v === null || typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean';
+    for (const r of tab.rows) if (!Array.isArray(r) || r.length !== tab.cols.length || !r.every(plain)) throw new Error(`the save's ${t} table is damaged`);
+  }
+  if (!Number.isSafeInteger(save.seq) || save.seq < 0) throw new Error('the save is damaged');
+}
+
+/** How many players a save is for (GAME.PLAYERS: 1 in a save from before netgames) */
+export function savePlayers(save) { return saveSetting(save, 'players', 1); }
+
+/** A GAME column of a save (deathmatch, time_limit, nomonsters…), or FALLBACK if the save predates it */
+export function saveSetting(save, col, fallback = 0) {
+  const g = save?.tables?.game;
+  const k = g?.cols?.indexOf(col) ?? -1;
+  return k >= 0 && g.rows[0] ? g.rows[0][k] ?? fallback : fallback;
+}
+
+/** A save for the wire: gzipped JSON in base64 (a save of E1M1 is ~76 KB as JSON, ~20 KB this way) */
+export async function packSave(save) {
+  const gz = await new Response(new Blob([JSON.stringify(save)]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+  let bin = '';
+  const bytes = new Uint8Array(gz);
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+/** packSave's other half; throws on anything that isn't one */
+export async function unpackSave(text) {
+  const bin = atob(text);
+  const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+  const json = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  return JSON.parse(json);
+}
+
+/**
  * G_LoadGame: write a capture back. The map must have just been loaded with
  * loadMap(save.map), which builds the static tables and the blockmap.
  */
 export async function restoreGame(db, save) {
   if (save?.version !== SAVE_VERSION) throw new Error(`unknown save version ${save?.version}`);
+  await checkTables(db, save);
   for (const t of WHOLE) {
     await db.exec(`DELETE FROM ${t}`);
     const { cols, rows } = save.tables[t] ?? { cols: [], rows: [] };   // (older saves: no frags, no respawn queue)

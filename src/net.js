@@ -17,7 +17,7 @@
 // (the host's invite, the guest's reply): an SDP offer and answer, sent once
 // ICE gathering has finished, through a public STUN server.
 
-export const NET_VERSION = 3;   // (2: the launch options and the chatchar; 3: the special)
+export const NET_VERSION = 4;   // (2: the launch options and the chatchar; 3: the special; 4: a save in the start message)
 
 /**
  * The ticcmd's ninth value, G_BuildTiccmd's BT_SPECIAL: 0 none, SPECIAL_PAUSE

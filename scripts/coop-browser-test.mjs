@@ -318,6 +318,38 @@ try {
   assert(fr.every((f) => f.length === 1 && f[0].KILLER === 2 && f[0].VICTIM === 1 && f[0].N === 1),
     `player 2 kills player 1: frags[2][1] = 1 in both games`);
   await guest.evaluate(() => document.getElementById('net-leave').click());
+
+  // loading a netgame (-loadgame): the host starts from the co-op save of slot 5. The save goes
+  // in the start message, and both games restore it before the first tic: its map, its tic, its
+  // rules (co-op, though the panel still says deathmatch)
+  await until(host, () => window.doom.net?.error, null, 30000);
+  await host.evaluate(() => document.getElementById('net-leave').click());
+  await host.evaluate(() => document.getElementById('net-host').click());
+  await until(host, () => document.getElementById('net-out').value.length > 50);
+  await guest.evaluate(() => document.getElementById('net-join').click());
+  await guest.fill('#net-in', await value(host, 'net-out'));
+  await guest.evaluate(() => document.getElementById('net-connect').click());
+  await until(guest, () => document.getElementById('net-out').value.length > 50);
+  await host.fill('#net-in', await value(guest, 'net-out'));
+  await host.evaluate(() => document.getElementById('net-connect').click());
+  await until(host, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 30000);
+  const savedGame = await host.evaluate(() => window.doom.saveRecord(4).then((r) => {
+    const g = r.save.tables.game;
+    return { map: r.map, tic: g.rows[0][g.cols.indexOf('tic')] };
+  }));
+  await host.selectOption('#net-save', '4');
+  await host.evaluate(() => document.getElementById('net-start').click());
+  for (const p of [host, guest]) await until(p, () => window.doom.net?.tic > 10 && window.doom.screen === 'level' && !window.doom.melting, null, 40000);
+  const loaded = await Promise.all([host, guest].map((p) => p.evaluate(async () => ({
+    net: window.doom.net,
+    game: (await window.doom.sql('SELECT tic, map_name, deathmatch, players FROM game'))[0],
+    mode: document.getElementById('net-mode').value,
+  }))));
+  const loadedSame = await agree();
+  assert(loaded.every((d) => d.game.MAP_NAME.trim() === savedGame.map && d.game.TIC >= savedGame.tic && d.net.tic < savedGame.tic
+      && d.game.DEATHMATCH === 0 && d.net.deathmatch === 0 && d.mode === '0' && d.game.PLAYERS === 2) && loadedSame.same,
+    `the host starts from its save: both games are on ${savedGame.map} at the save's tic ${savedGame.tic} and on (${loaded.map((d) => d.game.TIC).join(', ')}; ${loaded[0].net.tic} tics since the start), co-op as saved, and in step (tic ${loadedSame.tic})`);
+  await guest.evaluate(() => document.getElementById('net-leave').click());
 } catch (err) {
   console.error(err);
   failures++;

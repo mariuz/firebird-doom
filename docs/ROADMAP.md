@@ -9,9 +9,6 @@ items as they land, and add what you find missing.
 In the order they'd be noticed. Vanilla features found missing on a second pass through
 `g_game.c`, `d_main.c` and `m_misc.c` come first:
 
-- **Loading a netgame** (Game flow and menus): pause and save work in a netgame now; vanilla
-  loaded one with `-loadgame` on every machine at the start, which here would be the host's save
-  in the start message.
 - **The launch options in a game alone** (Game flow and menus): `-nomonsters`, `-respawn` and
   `-fast` work in single player too; today they're only in the netgame panel.
 - **A command line** (Game flow and menus): `d_main.c`'s `-warp`, `-skill`, `-episode`,
@@ -51,9 +48,10 @@ Everything else below is done.
   that tic; `netTics` acts on it as `G_Ticker` does. A pause stops the world on every peer while
   the tics go round; a save writes the same game into the same slot in every browser after that
   tic, the saver's description there and NETGAME elsewhere. F3 and F9 refuse, as in DOOM.
-- **Loading a netgame.** Vanilla loaded one with `-loadgame` on every machine at the start. Here
-  the host would send its save in the start message instead of a map, and every peer would
-  `restoreGame` it before the first tic (the guests checking it like the rest of the message).
+- ~~**Loading a netgame.**~~ Done (`-loadgame`): the panel's **Start from** picks one of the
+  host's saves; it goes gzipped in the start message (`packSave`), each guest checks it and every
+  peer restores it before the first tic (`startMap`'s `restore`). `restoreGame` now refuses a save
+  whose tables or columns this version doesn't have, or whose rows aren't whole.
 - **The launch options in a game alone.** `-nomonsters`, `-respawn` and `-fast` are command-line
   options for any game in vanilla. The `GAME` columns already work at any skill; the page would
   need three settings (or the command line below) passed to `loadMap` for a game alone too.
