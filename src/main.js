@@ -108,6 +108,11 @@ let lastSoundId = 0;
 for (const ev of ['keydown', 'pointerdown', 'touchstart']) window.addEventListener(ev, () => audio.unlock(), { capture: true });
 document.addEventListener('visibilitychange', () => audio.suspend(document.hidden));
 let lastFrame = { tic: 0, walls: 0, sprites: 0, draw: 0, rows: 0 };
+// d_main.c's -nomonsters, -respawn, -fast: the checkboxes under the view (for this
+// visit, as a command line is for one run), and the ones the game being played began with
+const LAUNCH_OPTIONS = ['nomonsters', 'respawn', 'fast'];
+const launchOptions = { nomonsters: 0, respawn: 0, fast: 0 };
+let gameOptions = { ...launchOptions };
 let wallCache = null;                // FRAME_WALLS' last answer and what it answered ({ key, walls })
 let wallsReused = 0;                 // frames drawn from it without asking again
 // a netgame (net.js): { me, players, deathmatch, timer, ls: Lockstep, links: Map(player → link) }; null alone
@@ -277,7 +282,7 @@ function goTitle() {
 async function startRecording() {
   if (!map || !db) return;
   await startMap(map.name, true);
-  recorder = new DemoRecorder({ wad: wadKey, map: map.name, skill: settings.skill, seed: lastSeed });
+  recorder = new DemoRecorder({ wad: wadKey, map: map.name, skill: settings.skill, seed: lastSeed, ...gameOptions });
   setStatus(`● Recording a demo of ${map.name}`);
   updateDemoButtons();
 }
@@ -303,11 +308,14 @@ async function playDemo(demo) {
   if (demo.wad !== wadKey) { setStatus(`That demo was recorded with ${demo.wad.split('|')[0]}; load that WAD first`, true); return; }
   if (!wad.mapNames().includes(demo.map)) { setStatus(`This WAD has no ${demo.map}`, true); return; }
   $('map').value = demo.map;
-  await startMap(demo.map, true, { skill: demo.skill, seed: demo.seed });
+  await startMap(demo.map, true, { skill: demo.skill, seed: demo.seed, options: demoOptions(demo) });
   demoPlayer = new DemoPlayer(demo);
   setStatus(`▶ Playing a demo of ${demo.map} (Esc stops it)`);
   updateDemoButtons();
 }
+
+/** the launch options a demo was recorded with (none, in one from before they were kept) */
+const demoOptions = (demo) => Object.fromEntries(LAUNCH_OPTIONS.map((o) => [o, demo[o] ? 1 : 0]));
 
 function endPlayback(why) {
   if (attract) { endAttract(); return; }
@@ -329,7 +337,7 @@ async function startAttract(n) {
   attract = n;
   frameStarting = true;
   try {
-    await startMap(demo.map, true, { skill: demo.skill, seed: demo.seed, keepDemo: true, attract: true, fromFrame: true });
+    await startMap(demo.map, true, { skill: demo.skill, seed: demo.seed, keepDemo: true, attract: true, fromFrame: true, options: demoOptions(demo) });
     if (attract !== n || !title) return;   // (a game started meanwhile)
     demoPlayer = new DemoPlayer(demo);
   } catch (err) {
@@ -405,6 +413,7 @@ async function loadFromSlot(slot) {
   if (inFrame) await inFrame.catch(() => {});
   try {
     await restoreGame(db, save);
+    gameOptions = Object.fromEntries(LAUNCH_OPTIONS.map((o) => [o, saveSetting(save, o) ? 1 : 0]));
     map.seen = new Set(save.extra?.seen ?? []);
     didSecret.clear();
     for (const e of save.extra?.didSecret ?? []) didSecret.add(e);
@@ -595,7 +604,7 @@ function startMap(name, newGame, opts) {
   return run;
 }
 
-async function startMapNow(name, newGame, { skill = settings.skill, seed = null, keepDemo = false, netgame = false, attract: forTitle = false, fromFrame = false, restore = null } = {}) {
+async function startMapNow(name, newGame, { skill = settings.skill, seed = null, keepDemo = false, netgame = false, attract: forTitle = false, fromFrame = false, restore = null, options = null } = {}) {
   if (net && !netgame) leaveNet('you started another game');
   running = false;
   // (a start from outside the loop – the menu, the panel, a message – waits for
@@ -622,9 +631,12 @@ async function startMapNow(name, newGame, { skill = settings.skill, seed = null,
   const t0 = performance.now();
   // P_RANDOM's seed: a demo's own, or a fresh one for a new game (a new level carries on)
   const s = seed ?? (newGame ? 1 + Math.floor(Math.random() * 2147483646) : null);
+  // the launch options: a demo's own, a netgame's, the game's as it goes from level to
+  // level (G_DoLoadLevel keeps them), or the checkboxes' for a game starting now
+  gameOptions = options ?? (net ? { nomonsters: net.nomonsters, respawn: net.respawn, fast: net.fast }
+    : keepDemo ? gameOptions : { ...launchOptions });   // (keepDemo: nextLevel, the next map or this one after a death)
   await loadMap(db, wad, res, name, {
-    skill, newGame, players: net?.players ?? 1, deathmatch: net?.deathmatch ?? 0, timer: net?.timer ?? 0,
-    nomonsters: net?.nomonsters ?? 0, respawn: net?.respawn ?? 0, fast: net?.fast ?? 0, seed: s,
+    skill, newGame, players: net?.players ?? 1, deathmatch: net?.deathmatch ?? 0, timer: net?.timer ?? 0, ...gameOptions, seed: s,
   });
   await db.exec(`UPDATE viewcfg SET player_id = ${net?.me ?? 1} WHERE id = 1`);   // (consoleplayer)
   lastSeed = s;
@@ -1535,6 +1547,7 @@ async function boot() {
       get menu() { return menu; },
       get automap() { return { view: amView, open: showMap, message: amMsg?.text ?? null, arrows: amArrows }; },
       get gamma() { return settings.gamma; },
+      get options() { return { checked: { ...launchOptions }, game: { ...gameOptions } }; },
       // the mouse, for tests: DOM-style moves and buttons, as under pointer lock
       mouse: { move: (dx, dy) => mouse.move(dx, dy, settings.mouse), button: (b, down) => mouse.button(b, down) },
       get debug() { return { running, paused, frames, wallsReused, loopAlive, levelSerial, shownState, menu: !!menu?.active, melt: !!melt, keys: [...keys], mouseTurn, showMap, amFollow: amView?.follow, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, error: net.ls.error } }; },
@@ -1685,6 +1698,13 @@ $('skill').addEventListener('change', (e) => {
   saveSettings();
   if (db && map) startMap(map.name, true).catch((err) => setStatus(err.message, true));
 });
+for (const o of LAUNCH_OPTIONS) {
+  $(`opt-${o}`).addEventListener('change', (e) => {
+    launchOptions[o] = e.target.checked ? 1 : 0;
+    // (a game alone on screen starts again with them; a netgame keeps the host's)
+    if (db && map && !title && !net) startMap(map.name, true).catch((err) => setStatus(err.message, true));
+  });
+}
 // demos: record, stop, play, download, load
 $('demo-record').addEventListener('click', () => startRecording().catch((err) => setStatus(err.message, true)));
 $('demo-stop').addEventListener('click', () => { if (recorder) finishRecording(); else if (demoPlayer) endPlayback('stopped'); });

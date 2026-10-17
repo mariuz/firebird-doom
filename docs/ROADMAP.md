@@ -9,8 +9,6 @@ items as they land, and add what you find missing.
 In the order they'd be noticed. Vanilla features found missing on a second pass through
 `g_game.c`, `d_main.c` and `m_misc.c` come first:
 
-- **The launch options in a game alone** (Game flow and menus): `-nomonsters`, `-respawn` and
-  `-fast` work in single player too; today they're only in the netgame panel.
 - **A command line** (Game flow and menus): `d_main.c`'s `-warp`, `-skill`, `-episode`,
   `-playdemo` and the rest, as URL parameters, so a link opens a given map at a given skill.
 - **Gamepads** (Game flow and menus): vanilla read a joystick (`joybfire`, `joybstrafe`,
@@ -52,9 +50,10 @@ Everything else below is done.
   host's saves; it goes gzipped in the start message (`packSave`), each guest checks it and every
   peer restores it before the first tic (`startMap`'s `restore`). `restoreGame` now refuses a save
   whose tables or columns this version doesn't have, or whose rows aren't whole.
-- **The launch options in a game alone.** `-nomonsters`, `-respawn` and `-fast` are command-line
-  options for any game in vanilla. The `GAME` columns already work at any skill; the page would
-  need three settings (or the command line below) passed to `loadMap` for a game alone too.
+- ~~**The launch options in a game alone.**~~ Done: **No monsters**, **Respawn** and **Fast**
+  beside Skill, for this visit (as a command line is for one run); a change starts a new game on
+  the map, the game keeps them from level to level, and a demo records them in its header and
+  plays back with them. The command line below can set them too.
 - **A command line.** `d_main.c` reads `-warp`, `-skill`, `-episode`, `-nomonsters`, `-respawn`,
   `-fast`, `-file`, `-deh`, `-playdemo`, `-timedemo` and `-record`. URL parameters can say the
   same (`?warp=E1M3&skill=4&fast`), so a link starts a given game, and `-timedemo` would give the

@@ -800,6 +800,14 @@ takes away their reaction time when they spawn, as in `P_SpawnMobj`). They go in
 message with the game type and timer, and sit in `GAME` (`NOMONSTERS`, `RESPAWN`, `FAST`) for
 `INIT_MAP`, `WORLD_TIC` and `MONSTERS_THINK` to read, where Nightmare already took those paths.
 
+The same three are command-line options for any game in DOOM, so they're also under the view
+beside **Skill**, for a game alone. Like the Skill setting, ticking or unticking one starts a new
+game on the current map. They hold for that game from level to level, as DOOM keeps them until
+it quits. Like a command line, they aren't remembered for the next visit. A netgame takes the
+host's instead. A demo keeps the options it was recorded with in its header, as DOOM's demos did
+(`respawnparm`, `fastparm`, `nomonsters`). It plays back with those whatever is ticked, and the
+title loop's demos always play without any.
+
 **Chat** is `hu_stuff.c`'s. **T** opens a line to everyone, and with three or more players
 **G**, **I**, **B** or **R** opens one to green, indigo, brown or red alone (your own colour's key
 gets you talking to yourself). You type, Backspace takes a character back, and Enter sends the
@@ -1033,7 +1041,8 @@ arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd>
 launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggles the chainsaw and
 <kbd>3</kbd> again the super shotgun. A change takes the old weapon down and the new one up. <kbd>Tab</kbd> shows the
 automap (type IDDT on it to reveal everything), <kbd>P</kbd> pauses, <kbd>Esc</kbd> opens the menu, and the function keys do what DOOM's do: <kbd>F1</kbd> help, <kbd>F2</kbd> save, <kbd>F3</kbd> load, <kbd>F4</kbd> sound volume, <kbd>F5</kbd> detail, <kbd>F6</kbd>/<kbd>F9</kbd> quicksave and quickload, <kbd>F7</kbd> end game, <kbd>F8</kbd> messages on/off, <kbd>F10</kbd> quit, <kbd>F11</kbd> gamma correction. Under the view you can set **Detail** (320 or 160 columns),
-**Renderer** (BSP + solidsegs, or brute force), **Skill** (1–5), **Display** (WebGL palette shader or Canvas 2D),
+**Renderer** (BSP + solidsegs, or brute force), **Skill** (1–5), **No monsters**, **Respawn** and **Fast** (DOOM's
+command-line options, for this visit only), **Display** (WebGL palette shader or Canvas 2D),
 **Smooth upscaling**, **Mouse moves forward**, **Audio** on/off (<kbd>M</kbd>), and **Sound** and **Music** volume. These settings
 are remembered in your browser. The SQL console under the game queries the live game
 database. Try the `IDKFA` button.

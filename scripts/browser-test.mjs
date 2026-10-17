@@ -271,6 +271,36 @@ try {
       `standing still the walls are drawn from the last answer (${r1 - r0} frames in a second), the same as asking again; the ceiling moved, they're asked anew`);
   }
 
+  // the launch options in a game alone (-nomonsters, -fast): ticking one starts a new game on
+  // this map with them; a demo keeps them in its header and plays them back, whatever's ticked then
+  {
+    const gameRow = () => doom(() => window.doom.sql("SELECT g.nomonsters, g.respawn, g.fast, (SELECT COUNT(*) FROM things t WHERE t.kind = 'monster') monsters FROM game g").then((r) => r[0]));
+    const tick = async (id, on) => {
+      await doom(({ id, on }) => { const b = document.getElementById(id); b.checked = on; b.dispatchEvent(new Event('change')); }, { id, on });
+      await until(() => window.doom.melting);
+      await until(() => window.doom.screen === 'level' && window.doom.settled);
+    };
+    await tick('opt-nomonsters', true);
+    await tick('opt-fast', true);
+    const ticked = await gameRow();
+    await doom(() => window.doom.record());
+    await until(() => window.doom.screen === 'level' && window.doom.settled);
+    await page.waitForTimeout(1500);
+    await doom(() => window.doom.stopDemo());
+    const header = await doom(() => { const d = window.doom.demo.last; return { nomonsters: d.nomonsters, respawn: d.respawn, fast: d.fast, calls: d.calls.length }; });
+    await tick('opt-nomonsters', false);
+    await tick('opt-fast', false);
+    const plain = await gameRow();
+    await doom(() => window.doom.playDemo());   // (it resolves once the demo's map is loaded)
+    const replay = await gameRow();
+    await until(() => window.doom.settled);
+    await doom(() => window.doom.stopDemo());
+    assert(ticked.NOMONSTERS === 1 && ticked.FAST === 1 && ticked.RESPAWN === 0 && ticked.MONSTERS === 0 && plain.NOMONSTERS === 0 && plain.MONSTERS > 0,
+      `No monsters and Fast ticked: a new game on this map with them (${ticked.MONSTERS} monsters); unticked, the monsters are back (${plain.MONSTERS})`);
+    assert(header.nomonsters === 1 && header.fast === 1 && header.respawn === 0 && header.calls > 0 && replay.NOMONSTERS === 1 && replay.FAST === 1 && replay.MONSTERS === 0,
+      'a demo recorded with them keeps them in its header, and plays back with them though the boxes are unticked');
+  }
+
   // the automap
   await key('Tab', 300);
   assert(await doom(() => window.doom.automap.open), 'Tab opens the automap');
