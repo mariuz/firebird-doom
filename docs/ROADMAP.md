@@ -9,8 +9,6 @@ items as they land, and add what you find missing.
 In the order they'd be noticed. Vanilla features found missing on a second pass through
 `g_game.c`, `d_main.c` and `m_misc.c` come first:
 
-- **Gamepads** (Game flow and menus): vanilla read a joystick (`joybfire`, `joybstrafe`,
-  `joybuse`, `joybspeed`); the browser's Gamepad API gives the same.
 - **Key bindings** (Game flow and menus): `default.cfg`'s `key_right`, `key_fire` and the rest,
   set in vanilla's SETUP.EXE; a remembered setting here.
 
@@ -58,9 +56,11 @@ Everything else below is done.
   `-playdemo`, `-timedemo` (a demo tic a frame, timed: the frames a second of the whole page) and
   the netgame panel's `-deathmatch`, `-altdeath`, `-timer`. `-file` and `-deh` stay with the
   file pickers: a URL can't hand the page a local file.
-- **Gamepads.** Vanilla read a joystick: an axis each for moving and turning, and buttons for fire,
-  strafe, use and run (`joybfire`, `joybstrafe`, `joybuse`, `joybspeed`). The Gamepad API gives
-  the same, polled in `readInput` beside the mouse.
+- ~~**Gamepads.**~~ Done (`src/gamepad.js`): the first pad's left stick or d-pad as DOOM's
+  digital joystick, buttons 0–3 as `joybfire`, `joybstrafe`, `joybspeed`, `joybuse`; the menus
+  step on it with `M_Responder`'s joywait (button 0 Enter, 1 Backspace), and a button on the
+  title opens the menu. A second stick (turning on the right, as modern ports do) isn't
+  vanilla, and would be asked about first.
 - **Key bindings.** Vanilla kept its keys in `default.cfg` (`key_up`, `key_fire`, `key_use`,
   `key_strafe`…), set with SETUP.EXE. Here: a remembered setting, a menu page or a panel to set
   them, and `readInput` reading through the table instead of fixed key codes. Vanilla's strafe

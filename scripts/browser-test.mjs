@@ -444,6 +444,54 @@ try {
     await p2.close();
   }
 
+  // a gamepad as DOOM's joystick: a button on the title opens the menu, the stick and button 0
+  // go through it to a new game; then the stick walks and turns, button 1 held makes it strafe,
+  // button 0 fires (a stand-in pad: navigator.getGamepads answers with it)
+  {
+    const p3 = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    p3.on('pageerror', (e) => errors.push(e.message));
+    await p3.addInitScript(() => {
+      window.__pad = { connected: true, axes: [0, 0, 0, 0], buttons: Array.from({ length: 16 }, () => ({ pressed: false })) };
+      navigator.getGamepads = () => [window.__pad];
+    });
+    await p3.goto(`http://localhost:${port}/`);
+    await p3.waitForFunction(() => window.doom?.title && window.doom.screen === 'title', null, { timeout: 120000, polling: 100 });
+    const pad = (change) => p3.evaluate((c) => {
+      const pd = window.__pad;
+      pd.axes = [c.x ?? 0, c.y ?? 0, 0, 0];
+      pd.buttons.forEach((b, i) => { b.pressed = (c.buttons ?? []).includes(i); });
+    }, change);
+    const press = async (b) => { await pad({ buttons: [b] }); await p3.waitForTimeout(250); await pad({}); await p3.waitForTimeout(250); };
+    await press(0);
+    const opened = await p3.evaluate(() => window.doom.menu.active);
+    for (let i = 0; i < 3; i++) await press(0);   // (New Game, the first episode, the skill on its cursor)
+    await p3.waitForFunction(() => window.doom.screen === 'level' && window.doom.settled && !window.doom.menu.active, null, { timeout: 120000, polling: 100 });
+    const at = () => p3.evaluate(() => window.doom.sql("SELECT x, y, angle FROM things WHERE kind = 'player'").then((r) => r[0]));
+    const still = () => p3.evaluate(() => window.doom.sql("UPDATE things SET momx = 0, momy = 0 WHERE kind = 'player'"));
+    await p3.evaluate(() => window.doom.sql("UPDATE things SET hp = 0, st = 'dead', solid = 0 WHERE kind = 'monster'"));
+    const along = (a, b) => ({ fwd: (b.X - a.X) * Math.cos(a.ANGLE) + (b.Y - a.Y) * Math.sin(a.ANGLE), right: (b.X - a.X) * Math.sin(a.ANGLE) - (b.Y - a.Y) * Math.cos(a.ANGLE) });
+    const hold = async (change, ms) => { await pad(change); await p3.waitForTimeout(ms); await pad({}); await p3.waitForTimeout(300); };
+    const s0 = await at();
+    await hold({ y: -1 }, 400);
+    const s1 = await at();
+    await still();
+    await hold({ x: 1 }, 300);
+    const s2 = await at();
+    await still();
+    const s2b = await at();
+    await hold({ x: 1, buttons: [1] }, 400);
+    const s3 = await at();
+    const shells0 = await p3.evaluate(() => window.doom.sql('SELECT bullets FROM player').then((r) => r[0].BULLETS));
+    await hold({ buttons: [0] }, 300);
+    const shells1 = await p3.evaluate(() => window.doom.sql('SELECT bullets FROM player').then((r) => r[0].BULLETS));
+    const walk = along(s0, s1);
+    const strafe = along(s2b, s3);
+    assert(opened, 'a gamepad button on the title opens the menu (G_Responder)');
+    assert(walk.fwd > 8 && s1.ANGLE === s0.ANGLE && s2.ANGLE !== s1.ANGLE && strafe.right > 8 && Math.abs(strafe.fwd) < strafe.right / 2 && s3.ANGLE === s2b.ANGLE && shells1 < shells0,
+      `and through the menus into a game; the stick up walks (${walk.fwd.toFixed(0)}), right turns, with button 1 held strafes (${strafe.right.toFixed(0)}), button 0 fires (${shells0} → ${shells1} bullets)`);
+    await p3.close();
+  }
+
   assert(errors.length === 0, `no page errors${errors.length ? `: ${errors.join('; ')}` : ''}`);
 } catch (err) {
   console.log(`FAIL ${err.message}`);

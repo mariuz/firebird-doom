@@ -1056,6 +1056,15 @@ DOOM's limit (`MAXPLMOVE`, running speed). In DOOM, pushing the mouse forward wa
 (`mousey`). Most players turned that off, so here it's **Mouse moves forward**, off unless you
 choose it. `src/mouse.js` holds the mouse's half of the ticcmd.
 
+A gamepad is DOOM's joystick (`src/gamepad.js`, through the browser's Gamepad API). Vanilla read
+one stick as on or off each way, and so does this: the left stick past halfway, or the d-pad.
+Up and down walk, and left and right turn. Its buttons 0 to 3 are `default.cfg`'s: fire
+(`joybfire`), strafe (`joybstrafe`, held: left and right strafe), run (`joybspeed`) and use
+(`joybuse`). On most pads those are A, B, X and Y. As in `M_Responder`, the stick moves through
+the menus, repeating every 5 tics up and down and every 2 left and right. Button 0 is Enter and
+button 1 is Backspace. On the title any button opens the menu (`G_Responder`), so a game can
+start without touching the keyboard. A second stick has no part in it: DOOM's joystick had one.
+
 ### Command line
 
 DOOM took options on its command line (`D_DoomMain`'s `M_CheckParm`); the page takes the same ones

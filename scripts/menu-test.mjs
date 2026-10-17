@@ -9,6 +9,7 @@ import { Renderer } from '../src/renderer.js';
 import { parseDehStrings } from '../src/finale.js';
 import { Menu, TitleLoop } from '../src/menu.js';
 import { parseCommandLine, startMapFor } from '../src/cmdline.js';
+import { readJoystick, JoyMenu } from '../src/gamepad.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -378,6 +379,23 @@ for (const file of ['freedoom1.wad', 'freedoom2.wad']) {
   const demo = parseCommandLine('?timedemo=demo2&iwad=freedoom2');
   assert(demo.demo.name === 'demo2' && demo.demo.timed && demo.iwad === 'freedoom2' && parseCommandLine('?playdemo=last').demo.timed === false,
     '-timedemo demo2 and -iwad freedoom2; -playdemo last');
+}
+
+// the joystick (gamepad.js): a digital stick past halfway, the d-pad as the stick, buttons 0–3;
+// in the menus M_Responder's joywait (5 tics up and down, 2 left and right), a button over the stick
+{
+  const pad = (axes, pressed = []) => ({ connected: true, axes, buttons: Array.from({ length: 16 }, (_, i) => ({ pressed: pressed.includes(i) })) });
+  const a = readJoystick([null, pad([0.3, -0.9], [0, 2])]);
+  const d = readJoystick([pad([0, 0], [15, 13])]);
+  assert(a.x === 0 && a.y === -1 && a.buttons.join() === 'true,false,true,false' && d.x === 1 && d.y === 1 && readJoystick([]) === null,
+    'the first pad is the joystick: 0.3 reads as centred, -0.9 as up; the d-pad pushes it too; no pad, no joystick');
+  const jm = new JoyMenu();
+  const t = 1000 / 35;
+  const down = { x: 0, y: 1, buttons: [false, false, false, false] };
+  const keys = [jm.key(down, 0), jm.key(down, 4 * t), jm.key(down, 5.1 * t), jm.key({ ...down, x: 1 }, 10.2 * t), jm.key({ ...down, x: 1 }, 11.5 * t),
+    jm.key({ ...down, buttons: [true, false, false, false] }, 12.3 * t), jm.key({ x: 0, y: 0, buttons: [false, true, false, false] }, 17.4 * t)];
+  assert(keys.join() === 'ArrowDown,,ArrowDown,ArrowRight,,Enter,Backspace',
+    `in the menus the stick repeats after 5 tics (down) or 2 (right), button 0 is Enter over the stick, button 1 Backspace (${keys.join(' ')})`);
 }
 
 console.log(failures ? `${failures} failure(s)` : 'menu ok');

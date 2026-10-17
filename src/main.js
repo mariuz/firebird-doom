@@ -30,6 +30,7 @@ import { Lockstep, createInvite, acceptInvite, MAX_PLAYERS, SPECIAL_PAUSE, SPECI
 import { Chat, chatStrings, HU_MSGTIMEOUT } from './chat.js';
 import { MouseInput, moveCommand } from './mouse.js';
 import { parseCommandLine, startMapFor } from './cmdline.js';
+import { readJoystick, JoyMenu, JOYB } from './gamepad.js';
 
 const $ = (id) => document.getElementById(id);
 let canvas = $('screen');   // replaced by a fresh element when the display kind changes
@@ -606,6 +607,13 @@ function readInput(tics) {
   let side = (k('KeyD') || k('Period') ? 1 : 0) - (k('KeyA') || k('Comma') ? 1 : 0);
   let turnKeys = (arrow('ArrowLeft') ? 1 : 0) - (arrow('ArrowRight') ? 1 : 0);
   let run = k('ShiftLeft') || k('ShiftRight') ? 1 : 0;
+  // G_BuildTiccmd's joystick (gamepad.js): Y walks, X turns – or strafes while
+  // joybstrafe is held – and its buttons fire, use and run, as the keys do
+  const js = readJoystick(gamepads());
+  if (js) {
+    fwd = Math.max(-1, Math.min(1, fwd - js.y));
+    if (js.buttons[JOYB.speed]) run = 1;
+  }
   if (touch.move) {
     fwd = Math.max(-1, Math.min(1, -touch.move.dy / 40));
     side = Math.max(-1, Math.min(1, touch.move.dx / 40));
@@ -614,17 +622,19 @@ function readInput(tics) {
   // moves forward, a double click on either uses; the X turns or strafes, the Y
   // (if chosen) walks. Then forward and side clamp to MAXPLMOVE
   const m = mouse.take(tics, { run, mousey: settings.mousey });
-  if (m.strafe) {
-    side -= turnKeys;
+  // (strafe = key_strafe || mousebuttons[mousebstrafe] || joybuttons[joybstrafe]: any of
+  // them turns the turn keys and the stick's X into strafing)
+  if (m.strafe || js?.buttons[JOYB.strafe]) {
+    side = Math.max(-1, Math.min(1, side - turnKeys + (js?.x ?? 0)));
     turnKeys = 0;
-  }
+  } else if (js?.x) turnKeys = Math.max(-1, Math.min(1, turnKeys - js.x));
   if (m.forward || m.side) ({ fwd, side, run } = moveCommand(fwd * (run ? 50 : 25) + m.forward, side * (run ? 50 : 25) + m.side, run));
   // angleturn 640/1280 per tic in DOOM ≈ 0.061 / 0.123 rad
   const turn = turnKeys * (run ? 0.123 : 0.07) * tics + mouseTurn + m.turn;
   mouseTurn = 0;
-  const fire = k('ControlLeft') || k('ControlRight') || (k('KeyF') && !showMap) || fireClick || m.fire ? 1 : 0;
+  const fire = k('ControlLeft') || k('ControlRight') || (k('KeyF') && !showMap) || fireClick || m.fire || js?.buttons[JOYB.fire] ? 1 : 0;
   if (fireClick === 'tap') fireClick = false;
-  const use = k('Space') || k('KeyE') || k('TapUse') || m.use ? 1 : 0;
+  const use = k('Space') || k('KeyE') || k('TapUse') || m.use || js?.buttons[JOYB.use] ? 1 : 0;
   keys.delete('TapUse');
   const w = weaponSel;
   weaponSel = 0;
@@ -1057,8 +1067,35 @@ function resume() {
   }
 }
 
+/** the browser's gamepads (none where there's no Gamepad API) */
+function gamepads() {
+  try { return navigator.getGamepads?.() ?? []; } catch { return []; }
+}
+
+const joyMenu = new JoyMenu();
+let joyButtonsHeld = false;
+/**
+ * The joystick outside play: M_Responder steps through the menus with it
+ * (joywait), and on the title G_Responder opens the menu when a button goes down.
+ */
+function joystickScreens() {
+  const js = readJoystick(gamepads());
+  if (!js) return;
+  const now = performance.now();
+  const down = js.buttons.some(Boolean);
+  if (menu?.active) {
+    const k = joyMenu.key(js, now);
+    if (k) menu.key(k);
+  } else if (title && menu && down && !joyButtonsHeld) {
+    openMenu();
+    joyMenu.holdOff(now);
+  }
+  joyButtonsHeld = down;
+}
+
 async function frameNow() {
   frames++;
+  joystickScreens();
   if (!running || document.hidden || (paused && !menu?.active)) {
     lastTic = performance.now();
     nextFrame();
