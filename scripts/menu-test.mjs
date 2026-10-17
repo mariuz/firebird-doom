@@ -8,6 +8,7 @@ import { Wad } from '../src/wad.js';
 import { Renderer } from '../src/renderer.js';
 import { parseDehStrings } from '../src/finale.js';
 import { Menu, TitleLoop } from '../src/menu.js';
+import { parseCommandLine, startMapFor } from '../src/cmdline.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -353,6 +354,30 @@ for (const file of ['freedoom1.wad', 'freedoom2.wad']) {
     m.draw(real);
   }
   assert(missing.size === 0 && strings.get('NIGHTMARE'), `${file}: every menu and title graphic is in the WAD${missing.size ? ` (missing ${[...missing].join(' ')})` : ''}, and its NIGHTMARE string`);
+}
+
+// D_DoomMain's command line as URL parameters (cmdline.js)
+{
+  const d1 = ['E1M1', 'E1M2', 'E1M3', 'E2M1', 'E4M1'];
+  const d2 = ['MAP01', 'MAP07', 'MAP13'];
+  const cl = parseCommandLine('?warp=E1M3&skill=4&fast&nomonsters&nomusic&record&timer=10&altdeath&zap=1');
+  assert(cl.autostart && startMapFor(cl, d1) === 'E1M3' && cl.skill === 4 && cl.options.fast === 1 && cl.options.nomonsters === 1 && cl.options.respawn === 0
+    && !cl.sound.music && cl.sound.sfx && cl.record && cl.netgame.deathmatch === 2 && cl.netgame.timer === 10 && cl.unknown.join() === 'zap' && !cl.problems.length,
+    '?warp=E1M3&skill=4&fast&nomonsters&nomusic&record&timer=10&altdeath: all read, an unknown one set aside');
+  const warp = (w, maps) => { try { return startMapFor(parseCommandLine(`?warp=${encodeURIComponent(w)}`), maps); } catch (err) { return err.message; } };
+  assert(warp('1 3', d1) === 'E1M3' && warp('1,3', d1) === 'E1M3' && warp('13', d1) === 'E1M3' && warp('7', d2) === 'MAP07' && warp('map13', d2) === 'MAP13'
+    && /no map/.test(warp('5 1', d1)) && /no map/.test(warp('1 3', d2)),
+    "-warp as DOOM took it (1 3 in DOOM, 7 in DOOM II), as a map name, or as IDCLEV's digits; a map the WAD hasn't is said");
+  const ep = parseCommandLine('?episode=4');
+  const sk = parseCommandLine('?skill=5');
+  const none = parseCommandLine('?nomonsters');
+  const bad = parseCommandLine('?skill=9&episode=x&iwad=doom2&playdemo=foo');
+  assert(startMapFor(ep, d1) === 'E4M1' && startMapFor(ep, d2) === 'MAP01' && startMapFor(sk, d1) === 'E1M1' && sk.autostart
+    && !none.autostart && startMapFor(none, d1) === null && bad.problems.length === 4 && !bad.autostart,
+    '-episode 4 starts E4M1 (DOOM II: MAP01); -skill alone starts the first map; -nomonsters alone stays on the title; bad values are said');
+  const demo = parseCommandLine('?timedemo=demo2&iwad=freedoom2');
+  assert(demo.demo.name === 'demo2' && demo.demo.timed && demo.iwad === 'freedoom2' && parseCommandLine('?playdemo=last').demo.timed === false,
+    '-timedemo demo2 and -iwad freedoom2; -playdemo last');
 }
 
 console.log(failures ? `${failures} failure(s)` : 'menu ok');

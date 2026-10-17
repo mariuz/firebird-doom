@@ -29,6 +29,7 @@ import { Melt } from './wipe.js';
 import { Lockstep, createInvite, acceptInvite, MAX_PLAYERS, SPECIAL_PAUSE, SPECIAL_SAVE } from './net.js';
 import { Chat, chatStrings, HU_MSGTIMEOUT } from './chat.js';
 import { MouseInput, moveCommand } from './mouse.js';
+import { parseCommandLine, startMapFor } from './cmdline.js';
 
 const $ = (id) => document.getElementById(id);
 let canvas = $('screen');   // replaced by a fresh element when the display kind changes
@@ -99,8 +100,12 @@ let amArrows = [];                  // the players' arrows the automap drew last
 let amCheating = 0;                 // IDDT: 0, 1 (every line), 2 (…and every thing)
 // ST_Responder's cheats, typed any time during play (respelt by a DeHackEd patch: cheatReaders)
 let cheats = cheatReaders();
+// D_DoomMain's command line, from the URL (cmdline.js): read once, at load
+const commandLine = parseCommandLine(location.search);
 const audio = new DoomAudio();
-audio.setVolumes(settings.sfx / 100, settings.music / 100);
+// (-nosfx, -nomusic, -nosound: silent for this visit, whatever the sliders say)
+const applyVolumes = () => audio.setVolumes(commandLine.sound.sfx ? settings.sfx / 100 : 0, commandLine.sound.music ? settings.music / 100 : 0);
+applyVolumes();
 audio.setOpl3(settings.synth === 'opl3');
 audio.setEnabled(settings.audio);
 let lastSoundId = 0;
@@ -112,6 +117,7 @@ let lastFrame = { tic: 0, walls: 0, sprites: 0, draw: 0, rows: 0 };
 // visit, as a command line is for one run), and the ones the game being played began with
 const LAUNCH_OPTIONS = ['nomonsters', 'respawn', 'fast'];
 const launchOptions = { nomonsters: 0, respawn: 0, fast: 0 };
+let timedemo = null;                 // -timedemo: { start, frames, tics } while it runs, then the result
 let gameOptions = { ...launchOptions };
 let wallCache = null;                // FRAME_WALLS' last answer and what it answered ({ key, walls })
 let wallsReused = 0;                 // frames drawn from it without asking again
@@ -320,8 +326,49 @@ const demoOptions = (demo) => Object.fromEntries(LAUNCH_OPTIONS.map((o) => [o, d
 function endPlayback(why) {
   if (attract) { endAttract(); return; }
   demoPlayer = null;
-  setStatus(`Demo ended: ${why}.`);
+  if (timedemo && timedemo.ms == null && timedemo.start != null) {
+    // G_CheckDemoStatus with -timedemo: how long it took, in tics and frames a second
+    const ms = performance.now() - timedemo.start;
+    timedemo = { tics: timedemo.tics, frames: timedemo.frames, ms: Math.round(ms), realtics: Math.round((ms * 35) / 1000),
+      fps: Number(((timedemo.frames * 1000) / ms).toFixed(1)), why };
+    setStatus(`Timedemo: ${timedemo.tics} game tics in ${timedemo.realtics} real tics (${(timedemo.ms / 1000).toFixed(1)} s), ${timedemo.fps} frames a second (${why}).`);
+  } else setStatus(`Demo ended: ${why}.`);
   updateDemoButtons();
+}
+
+/**
+ * The command line's start (D_DoomMain, after the title is up): a demo to play
+ * or time, or with -warp, -episode or -skill a game at once (autostart),
+ * recording if -record says so. Problems are said in the status line.
+ */
+async function runCommandLine() {
+  const cl = commandLine;
+  if (cl.unknown.length) console.info(`[firebird-doom] command line: ignoring ${cl.unknown.join(', ')}`);
+  if (cl.netgame.deathmatch != null) $('net-mode').value = String(cl.netgame.deathmatch);
+  if (cl.netgame.timer != null) $('net-timer').value = String(cl.netgame.timer);
+  if (cl.problems.length) setStatus(`Command line: ${cl.problems.join('; ')}.`, true);
+  if (cl.demo) {
+    let demo = null;
+    if (cl.demo.name === 'last') demo = await saves.get(`${wadKey}|demo`).catch(() => null);
+    else if (!pwads.length && !dehPatch) {
+      const n = Number(cl.demo.name.slice(4));
+      demo = await fetch(new URL(`./demos/${attractDemoFile(baseWad.label, n)}`, location.href))
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    }
+    if (!demo || demoProblem(demo)) { setStatus(`Command line: no ${cl.demo.name} for this WAD.`, true); return; }
+    await playDemo(demo);
+    if (cl.demo.timed && demoPlayer) timedemo = { start: null, frames: 0, tics: 0 };
+    return;
+  }
+  let name;
+  try { name = startMapFor(cl, wad.mapNames()); } catch (err) { setStatus(`Command line: ${err.message}.`, true); return; }
+  if (!name) return;
+  if (cl.skill) { settings.skill = cl.skill; $('skill').value = String(cl.skill); }
+  $('map').value = name;
+  if (cl.record) {
+    await startMap(name, true);
+    await startRecording();
+  } else await startMap(name, true);
 }
 
 /**
@@ -1114,13 +1161,17 @@ async function frameNow() {
         readInput(tics);              // (drained, so it doesn't pile up for later)
         // a demo plays in its own time: as many of its calls as the tics gone
         // by cover (at least one), whatever the frame rate it was recorded at
-        let owed = tics;
+        // (-timedemo: one call a frame, whatever the clock says, as G_TimeDemo's singletics)
+        const timing = timedemo && timedemo.ms == null;
+        if (timing && timedemo.start == null) timedemo.start = performance.now();   // (from the first tic: the load's melt isn't counted)
+        let owed = timing ? 1 : tics;
         let ran = 0;
         while (owed > 0) {
           args = demoTake('tic');
           if (!args) break;
           hud = (await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', args, { rowMode: 'object' })).rows[0];
-          owed -= args[0];
+          owed -= timing ? owed : args[0];
+          if (timing) { timedemo.frames++; timedemo.tics += args[0]; }
           ran++;
           lastFire = args[4] === 1;
           if (hud.EXIT_KIND) break;
@@ -1548,6 +1599,8 @@ async function boot() {
       get automap() { return { view: amView, open: showMap, message: amMsg?.text ?? null, arrows: amArrows }; },
       get gamma() { return settings.gamma; },
       get options() { return { checked: { ...launchOptions }, game: { ...gameOptions } }; },
+      get timedemo() { return timedemo && { ...timedemo }; },
+      get commandLine() { return commandLine; },
       // the mouse, for tests: DOM-style moves and buttons, as under pointer lock
       mouse: { move: (dx, dy) => mouse.move(dx, dy, settings.mouse), button: (b, down) => mouse.button(b, down) },
       get debug() { return { running, paused, frames, wallsReused, loopAlive, levelSerial, shownState, menu: !!menu?.active, melt: !!melt, keys: [...keys], mouseTurn, showMap, amFollow: amView?.follow, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, error: net.ls.error } }; },
@@ -1590,9 +1643,12 @@ async function boot() {
         return `showing the intermission ${from} → ${to}`;
       },
     };
-    await loadGame(settings.game);
+    // (-iwad: one of the bundled WADs for this visit, the Game setting left as it is)
+    if (commandLine.iwad) $('game').value = commandLine.iwad;
+    await loadGame(commandLine.iwad ?? settings.game);
     goTitle();   // DOOM starts on its title screen; a key brings up the menu
     resume();    // (the loop is running since the first map; this would start it otherwise)
+    await runCommandLine();
   } catch (err) {
     console.error(err);
     setStatus(err.message, true);
@@ -1683,7 +1739,7 @@ for (const id of ['sfxvol', 'musicvol']) {
     settings.music = Number($('musicvol').value);
     saveSettings();
     audio.unlock();
-    audio.setVolumes(settings.sfx / 100, settings.music / 100);
+    applyVolumes();
   });
 }
 $('renderer').addEventListener('change', async (e) => {
@@ -1699,6 +1755,9 @@ $('skill').addEventListener('change', (e) => {
   if (db && map) startMap(map.name, true).catch((err) => setStatus(err.message, true));
 });
 for (const o of LAUNCH_OPTIONS) {
+  // (-nomonsters, -respawn, -fast on the command line tick them for this visit)
+  launchOptions[o] = commandLine.options[o];
+  $(`opt-${o}`).checked = launchOptions[o] === 1;
   $(`opt-${o}`).addEventListener('change', (e) => {
     launchOptions[o] = e.target.checked ? 1 : 0;
     // (a game alone on screen starts again with them; a netgame keeps the host's)

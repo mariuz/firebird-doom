@@ -422,6 +422,28 @@ try {
   assert(await doom(() => window.doom.title.page === 'CREDIT' && !window.doom.demo.attract && !window.doom.demo.playing),
     `when the demo is over, the credits page (${await doom(() => window.doom.title.page)})`);
 
+  // the command line: a link starts a game, as `doom -warp 1 3 -skill 4 -fast -nomusic` would
+  {
+    const p2 = await browser.newPage({ viewport: { width: 1000, height: 800 } });
+    p2.on('pageerror', (e) => errors.push(e.message));
+    await p2.goto(`http://localhost:${port}/?warp=1,3&skill=4&fast&nomusic`);
+    await p2.waitForFunction(() => window.doom?.screen === 'level' && window.doom.settled && !window.doom.title, null, { timeout: 120000, polling: 100 });
+    const got = await p2.evaluate(async () => ({
+      game: (await window.doom.sql('SELECT map_name, skill, fast, nomonsters FROM game'))[0],
+      skill: document.getElementById('skill').value, fast: document.getElementById('opt-fast').checked, music: window.doom.commandLine.sound.music,
+    }));
+    assert(got.game.MAP_NAME.trim() === 'E1M3' && got.game.SKILL === 4 && got.game.FAST === 1 && got.game.NOMONSTERS === 0 && got.skill === '4' && got.fast && !got.music,
+      `?warp=1,3&skill=4&fast&nomusic: straight into E1M3 on skill 4, fast, the music silent (${JSON.stringify(got.game)})`);
+    // -timedemo: the title loop's DEMO1, a call a frame as fast as frames come, timed (stopped after a while: it's 700 tics)
+    await p2.goto(`http://localhost:${port}/?timedemo=demo1`);
+    await p2.waitForFunction(() => window.doom?.timedemo?.frames > 20, null, { timeout: 120000, polling: 100 });
+    await p2.evaluate(() => window.doom.stopDemo());
+    const td = await p2.evaluate(() => ({ ...window.doom.timedemo, status: document.getElementById('status').textContent }));
+    assert(td.frames > 20 && td.tics >= td.frames && td.fps > 0 && td.ms > 0 && /Timedemo: \d+ game tics/.test(td.status),
+      `?timedemo=demo1: ${td.tics} tics in ${td.frames} frames, ${td.fps} frames a second ("${td.status}")`);
+    await p2.close();
+  }
+
   assert(errors.length === 0, `no page errors${errors.length ? `: ${errors.join('; ')}` : ''}`);
 } catch (err) {
   console.log(`FAIL ${err.message}`);

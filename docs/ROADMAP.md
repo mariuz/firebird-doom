@@ -9,8 +9,6 @@ items as they land, and add what you find missing.
 In the order they'd be noticed. Vanilla features found missing on a second pass through
 `g_game.c`, `d_main.c` and `m_misc.c` come first:
 
-- **A command line** (Game flow and menus): `d_main.c`'s `-warp`, `-skill`, `-episode`,
-  `-playdemo` and the rest, as URL parameters, so a link opens a given map at a given skill.
 - **Gamepads** (Game flow and menus): vanilla read a joystick (`joybfire`, `joybstrafe`,
   `joybuse`, `joybspeed`); the browser's Gamepad API gives the same.
 - **Key bindings** (Game flow and menus): `default.cfg`'s `key_right`, `key_fire` and the rest,
@@ -54,10 +52,12 @@ Everything else below is done.
   beside Skill, for this visit (as a command line is for one run); a change starts a new game on
   the map, the game keeps them from level to level, and a demo records them in its header and
   plays back with them. The command line below can set them too.
-- **A command line.** `d_main.c` reads `-warp`, `-skill`, `-episode`, `-nomonsters`, `-respawn`,
-  `-fast`, `-file`, `-deh`, `-playdemo`, `-timedemo` and `-record`. URL parameters can say the
-  same (`?warp=E1M3&skill=4&fast`), so a link starts a given game, and `-timedemo` would give the
-  performance work a number from the real page.
+- ~~**A command line.**~~ Done (`src/cmdline.js`): URL parameters for `-warp` (map names,
+  DOOM's numbers or IDCLEV's digits), `-episode`, `-skill` (each starts a game, as autostart did),
+  `-nomonsters`, `-respawn`, `-fast`, `-nomusic`, `-nosfx`, `-nosound`, `-iwad`, `-record`,
+  `-playdemo`, `-timedemo` (a demo tic a frame, timed: the frames a second of the whole page) and
+  the netgame panel's `-deathmatch`, `-altdeath`, `-timer`. `-file` and `-deh` stay with the
+  file pickers: a URL can't hand the page a local file.
 - **Gamepads.** Vanilla read a joystick: an axis each for moving and turning, and buttons for fire,
   strafe, use and run (`joybfire`, `joybstrafe`, `joybuse`, `joybspeed`). The Gamepad API gives
   the same, polled in `readInput` beside the mouse.

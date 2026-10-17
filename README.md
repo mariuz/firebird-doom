@@ -1056,6 +1056,36 @@ DOOM's limit (`MAXPLMOVE`, running speed). In DOOM, pushing the mouse forward wa
 (`mousey`). Most players turned that off, so here it's **Mouse moves forward**, off unless you
 choose it. `src/mouse.js` holds the mouse's half of the ticcmd.
 
+### Command line
+
+DOOM took options on its command line (`D_DoomMain`'s `M_CheckParm`); the page takes the same ones
+as URL parameters, so a link can start a given game. A parameter without a value is a switch:
+
+```text
+?warp=E1M3&skill=4&fast          doom -warp 1 3 -skill 4 -fast
+?iwad=freedoom2&warp=7           doom -iwad freedoom2.wad -warp 7
+?timedemo=demo1                  doom -timedemo demo1
+```
+
+- **`warp`** takes a map name (`E1M3`, `MAP07`), DOOM's own numbers (`1,3` or `1 3` for DOOM,
+  `7` for DOOM II), or IDCLEV's two digits. **`episode`** starts that episode's first map, and
+  **`skill`** (1–5) sets the Skill. As in DOOM, any of the three starts a game straight away
+  instead of the title.
+- **`nomonsters`**, **`respawn`** and **`fast`** tick the launch options for the visit.
+- **`nomusic`**, **`nosfx`** and **`nosound`** keep the game quiet for the visit, whatever the
+  sliders say.
+- **`iwad`** picks `freedoom1` or `freedoom2` for the visit, leaving the Game setting as it is.
+- **`record`** starts recording a demo with the game.
+- **`playdemo`** plays a demo: `demo1`–`demo4` are the title loop's, and `last` is the last one
+  recorded here.
+- **`timedemo`** plays one as fast as frames come, a demo tic a frame (`G_TimeDemo`'s
+  `singletics`). It then reports the game tics, the real time and the frames a second, a
+  benchmark of the whole page and not just of Firebird.
+- **`deathmatch`**, **`altdeath`** and **`timer`** fill in the netgame panel for a host.
+
+Unknown parameters are ignored, as DOOM ignored what it didn't look for. A bad value, like a
+map the WAD hasn't got, is said in the status line. `src/cmdline.js` reads them.
+
 ## Deploying
 
 [.github/workflows/pages.yml](.github/workflows/pages.yml) runs on every push to `main`. It
