@@ -1162,7 +1162,9 @@ test:browser` runs one locally. All three play both tests through. That covers:
 Not covered: Safari itself on macOS and iOS (WebKit on Linux is close to it, not the same), pointer lock
 (a headless page can't take it, so the test moves `doom.mouse` directly), a real gamepad, and touch.
 The matrix found one bug, now fixed: a WebKit data channel on its way down can still say it's open and
-then throw on a send. A failed send now ends the netgame the way a closed link does.
+then throw on a send, and it reports that as a page error even when the page catches it. So a failed send
+now ends the netgame the way a closed link does, and a player who leaves hangs up properly: they send their
+goodbye, close a second later, and whoever hears the goodbye stops sending to them.
 It also found that a key tapped faster than a frame (Playwright's `press()` in Firefox and WebKit) never
 counts, just as DOOM drops a tap shorter than a tic, so the tests hold their keys for a few tics.
 Headless Firefox grants pointer lock on a click where headless Chromium doesn't, so there losing it

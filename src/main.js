@@ -867,7 +867,11 @@ async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, tim
     special: 0, saveName: '', paused: false };
   netWait = 0;
   for (const [pid, link] of links) {
-    link.onmessage = (m) => net?.links === links && net.ls.receive(pid, m);
+    link.onmessage = (m) => {
+      // (a goodbye: nothing more goes down that link, which its sender is closing)
+      if (m?.t === 'desync') link.dead = true;
+      if (net?.links === links) net.ls.receive(pid, m);
+    };
     link.onclose = () => {
       if (net?.links !== links || net.ls.error) return;
       const why = pid === 1 ? 'the host left' : `player ${pid} left`;
@@ -890,8 +894,13 @@ async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, tim
 /** Out of the netgame (and the lobby): the links closed, back to one player at the next start. */
 function leaveNet(why) {
   const links = net ? [...net.links.values()] : [...lobby.links.map((l) => l.link), lobby.guest].filter(Boolean);
-  if (net && !net.ls.error) for (const l of links) l.send({ t: 'desync', why: `player ${net.me} left` });
-  for (const l of links) l.close();
+  // a hang-up: the reason first, and the channel closed a second later, once the
+  // others have stopped sending on it (WebKit reports a send that crosses a close
+  // as a page error, whatever catches it)
+  if (net && !net.ls.error) {
+    for (const l of links) l.send({ t: 'desync', why: `player ${net.me} left` });
+    for (const l of links) { l.dead = true; setTimeout(() => l.close(), 1000); }
+  } else for (const l of links) l.close();
   lobby.invite?.cancel();
   Object.assign(lobby, { role: null, links: [], invite: null, guest: null });
   if (net) console.info(`[firebird-doom] co-op over: ${why}`);

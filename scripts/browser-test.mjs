@@ -83,6 +83,30 @@ await new Promise((resolve, reject) => {
 });
 
 const browser = await launchBrowser();
+/**
+ * Go to URL (or reload, with none) and wait for READY. In WebKit on CI the engine has
+ * now and then trapped while starting ("Out of bounds memory access"; docs/ROADMAP.md):
+ * then the page is reloaded once, as a player would, with a warning. A page that still
+ * doesn't get there says where it stopped.
+ */
+async function load(pg, url, ready) {
+  const crashed = () => /memory access|RuntimeError/i.test(document.getElementById('status')?.textContent ?? '');
+  const go = async () => {
+    await (url ? pg.goto(url) : pg.reload());
+    await pg.waitForFunction(`(${ready})() || (${crashed})()`, null, { timeout: 120000, polling: 100 });
+    return pg.evaluate(`!!(${ready})()`);
+  };
+  const status = () => pg.evaluate(() => document.getElementById('status')?.textContent).catch((e) => e.message);
+  try {
+    if (await go()) return;
+    console.log(`WARNING: the page didn't start: its status "${await status()}"; reloading it once`);
+    url = null;
+    if (await go()) return;
+  } catch (err) {
+    throw new Error(`${err.message.split('\n')[0]}; the page: "${await status()}"`);
+  }
+  throw new Error(`the page didn't start, twice: "${await status()}"`);
+}
 console.log(`(in ${browserName} ${browser.version()})`);
 const errors = [];
 try {
@@ -478,8 +502,7 @@ try {
   {
     const p2 = await browser.newPage({ viewport: { width: 1000, height: 800 } });
     p2.on('pageerror', (e) => errors.push(e.message));
-    await p2.goto(`http://localhost:${port}/?warp=1,3&skill=4&fast&nomusic`);
-    await p2.waitForFunction(() => window.doom?.screen === 'level' && window.doom.settled && !window.doom.title, null, { timeout: 120000, polling: 100 });
+    await load(p2, `http://localhost:${port}/?warp=1,3&skill=4&fast&nomusic`, () => window.doom?.screen === 'level' && window.doom.settled && !window.doom.title);
     const got = await p2.evaluate(async () => ({
       game: (await window.doom.sql('SELECT map_name, skill, fast, nomonsters FROM game'))[0],
       skill: document.getElementById('skill').value, fast: document.getElementById('opt-fast').checked, music: window.doom.commandLine.sound.music,
@@ -487,8 +510,7 @@ try {
     assert(got.game.MAP_NAME.trim() === 'E1M3' && got.game.SKILL === 4 && got.game.FAST === 1 && got.game.NOMONSTERS === 0 && got.skill === '4' && got.fast && !got.music,
       `?warp=1,3&skill=4&fast&nomusic: straight into E1M3 on skill 4, fast, the music silent (${JSON.stringify(got.game)})`);
     // -timedemo: the title loop's DEMO1, a call a frame as fast as frames come, timed (stopped after a while: it's 700 tics)
-    await p2.goto(`http://localhost:${port}/?timedemo=demo1`);
-    await p2.waitForFunction(() => window.doom?.timedemo?.frames > 20, null, { timeout: 120000, polling: 100 });
+    await load(p2, `http://localhost:${port}/?timedemo=demo1`, () => window.doom?.timedemo?.frames > 20);
     await p2.evaluate(() => window.doom.stopDemo());
     const td = await p2.evaluate(() => ({ ...window.doom.timedemo, status: document.getElementById('status').textContent }));
     assert(td.frames > 20 && td.tics >= td.frames && td.fps > 0 && td.ms > 0 && /Timedemo: \d+ game tics/.test(td.status),
@@ -506,8 +528,7 @@ try {
       window.__pad = { connected: true, axes: [0, 0, 0, 0], buttons: Array.from({ length: 16 }, () => ({ pressed: false })) };
       navigator.getGamepads = () => [window.__pad];
     });
-    await p3.goto(`http://localhost:${port}/`);
-    await p3.waitForFunction(() => window.doom?.title && window.doom.screen === 'title', null, { timeout: 120000, polling: 100 });
+    await load(p3, `http://localhost:${port}/`, () => window.doom?.title && window.doom.screen === 'title');
     const pad = (change) => p3.evaluate((c) => {
       const pd = window.__pad;
       pd.axes = [c.x ?? 0, c.y ?? 0, 0, 0];
@@ -554,8 +575,7 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 800 } });
     const p4 = await ctx.newPage();
     p4.on('pageerror', (e) => errors.push(e.message));
-    await p4.goto(`http://localhost:${port}/`);
-    await p4.waitForFunction(() => window.doom?.title, null, { timeout: 120000, polling: 100 });
+    await load(p4, `http://localhost:${port}/`, () => window.doom?.title);
     let ready = null;
     for (let i = 0; i < 200 && !(ready?.controlled && ready.page.length && ready.wads.includes('freedoom1.wad')); i++) {
       ready = await p4.evaluate(() => window.doom.offline());
@@ -565,8 +585,7 @@ try {
       `a first visit leaves it ready to play offline (the page's files as version ${ready.page[0]}, and ${ready.wads.join(', ')})`);
     server.kill();
     await new Promise((r) => (server.exitCode !== null ? r() : server.once('exit', r)));
-    await p4.reload();
-    await p4.waitForFunction(() => window.doom?.title, null, { timeout: 120000, polling: 100 });
+    await load(p4, null, () => window.doom?.title);
     const offTic = () => p4.evaluate(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));
     await p4.evaluate(() => { const m = document.getElementById('map'); m.value = 'E1M2'; m.dispatchEvent(new Event('change')); });
     await p4.waitForFunction(() => window.doom.screen === 'level' && window.doom.settled, null, { timeout: 120000, polling: 100 });
