@@ -98,6 +98,9 @@ try {
     throw new Error(`${err.message.split('\n')[0]} waiting for ${String(fn).slice(0, 80)}; the page: ${JSON.stringify(at)}`);
   });
   const key = async (k, wait = 150) => { await page.keyboard.press(k); await page.waitForTimeout(wait); };
+  // a game key held for a few tics: the frame loop reads which keys are down, as G_BuildTiccmd
+  // does, so a press and release with no frame between (Firefox's and WebKit's press()) is missed
+  const tap = async (k, wait = 150) => { await page.keyboard.down(k); await page.waitForTimeout(100); await page.keyboard.up(k); await page.waitForTimeout(wait); };
   const tic = () => doom(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));
   const pos = () => doom(() => window.doom.sql("SELECT x, y FROM things WHERE kind = 'player'").then((r) => r[0]));
 
@@ -356,7 +359,7 @@ try {
   await until(() => window.doom.screen === 'intermission', null, 30000);
   assert(true, 'a level exit melts into the intermission');
   await until(() => !window.doom.melting);
-  for (let i = 0; i < 6 && (await doom(() => window.doom.screen)) === 'intermission'; i++) await key('Space', 600);
+  for (let i = 0; i < 6 && (await doom(() => window.doom.screen)) === 'intermission'; i++) await tap('Space', 600);
   await until(() => window.doom.melting, null, 60000);   // (the next map melts in once it's loaded)
   await until(() => !window.doom.melting);
   const map1 = (await doom(() => window.doom.sql('SELECT map_name FROM game').then((r) => r[0].MAP_NAME))).trim();
@@ -415,7 +418,7 @@ try {
     throw err;
   }
   await until(() => !window.doom.melting);
-  for (let i = 0; i < 6 && (await doom(() => window.doom.screen)) === 'intermission'; i++) await key('Space', 600);
+  for (let i = 0; i < 6 && (await doom(() => window.doom.screen)) === 'intermission'; i++) await tap('Space', 600);
   await until(() => window.doom.melting, null, 60000);
   await until(() => !window.doom.melting);
   await page.keyboard.down('KeyW'); await page.waitForTimeout(700); await page.keyboard.up('KeyW');
