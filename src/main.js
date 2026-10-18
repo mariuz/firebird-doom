@@ -871,7 +871,8 @@ async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, tim
     link.onclose = () => {
       if (net?.links !== links || net.ls.error) return;
       const why = pid === 1 ? 'the host left' : `player ${pid} left`;
-      if (me === 1) send('all', { t: 'desync', why });
+      // (to everyone else: not down the link that just closed)
+      if (me === 1) for (const [q, l] of links) if (q !== pid) l.send({ t: 'desync', why });
       net.ls.fail(why);
     };
   }

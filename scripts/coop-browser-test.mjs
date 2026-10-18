@@ -37,11 +37,12 @@ const browser = await launchBrowser();   // (BROWSER=firefox or webkit for those
 console.log(`(in ${browserName} ${browser.version()})`);
 const errors = [];
 const consoleLog = [];
+const stacks = [];   // (where each page error came from, printed if there are any)
 try {
   const open = async (who) => {
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 900 } });
     const page = await ctx.newPage();
-    page.on('pageerror', (e) => errors.push(`${who}: ${e.message}`));
+    page.on('pageerror', (e) => { errors.push(`${who}: ${e.message}`); stacks.push(`${who}: ${e.stack}`); });
     const recent = [];
     page.on('console', (m) => {
       if (m.type() === 'error') consoleLog.push(`${who}: ${m.text().slice(0, 300)}`);
@@ -49,11 +50,20 @@ try {
     });
     page.setDefaultTimeout(120000);
     await page.goto(`http://localhost:${port}/`);
-    // (a page that doesn't start says where it stopped: once, in WebKit on CI, one didn't)
-    await page.waitForFunction(() => window.doom?.title, null, { timeout: 120000, polling: 100 }).catch(async (err) => {
+    // A page that doesn't start says where it stopped. In WebKit on CI the engine has now
+    // and then trapped while a second page started ("Out of bounds memory access", about
+    // one co-op run in ten; docs/ROADMAP.md): then it's reloaded once, as a player would,
+    // and the test says so
+    const started = () => page.waitForFunction(() => window.doom?.title || /memory access|RuntimeError/i.test(document.getElementById('status')?.textContent ?? ''),
+      null, { timeout: 120000, polling: 100 }).then(() => page.evaluate(() => !!window.doom?.title));
+    let up = await started().catch(() => false);
+    if (!up) {
       const at = await page.evaluate(() => document.getElementById('status')?.textContent).catch((e) => e.message);
-      throw new Error(`the ${who}'s page didn't start (${err.message.split('\n')[0]}): its status "${at}"; the console:\n  ${recent.slice(-15).join('\n  ')}`);
-    });
+      console.log(`WARNING: the ${who}'s page didn't start: its status "${at}"; the console:\n  ${recent.slice(-8).join('\n  ')}\n  reloading it once`);
+      await page.reload();
+      up = await started().catch(() => false);
+      if (!up) throw new Error(`the ${who}'s page didn't start, twice`);
+    }
     await page.evaluate(() => { document.getElementById('net').open = true; });
     return page;
   };
@@ -411,7 +421,9 @@ try {
   };
   // (where each page stands, when a wait below gives up)
   const dump4 = () => Promise.all(four.map((pg) => pg.evaluate(() => ({ me: window.doom.net?.me, error: window.doom.net?.error, tic: window.doom.net?.tic,
-    status: document.getElementById('net-status').textContent, msg: window.doom.message, screen: window.doom.screen }))));
+    status: document.getElementById('net-status').textContent, msg: window.doom.message, screen: window.doom.screen, chat: window.doom.chat,
+    focus: document.activeElement?.id || document.activeElement?.tagName, menu: window.doom.menu.active }))));
+  const until4 = (pg, fn, arg, timeout) => until(pg, fn, arg, timeout).catch(async (e) => { console.log(JSON.stringify(await dump4())); throw e; });
   const walked = [];
   for (const [pg, pid] of [[guest, 2], [g3, 3], [g4, 4]]) {
     // (the last one to walk comes to a stop first: the commands it had queued ahead in the
@@ -425,8 +437,9 @@ try {
       for (let k = 0; k < 300 && (await host.evaluate(() => window.doom.net.tic)) < t + 20; k++) await host.waitForTimeout(50);
     }
     const before4 = await players(host);
-    await pg.evaluate(() => document.activeElement?.blur());   // (out of the Co-op panel's boxes)
-    await pg.click('#screen', { position: { x: 300, y: 200 } }).catch(() => {});
+    // (out of the Co-op panel's boxes, and no click on the screen: in Firefox that takes
+    // pointer lock, and losing it later opens the menu, which would take the chat's keys)
+    await pg.evaluate(() => document.activeElement?.blur());
     const m = await walkAs(pg, pid);
     const after4 = await players(host);
     const shifted = after4.map((q, i) => (i === pid - 1 || (q.X === before4[i].X && q.Y === before4[i].Y) ? null : `${i + 1} by ${Math.hypot(q.X - before4[i].X, q.Y - before4[i].Y).toFixed(0)}`)).filter(Boolean);
@@ -459,7 +472,7 @@ try {
   await g3.keyboard.press('g');
   await g3.keyboard.type('to one');
   await g3.keyboard.press('Enter');
-  await until(host, () => /TO ONE/.test(window.doom.message ?? ''), null, 30000);
+  await until4(host, () => /TO ONE/.test(window.doom.message ?? ''), null, 30000);
   await host.waitForTimeout(1000);
   const heard4 = await Promise.all(four.map((pg) => pg.evaluate(() => window.doom.message ?? '')));
   assert(/TO ONE$/.test(heard4[0]) && heard4[0] !== 'TO ONE' && heard4[2] === 'TO ONE' && !/TO ONE/.test(heard4[1]) && !/TO ONE/.test(heard4[3]),
@@ -469,9 +482,9 @@ try {
 
   // player 4 leaves: the host stops, and tells the other two
   await g4.evaluate(() => document.getElementById('net-leave').click());
-  await until(host, () => /player 4 left/.test(window.doom.net?.error ?? ''), null, 30000).catch(async (e) => { console.log(JSON.stringify(await dump4())); throw e; });
-  await until(guest, () => !!window.doom.net?.error, null, 30000);
-  await until(g3, () => !!window.doom.net?.error, null, 30000);
+  await until4(host, () => /player 4 left/.test(window.doom.net?.error ?? ''), null, 30000);
+  await until4(guest, () => !!window.doom.net?.error, null, 30000);
+  await until4(g3, () => !!window.doom.net?.error, null, 30000);
   const why4 = await Promise.all([host, guest, g3].map((pg) => pg.evaluate(() => window.doom.net.error)));
   assert(why4.every((w) => /player 4 left/.test(w)), `player 4 leaves: the host's game and both other guests' stop (${why4.join('; ')})`);
 } catch (err) {
@@ -482,6 +495,7 @@ try {
   server.kill();
 }
 assert(!errors.length, `no page errors${errors.length ? `: ${errors.join('; ')}` : ''}`);
+if (stacks.length) console.log(`where they came from:\n${stacks.join('\n')}`);
 if (failures) {
   console.log(`${failures} failure(s)`);
   process.exit(1);

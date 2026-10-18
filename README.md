@@ -1153,6 +1153,11 @@ The matrix found one bug, now fixed: a WebKit data channel on its way down can s
 then throw on a send. A failed send now ends the netgame the way a closed link does.
 It also found that a key tapped faster than a frame (Playwright's `press()` in Firefox and WebKit) never
 counts, just as DOOM drops a tap shorter than a tic, so the tests hold their keys for a few tics.
+Headless Firefox grants pointer lock on a click where headless Chromium doesn't, so there losing it
+opens the menu, as releasing the mouse does. One problem is still open. About one co-op run in ten,
+WebKit's engine stopped with `Out of bounds memory access` (a WebAssembly trap) while a second page was
+starting. Thirty paired starts in a row didn't repeat it. When it happens the co-op test reloads the page
+once and prints a warning, which is what a player would do.
 
 ## Simplifications
 

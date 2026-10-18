@@ -20,6 +20,10 @@ noticed:
   `test:finale`, and the same with `doom2.wad`) checks DOOM I's episode maps and the endings
   against id's own WADs; nobody has run it yet. Then decide whether DOOM I's endings should
   borrow Freedoom Phase 1's text, as DOOM II's borrow Phase 2's.
+- **A WebAssembly trap in WebKit** (Engine): about one co-op run in ten on CI, a page's engine stops
+  with `Out of bounds memory access` while a second page starts; 30 paired starts didn't repeat it.
+  A source-mapped build of `firebird-embedded-st` would say where; it may be WebKit's or the engine's.
+  The co-op test reloads such a page once, with a warning.
 - **Safari itself, pointer lock and touch** (Tooling): Firefox and WebKit are in CI now; a manual
   pass on a Mac and an iPhone would cover what headless engines can't.
 - **Offline play** (Tooling): a service worker could cache the engine, the page and the

@@ -75,8 +75,10 @@ export class Lockstep {
     else if (m.t === 'sum' && this.host) this.checksum(from, m.tic, m.sum);
     else if (m.t === 'desync') {
       // (host) a guest's reason for stopping goes on to the others: the host is the
-      // only link they have, so without it three or four players would just freeze
-      if (this.host) this.send('all', { t: 'desync', why: m.why });
+      // only link they have, so without it three or four players would just freeze.
+      // Not back to the one who said it: its channel may be on its way down, and
+      // WebKit reports a send on that as a page error, whatever catches it
+      if (this.host) for (let p = 2; p <= this.players; p++) if (p !== from) this.send(p, { t: 'desync', why: m.why });
       this.fail(m.why);
     }
   }
