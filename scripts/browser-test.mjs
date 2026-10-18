@@ -519,8 +519,9 @@ try {
     await p3.evaluate(() => window.doom.sql("UPDATE things SET hp = 0, st = 'dead', solid = 0 WHERE kind = 'monster'"));
     const along = (a, b) => ({ fwd: (b.X - a.X) * Math.cos(a.ANGLE) + (b.Y - a.Y) * Math.sin(a.ANGLE), right: (b.X - a.X) * Math.sin(a.ANGLE) - (b.Y - a.Y) * Math.cos(a.ANGLE) });
     const hold = async (change, ms) => { await pad(change); await p3.waitForTimeout(ms); await pad({}); await p3.waitForTimeout(300); };
+    await p3.waitForTimeout(500);   // (the game's first frames, which come late on a slow runner)
     const s0 = await at();
-    await hold({ y: -1 }, 400);
+    await hold({ y: -1 }, 600);
     const s1 = await at();
     await still();
     await hold({ x: 1 }, 300);
