@@ -415,7 +415,11 @@ try {
     status: document.getElementById('net-status').textContent, msg: window.doom.message, screen: window.doom.screen, chat: window.doom.chat,
     focus: document.activeElement?.id || document.activeElement?.tagName, hidden: document.hidden }))));
   let hp4 = null;
-  const until4 = (pg, fn, arg, timeout) => until(pg, fn, arg, timeout).catch(async (e) => { console.log(JSON.stringify({ pages: await dump4(), hp: hp4 })); throw e; });
+  let opened3 = null;
+  const until4 = (pg, fn, arg, timeout) => until(pg, fn, arg, timeout).catch(async (e) => {
+    console.log(JSON.stringify({ pages: await dump4(), hp: hp4, opened3, keys3: await g3.evaluate(() => window.__keys) }));
+    throw e;
+  });
   const walked = [];
   for (const [pg, pid] of [[guest, 2], [g3, 3], [g4, 4]]) {
     // (the last one to walk comes to a stop first: the commands it had queued ahead in the
@@ -462,7 +466,9 @@ try {
   // with more than two, a chat goes to one player: player 3 presses G (green, player 1)
   await g3.evaluate(() => document.activeElement?.blur());
   hp4 = await players(host).then(() => host.evaluate(() => window.doom.sql('SELECT p.id, t.hp FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id')));
+  await g3.evaluate(() => { window.__keys = []; window.addEventListener('keydown', (e) => window.__keys.push(`${e.key}/${e.code}@${e.target?.id || e.target?.tagName}`), true); });
   await g3.keyboard.press('g');
+  opened3 = await g3.evaluate(() => ({ chat: window.doom.chat, keys: window.__keys }));
   await g3.keyboard.type('to one');
   await g3.keyboard.press('Enter');
   await until4(host, () => /TO ONE/.test(window.doom.message ?? ''), null, 30000);
