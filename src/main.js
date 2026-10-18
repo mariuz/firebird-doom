@@ -1624,7 +1624,9 @@ async function loadGame(game) {
   const url = new URL(`./wads/${file}`, location.href);
   const resp = await fetch(url).catch(() => null);
   if (!resp?.ok) {
-    throw new Error(`could not fetch ${file} (${resp ? resp.status : 'no answer: offline, and not played here before?'}); pick a WAD file instead`);
+    // (sw.js answers 504 with x-offline when there's no network and no copy kept)
+    const why = !resp ? 'no answer' : resp.headers.get('x-offline') ? 'offline, and not played here before' : resp.status;
+    throw new Error(`could not fetch ${file} (${why}); pick a WAD file instead`);
   }
   keepWad(url, resp.clone());
   await useWad(await resp.arrayBuffer(), file);

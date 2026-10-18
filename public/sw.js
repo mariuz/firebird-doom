@@ -35,6 +35,8 @@ self.addEventListener('fetch', (e) => {
       ? await caches.match(new URL('./', self.registration.scope).href, { cacheName: PAGE })
         ?? await caches.match(new URL('./index.html', self.registration.scope).href, { cacheName: PAGE })
       : await caches.match(req, { cacheName: wad ? WADS : PAGE, ignoreSearch: !wad });
-    return hit ?? Response.error();
+    // (nothing kept: a plain 504 that says so, not a network error, which WebKit
+    // reports as a page error however the page handles it)
+    return hit ?? new Response('offline, and not kept here', { status: 504, statusText: 'Offline', headers: { 'x-offline': '1' } });
   }));
 });

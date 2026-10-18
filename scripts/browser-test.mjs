@@ -577,7 +577,7 @@ try {
     await p4.selectOption('#game', 'freedoom2');
     await p4.waitForFunction(() => /could not fetch freedoom2\.wad/.test(document.getElementById('status')?.textContent ?? ''), null, { timeout: 30000, polling: 100 });
     const said = await p4.evaluate(() => document.getElementById('status').textContent);
-    assert(/no answer: offline/.test(said), `…and Phase 2, never downloaded, says why it can't come ("${said}")`);
+    assert(/offline, and not played here before/.test(said), `…and Phase 2, never downloaded, says why it can't come ("${said}")`);
     await ctx.close();
   }
 
