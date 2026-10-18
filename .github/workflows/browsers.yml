@@ -51,15 +51,7 @@ jobs:
           pactl load-module module-null-sink sink_name=speakers
           pactl set-default-sink speakers
 
-      - name: Startup probe, pairs (trial)
-        run: node scripts/startup-probe.mjs
-        env:
-          BROWSER: ${{ matrix.browser }}
-          MODE: pair
-          N: '15'
-
       - name: Browser (${{ matrix.browser }})
-        if: false
         run: npm run test:browser
         env:
           BROWSER: ${{ matrix.browser }}

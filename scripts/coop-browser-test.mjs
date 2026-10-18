@@ -50,11 +50,20 @@ try {
     });
     page.setDefaultTimeout(120000);
     await page.goto(`http://localhost:${port}/`);
-    // (a page that doesn't start says where it stopped: once, in WebKit on CI, one didn't)
-    await page.waitForFunction(() => window.doom?.title, null, { timeout: 120000, polling: 100 }).catch(async (err) => {
+    // A page that doesn't start says where it stopped. In WebKit on CI the engine has now
+    // and then trapped while a second page started ("Out of bounds memory access", about
+    // one co-op run in ten; docs/ROADMAP.md): then it's reloaded once, as a player would,
+    // and the test says so
+    const started = () => page.waitForFunction(() => window.doom?.title || /memory access|RuntimeError/i.test(document.getElementById('status')?.textContent ?? ''),
+      null, { timeout: 120000, polling: 100 }).then(() => page.evaluate(() => !!window.doom?.title));
+    let up = await started().catch(() => false);
+    if (!up) {
       const at = await page.evaluate(() => document.getElementById('status')?.textContent).catch((e) => e.message);
-      throw new Error(`the ${who}'s page didn't start (${err.message.split('\n')[0]}): its status "${at}"; the console:\n  ${recent.slice(-15).join('\n  ')}`);
-    });
+      console.log(`WARNING: the ${who}'s page didn't start: its status "${at}"; the console:\n  ${recent.slice(-8).join('\n  ')}\n  reloading it once`);
+      await page.reload();
+      up = await started().catch(() => false);
+      if (!up) throw new Error(`the ${who}'s page didn't start, twice`);
+    }
     await page.evaluate(() => { document.getElementById('net').open = true; });
     return page;
   };
@@ -413,13 +422,8 @@ try {
   // (where each page stands, when a wait below gives up)
   const dump4 = () => Promise.all(four.map((pg) => pg.evaluate(() => ({ me: window.doom.net?.me, error: window.doom.net?.error, tic: window.doom.net?.tic,
     status: document.getElementById('net-status').textContent, msg: window.doom.message, screen: window.doom.screen, chat: window.doom.chat,
-    focus: document.activeElement?.id || document.activeElement?.tagName, hidden: document.hidden }))));
-  let hp4 = null;
-  let opened3 = null;
-  const until4 = (pg, fn, arg, timeout) => until(pg, fn, arg, timeout).catch(async (e) => {
-    console.log(JSON.stringify({ pages: await dump4(), hp: hp4, opened3, keys3: await g3.evaluate(() => window.__keys) }));
-    throw e;
-  });
+    focus: document.activeElement?.id || document.activeElement?.tagName, menu: window.doom.menu.active }))));
+  const until4 = (pg, fn, arg, timeout) => until(pg, fn, arg, timeout).catch(async (e) => { console.log(JSON.stringify(await dump4())); throw e; });
   const walked = [];
   for (const [pg, pid] of [[guest, 2], [g3, 3], [g4, 4]]) {
     // (the last one to walk comes to a stop first: the commands it had queued ahead in the
@@ -433,8 +437,9 @@ try {
       for (let k = 0; k < 300 && (await host.evaluate(() => window.doom.net.tic)) < t + 20; k++) await host.waitForTimeout(50);
     }
     const before4 = await players(host);
-    await pg.evaluate(() => document.activeElement?.blur());   // (out of the Co-op panel's boxes)
-    await pg.click('#screen', { position: { x: 300, y: 200 } }).catch(() => {});
+    // (out of the Co-op panel's boxes, and no click on the screen: in Firefox that takes
+    // pointer lock, and losing it later opens the menu, which would take the chat's keys)
+    await pg.evaluate(() => document.activeElement?.blur());
     const m = await walkAs(pg, pid);
     const after4 = await players(host);
     const shifted = after4.map((q, i) => (i === pid - 1 || (q.X === before4[i].X && q.Y === before4[i].Y) ? null : `${i + 1} by ${Math.hypot(q.X - before4[i].X, q.Y - before4[i].Y).toFixed(0)}`)).filter(Boolean);
@@ -464,11 +469,7 @@ try {
     `140 tics with all four firing, and the four games agree at tic ${same4.tic}`);
 
   // with more than two, a chat goes to one player: player 3 presses G (green, player 1)
-  await g3.evaluate(() => document.activeElement?.blur());
-  hp4 = await players(host).then(() => host.evaluate(() => window.doom.sql('SELECT p.id, t.hp FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id')));
-  await g3.evaluate(() => { window.__keys = []; window.addEventListener('keydown', (e) => window.__keys.push(`${e.key}/${e.code}@${e.target?.id || e.target?.tagName}`), true); });
   await g3.keyboard.press('g');
-  opened3 = await g3.evaluate(() => ({ chat: window.doom.chat, keys: window.__keys }));
   await g3.keyboard.type('to one');
   await g3.keyboard.press('Enter');
   await until4(host, () => /TO ONE/.test(window.doom.message ?? ''), null, 30000);
