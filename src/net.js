@@ -157,7 +157,19 @@ function wrap(pc, ch) {
     pc, ch,
     onmessage: () => {},
     onclose: () => {},
-    send(m) { if (ch.readyState === 'open') ch.send(JSON.stringify(m)); },
+    dead: false,
+    send(m) {
+      if (link.dead || ch.readyState !== 'open') return;
+      // (a channel on its way down can still say "open", and WebKit throws then: the
+      // link is gone, and the game is told so as it would be by the close)
+      try {
+        ch.send(JSON.stringify(m));
+      } catch (err) {
+        console.warn('[firebird-doom] a send failed:', err.message);
+        link.dead = true;
+        link.onclose();
+      }
+    },
     close() { try { ch.close(); pc.close(); } catch { /* gone */ } },
   };
   ch.onmessage = (e) => link.onmessage(JSON.parse(e.data));

@@ -103,6 +103,8 @@ try {
   const tap = async (k, wait = 150) => { await page.keyboard.down(k); await page.waitForTimeout(100); await page.keyboard.up(k); await page.waitForTimeout(wait); };
   const tic = () => doom(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));
   const pos = () => doom(() => window.doom.sql("SELECT x, y FROM things WHERE kind = 'player'").then((r) => r[0]));
+  // N of the game's tics, however long they take (Firefox's frames on a CI runner are slow)
+  const waitTics = async (n, read = tic) => { const t = await read(); for (let i = 0; i < 1000 && (await read()) < t + n; i++) await page.waitForTimeout(20); };
 
   // the title loop, then New Game through the menus
   await until(() => window.doom?.title);
@@ -257,7 +259,7 @@ try {
     await page.waitForTimeout(100);
     const a2b = await facing();
     await doom(() => window.doom.mouse.move(40, 0));
-    await page.waitForTimeout(200);
+    await waitTics(3);
     const a3 = await facing();
     if (process.env.DBG) console.log(JSON.stringify({ a0, a1, a2, a3, s1, s2 }));
     assert(s1.right > 8 && Math.abs(s1.fwd) < s1.right / 3 && a1.ANGLE === a0.ANGLE,
@@ -518,20 +520,21 @@ try {
     const still = () => p3.evaluate(() => window.doom.sql("UPDATE things SET momx = 0, momy = 0 WHERE kind = 'player'"));
     await p3.evaluate(() => window.doom.sql("UPDATE things SET hp = 0, st = 'dead', solid = 0 WHERE kind = 'monster'"));
     const along = (a, b) => ({ fwd: (b.X - a.X) * Math.cos(a.ANGLE) + (b.Y - a.Y) * Math.sin(a.ANGLE), right: (b.X - a.X) * Math.sin(a.ANGLE) - (b.Y - a.Y) * Math.cos(a.ANGLE) });
-    const hold = async (change, ms) => { await pad(change); await p3.waitForTimeout(ms); await pad({}); await p3.waitForTimeout(300); };
-    await p3.waitForTimeout(500);   // (the game's first frames, which come late on a slow runner)
+    // (held for a number of the game's tics, not milliseconds: a slow runner's frames are long)
+    const tic3 = () => p3.evaluate(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));
+    const hold = async (change, n) => { await pad(change); await waitTics(n, tic3); await pad({}); await waitTics(3, tic3); };
     const s0 = await at();
-    await hold({ y: -1 }, 600);
+    await hold({ y: -1 }, 14);
     const s1 = await at();
     await still();
-    await hold({ x: 1 }, 300);
+    await hold({ x: 1 }, 10);
     const s2 = await at();
     await still();
     const s2b = await at();
-    await hold({ x: 1, buttons: [1] }, 400);
+    await hold({ x: 1, buttons: [1] }, 14);
     const s3 = await at();
     const shells0 = await p3.evaluate(() => window.doom.sql('SELECT bullets FROM player').then((r) => r[0].BULLETS));
-    await hold({ buttons: [0] }, 300);
+    await hold({ buttons: [0] }, 10);
     const shells1 = await p3.evaluate(() => window.doom.sql('SELECT bullets FROM player').then((r) => r[0].BULLETS));
     const walk = along(s0, s1);
     const strafe = along(s2b, s3);
