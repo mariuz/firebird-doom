@@ -251,8 +251,12 @@ try {
   // each player hurries their own intermission along; the game waits for both
   const through = async (p) => {
     for (let i = 0; i < 60 && !(await p.evaluate(() => window.doom.screen === 'level' && !window.doom.melting)); i++) {
-      await p.keyboard.press('Space');
-      await p.waitForTimeout(400);
+      // (held a few tics: a press and release with no frame between, as Firefox's
+      // press() sends them, never reaches the ticcmd, as in DOOM)
+      await p.keyboard.down('Space');
+      await p.waitForTimeout(100);
+      await p.keyboard.up('Space');
+      await p.waitForTimeout(300);
     }
   };
   await Promise.all([through(host), through(guest)]);
