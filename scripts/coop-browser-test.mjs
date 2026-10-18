@@ -15,7 +15,7 @@ import { spawn } from 'node:child_process';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { launchBrowser, browserName } from './launch-browser.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -32,10 +32,8 @@ await new Promise((resolve, reject) => {
   server.on('exit', (code) => reject(new Error(`the server exited (${code})`)));
 });
 
-const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM || undefined,
-  args: ['--autoplay-policy=no-user-gesture-required', '--disable-features=WebRtcHideLocalIpsWithMdns'],
-});
+const browser = await launchBrowser();   // (BROWSER=firefox or webkit for those)
+console.log(`(in ${browserName} ${browser.version()})`);
 const errors = [];
 const consoleLog = [];
 try {
@@ -43,10 +41,18 @@ try {
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 900 } });
     const page = await ctx.newPage();
     page.on('pageerror', (e) => errors.push(`${who}: ${e.message}`));
-    page.on('console', (m) => { if (m.type() === 'error') consoleLog.push(`${who}: ${m.text().slice(0, 300)}`); });
+    const recent = [];
+    page.on('console', (m) => {
+      if (m.type() === 'error') consoleLog.push(`${who}: ${m.text().slice(0, 300)}`);
+      recent.push(`${m.type()}: ${m.text().slice(0, 200)}`);
+    });
     page.setDefaultTimeout(120000);
     await page.goto(`http://localhost:${port}/`);
-    await page.waitForFunction(() => window.doom?.title, null, { timeout: 120000, polling: 100 });
+    // (a page that doesn't start says where it stopped: once, in WebKit on CI, one didn't)
+    await page.waitForFunction(() => window.doom?.title, null, { timeout: 120000, polling: 100 }).catch(async (err) => {
+      const at = await page.evaluate(() => document.getElementById('status')?.textContent).catch((e) => e.message);
+      throw new Error(`the ${who}'s page didn't start (${err.message.split('\n')[0]}): its status "${at}"; the console:\n  ${recent.slice(-15).join('\n  ')}`);
+    });
     await page.evaluate(() => { document.getElementById('net').open = true; });
     return page;
   };

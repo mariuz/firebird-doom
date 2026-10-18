@@ -1,0 +1,63 @@
+name: Browsers
+
+# The page's browser and co-op tests in Firefox and WebKit (Safari's engine),
+# besides the Chromium the main workflow runs them in.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  page:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Cache Freedoom
+        id: wad
+        uses: actions/cache@v4
+        with:
+          path: public/wads/
+          key: freedoom1-0.13.0-${{ hashFiles('scripts/fetch-wad.mjs') }}
+
+      - name: Fetch Freedoom
+        if: steps.wad.outputs.cache-hit != 'true'
+        run: npm run fetch-wad
+
+      - name: Install ${{ matrix.browser }}
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      # The runner has no sound card: a PulseAudio null sink gives the page's
+      # AudioContext somewhere to play, as a player's speakers would.
+      - name: A sound device
+        run: |
+          sudo apt-get install -y pulseaudio
+          pulseaudio -D --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=speakers
+          pactl set-default-sink speakers
+
+      - name: Browser (${{ matrix.browser }})
+        run: npm run test:browser
+        env:
+          BROWSER: ${{ matrix.browser }}
+
+      - name: Co-op (${{ matrix.browser }})
+        if: success() || failure()
+        run: npm run test:coop
+        env:
+          BROWSER: ${{ matrix.browser }}

@@ -20,7 +20,8 @@ noticed:
   `test:finale`, and the same with `doom2.wad`) checks DOOM I's episode maps and the endings
   against id's own WADs; nobody has run it yet. Then decide whether DOOM I's endings should
   borrow Freedoom Phase 1's text, as DOOM II's borrow Phase 2's.
-- **A browser matrix** (Tooling): what's known to work outside Chromium.
+- **Safari itself, pointer lock and touch** (Tooling): Firefox and WebKit are in CI now; a manual
+  pass on a Mac and an iPhone would cover what headless engines can't.
 - **Four players over the network** (Tooling): the co-op test connects two pages; three and
   four (the host relaying for everyone) aren't tested.
 - **Offline play** (Tooling): a service worker could cache the engine, the page and the
@@ -237,9 +238,10 @@ Everything else below is done.
   25 minutes here. The SQL tests each open their own database, so most could run side by side
   (`npm run test:all`, with the browser tests on their own ports), and CI could split them
   across jobs.
-- **A browser matrix.** Everything is verified in headless Chromium. Safari and Firefox differ on
-  the AudioWorklet, WebGL and pointer lock: a short list in the README of what's known to work
-  where, from a manual pass, and the fallbacks each needs.
+- ~~**A browser matrix.**~~ Done (`.github/workflows/browsers.yml`, `scripts/launch-browser.mjs`):
+  the browser and co-op tests run in Firefox and WebKit as well as Chromium, all passing; the
+  README's **Browsers** lists what that covers. It found WebKit throwing on a send over a
+  closing data channel (now the link closes). Left: Safari itself, pointer lock and touch, by hand.
 - ~~**A test for the live frame loop.**~~ Done (`npm run test:browser`, in CI): headless
   Chromium plays through the title, the menus, a level, quicksave and quickload, the
   intermission, the next level, an ending, End Game and an attract demo; `npm run test:coop`

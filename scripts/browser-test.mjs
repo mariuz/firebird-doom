@@ -8,12 +8,13 @@
 //
 // It builds and serves dist/ itself (build.mjs --serve, on a free port) and needs
 // Playwright's Chromium (npx playwright install chromium; set
-// CHROMIUM=/path/to/chrome to use another).
+// CHROMIUM=/path/to/chrome to use another). BROWSER=firefox or webkit runs it
+// in those instead (launch-browser.mjs).
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { launchBrowser, browserName } from './launch-browser.mjs';
 import { MouseInput, moveCommand, mouseRate, MOUSEX_RAD } from '../src/mouse.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -81,7 +82,8 @@ await new Promise((resolve, reject) => {
   server.on('exit', (code) => reject(new Error(`the server exited (${code})`)));
 });
 
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined, args: ['--autoplay-policy=no-user-gesture-required'] });
+const browser = await launchBrowser();
+console.log(`(in ${browserName} ${browser.version()})`);
 const errors = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
@@ -89,10 +91,20 @@ try {
   page.setDefaultTimeout(120000);
   await page.goto(`http://localhost:${port}/`);
   const doom = (fn, arg) => page.evaluate(fn, arg);
-  const until = (fn, arg, timeout = 120000) => page.waitForFunction(fn, arg, { timeout, polling: 50 });
+  // (a wait that times out says where the page was)
+  const until = (fn, arg, timeout = 120000) => page.waitForFunction(fn, arg, { timeout, polling: 50 }).catch(async (err) => {
+    const at = await page.evaluate(() => ({ screen: window.doom?.screen, melting: window.doom?.melting, settled: window.doom?.settled,
+      status: document.getElementById('status')?.textContent })).catch((e) => e.message);
+    throw new Error(`${err.message.split('\n')[0]} waiting for ${String(fn).slice(0, 80)}; the page: ${JSON.stringify(at)}`);
+  });
   const key = async (k, wait = 150) => { await page.keyboard.press(k); await page.waitForTimeout(wait); };
+  // a game key held for a few tics: the frame loop reads which keys are down, as G_BuildTiccmd
+  // does, so a press and release with no frame between (Firefox's and WebKit's press()) is missed
+  const tap = async (k, wait = 150) => { await page.keyboard.down(k); await page.waitForTimeout(100); await page.keyboard.up(k); await page.waitForTimeout(wait); };
   const tic = () => doom(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));
   const pos = () => doom(() => window.doom.sql("SELECT x, y FROM things WHERE kind = 'player'").then((r) => r[0]));
+  // N of the game's tics, however long they take (Firefox's frames on a CI runner are slow)
+  const waitTics = async (n, read = tic) => { const t = await read(); for (let i = 0; i < 1000 && (await read()) < t + n; i++) await page.waitForTimeout(20); };
 
   // the title loop, then New Game through the menus
   await until(() => window.doom?.title);
@@ -132,6 +144,7 @@ try {
   await page.waitForTimeout(500);
   const music3 = await doom(async () => {
     const a = window.doom.audio;
+    if (!a.opl) return { state: a.ctx?.state ?? 'none' };
     const an = a.ctx.createAnalyser();
     a.musicGain.connect(an);
     const buf = new Float32Array(2048);
@@ -145,7 +158,7 @@ try {
     return { opl3: a.opl3, channels: a.opl.channelCount, rms: Math.sqrt(sum / 20480), song: a.currentMusic };
   });
   assert(music3.opl3 && music3.rms > 0.003 && music3.song === 'D_E1M1',
-    `Synth OPL3: the music plays on from the OPL3 worklet (level ${music3.rms.toFixed(3)})`);
+    `Synth OPL3: the music plays on from the OPL3 worklet (level ${music3.rms?.toFixed(3) ?? music3.state})`);
   await page.selectOption('#synth', 'opl2');
 
   // F6 picks the quicksave slot; walk away; F9 brings the game back
@@ -246,7 +259,7 @@ try {
     await page.waitForTimeout(100);
     const a2b = await facing();
     await doom(() => window.doom.mouse.move(40, 0));
-    await page.waitForTimeout(200);
+    await waitTics(3);
     const a3 = await facing();
     if (process.env.DBG) console.log(JSON.stringify({ a0, a1, a2, a3, s1, s2 }));
     assert(s1.right > 8 && Math.abs(s1.fwd) < s1.right / 3 && a1.ANGLE === a0.ANGLE,
@@ -348,7 +361,7 @@ try {
   await until(() => window.doom.screen === 'intermission', null, 30000);
   assert(true, 'a level exit melts into the intermission');
   await until(() => !window.doom.melting);
-  for (let i = 0; i < 6 && (await doom(() => window.doom.screen)) === 'intermission'; i++) await key('Space', 600);
+  for (let i = 0; i < 6 && (await doom(() => window.doom.screen)) === 'intermission'; i++) await tap('Space', 600);
   await until(() => window.doom.melting, null, 60000);   // (the next map melts in once it's loaded)
   await until(() => !window.doom.melting);
   const map1 = (await doom(() => window.doom.sql('SELECT map_name FROM game').then((r) => r[0].MAP_NAME))).trim();
@@ -407,7 +420,7 @@ try {
     throw err;
   }
   await until(() => !window.doom.melting);
-  for (let i = 0; i < 6 && (await doom(() => window.doom.screen)) === 'intermission'; i++) await key('Space', 600);
+  for (let i = 0; i < 6 && (await doom(() => window.doom.screen)) === 'intermission'; i++) await tap('Space', 600);
   await until(() => window.doom.melting, null, 60000);
   await until(() => !window.doom.melting);
   await page.keyboard.down('KeyW'); await page.waitForTimeout(700); await page.keyboard.up('KeyW');
@@ -445,12 +458,14 @@ try {
   // the credits page
   // (SCREEN reads 'level' while the demo's map still loads: wait for its first call to play)
   await until(() => window.doom.demo.attract === 1 && !window.doom.melting && window.doom.demo.played > 0, null, 40000);
+  // (until the tic moves on, up to 10 s: a map's first frames can come a second late in Firefox on CI)
+  const moves = async (from) => { for (let i = 0; i < 100 && (await tic()) <= from; i++) await page.waitForTimeout(100); };
   const a0 = await tic();
-  await page.waitForTimeout(1000);
+  await moves(a0);
   const a1 = await tic();
   await key('x');
   const a2 = await tic();
-  await page.waitForTimeout(1000);
+  await moves(a2);
   const menuUp = await doom(() => window.doom.menu.active && window.doom.demo.attract === 1);
   const a3 = await tic();
   assert(a1 > a0 && menuUp && a3 > a2, `the title loop plays DEMO1 (tic ${a0} → ${a1}); a key opens the menu over it, and it goes on (${a2} → ${a3})`);
@@ -507,19 +522,21 @@ try {
     const still = () => p3.evaluate(() => window.doom.sql("UPDATE things SET momx = 0, momy = 0 WHERE kind = 'player'"));
     await p3.evaluate(() => window.doom.sql("UPDATE things SET hp = 0, st = 'dead', solid = 0 WHERE kind = 'monster'"));
     const along = (a, b) => ({ fwd: (b.X - a.X) * Math.cos(a.ANGLE) + (b.Y - a.Y) * Math.sin(a.ANGLE), right: (b.X - a.X) * Math.sin(a.ANGLE) - (b.Y - a.Y) * Math.cos(a.ANGLE) });
-    const hold = async (change, ms) => { await pad(change); await p3.waitForTimeout(ms); await pad({}); await p3.waitForTimeout(300); };
+    // (held for a number of the game's tics, not milliseconds: a slow runner's frames are long)
+    const tic3 = () => p3.evaluate(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));
+    const hold = async (change, n) => { await pad(change); await waitTics(n, tic3); await pad({}); await waitTics(3, tic3); };
     const s0 = await at();
-    await hold({ y: -1 }, 400);
+    await hold({ y: -1 }, 14);
     const s1 = await at();
     await still();
-    await hold({ x: 1 }, 300);
+    await hold({ x: 1 }, 10);
     const s2 = await at();
     await still();
     const s2b = await at();
-    await hold({ x: 1, buttons: [1] }, 400);
+    await hold({ x: 1, buttons: [1] }, 14);
     const s3 = await at();
     const shells0 = await p3.evaluate(() => window.doom.sql('SELECT bullets FROM player').then((r) => r[0].BULLETS));
-    await hold({ buttons: [0] }, 300);
+    await hold({ buttons: [0] }, 10);
     const shells1 = await p3.evaluate(() => window.doom.sql('SELECT bullets FROM player').then((r) => r[0].BULLETS));
     const walk = along(s0, s1);
     const strafe = along(s2b, s3);

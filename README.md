@@ -1130,6 +1130,27 @@ in headless Chromium through Playwright: the title, the menus, E1M1 melting in, 
 quickload, a level exit, the intermission, E1M2, an ending and End Game, with no page errors
 allowed. Then it builds and publishes `dist/` to GitHub Pages. Pull requests run everything except the deploy.
 
+### Browsers
+
+The page is tested in three browser engines on every push to `main`. The main workflow uses Chromium,
+and [.github/workflows/browsers.yml](.github/workflows/browsers.yml) runs the same browser and co-op tests in
+Firefox and in WebKit, Safari's engine (Playwright 1.56: Firefox 142, WebKit 26). `BROWSER=firefox npm run
+test:browser` runs one locally. All three play both tests through. That covers:
+
+- the engine in its Worker;
+- the OPL2 and OPL3 music in their AudioWorklet (on CI through a PulseAudio null sink, since the runner has
+  no sound card);
+- quicksave and quickload, the function keys, the Keys panel, demos and the title loop;
+- the mouse's buttons and the stand-in gamepad;
+- two pages in co-op and deathmatch over a real WebRTC link, with chat, pause and a netgame save.
+
+Not covered: Safari itself on macOS and iOS (WebKit on Linux is close to it, not the same), pointer lock
+(a headless page can't take it, so the test moves `doom.mouse` directly), a real gamepad, and touch.
+The matrix found one bug, now fixed: a WebKit data channel on its way down can still say it's open and
+then throw on a send. A failed send now ends the netgame the way a closed link does.
+It also found that a key tapped faster than a frame (Playwright's `press()` in Firefox and WebKit) never
+counts, just as DOOM drops a tap shorter than a tic, so the tests hold their keys for a few tics.
+
 ## Simplifications
 
 Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
