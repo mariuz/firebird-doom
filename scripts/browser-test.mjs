@@ -458,12 +458,14 @@ try {
   // the credits page
   // (SCREEN reads 'level' while the demo's map still loads: wait for its first call to play)
   await until(() => window.doom.demo.attract === 1 && !window.doom.melting && window.doom.demo.played > 0, null, 40000);
+  // (until the tic moves on, up to 10 s: a map's first frames can come a second late in Firefox on CI)
+  const moves = async (from) => { for (let i = 0; i < 100 && (await tic()) <= from; i++) await page.waitForTimeout(100); };
   const a0 = await tic();
-  await page.waitForTimeout(1000);
+  await moves(a0);
   const a1 = await tic();
   await key('x');
   const a2 = await tic();
-  await page.waitForTimeout(1000);
+  await moves(a2);
   const menuUp = await doom(() => window.doom.menu.active && window.doom.demo.attract === 1);
   const a3 = await tic();
   assert(a1 > a0 && menuUp && a3 > a2, `the title loop plays DEMO1 (tic ${a0} → ${a1}); a key opens the menu over it, and it goes on (${a2} → ${a3})`);
