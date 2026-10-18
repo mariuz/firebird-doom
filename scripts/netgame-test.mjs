@@ -258,6 +258,33 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   await db.exec('UPDATE viewcfg SET player_id = 1 WHERE id = 1');
 }
 
+// four peers through the host (a star): every guest's commands reach the others only by
+// the host's tics, so all four run the same tics with the same commands; and a guest's
+// reason for stopping (leaving, a save it couldn't read) goes on from the host to the rest
+{
+  const wire4 = [];
+  const peers4 = [1, 2, 3, 4].map((me) => ({ me, ran: [] }));
+  for (const p of peers4) {
+    p.ls = new Lockstep({ me: p.me, players: 4, delay: 3,
+      send: (to, m) => { for (const t of to === 'all' ? [2, 3, 4] : [to]) wire4.push({ from: p.me, to: t, m: JSON.parse(JSON.stringify(m)) }); } });
+  }
+  for (let clock = 0; clock < 400 && Math.min(...peers4.map((p) => p.ran.length)) < 100; clock++) {
+    for (const w of wire4.splice(0)) peers4[w.to - 1].ls.receive(w.from, w.m);
+    for (const p of peers4) {
+      if (p.ls.canSubmit() && p.ls.submitted < 120 && (p.me + clock) % 3) p.ls.submit([p.me, clock % 2, 0, 0, 0, 0, 0]);   // (each at its own pace)
+      for (let t = p.ls.take(); t; t = p.ls.take()) p.ran.push(JSON.stringify(t));
+    }
+  }
+  const n = Math.min(...peers4.map((p) => p.ran.length));
+  const same = peers4.every((p) => p.ran.slice(0, n).join() === peers4[0].ran.slice(0, n).join());
+  const everyone = peers4[0].ran.slice(3, n).every((t) => JSON.parse(t).cmds.map((c) => c[0]).join() === '1,2,3,4');
+  assert(n >= 100 && same && everyone, `four peers through the host run the same ${n} tics, each with all four players' commands`);
+  peers4[3].ls.send(1, { t: 'desync', why: 'player 4 left' });   // (what leaveNet sends)
+  for (let k = 0; k < 2; k++) for (const w of wire4.splice(0)) peers4[w.to - 1].ls.receive(w.from, w.m);
+  assert(peers4.slice(0, 3).every((p) => p.ls.error === 'player 4 left'),
+    `player 4 leaves: the host stops, and passes it on to players 2 and 3 (${peers4.slice(0, 3).map((p) => p.ls.error).join('; ')})`);
+}
+
 // ── deathmatch ──
 {
   const dmStarts = await all('SELECT x, y FROM map_things WHERE ttype = 11');

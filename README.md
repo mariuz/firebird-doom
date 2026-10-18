@@ -771,12 +771,15 @@ stays out, as in DOOM: F3 and F9 say so. A netgame starts from a save instead, a
 rules come with it. The save goes gzipped in the start message, about 20 KB for E1M1. Each guest
 checks it like the rest of the message and restores it before the first tic. A save made in a
 netgame is for that many players, and the panel says so if the count doesn't match. Cheating, demos and warping are out too, as they aren't in the ticcmds.
-`npm run test:netgame` plays two players in one database, and two peers through a
-pretend network that delivers late and out of order. `npm run test:coop` connects two real pages
+`npm run test:netgame` plays two players in one database, two peers through a
+pretend network that delivers late and out of order, and four peers through the host. `npm run test:coop` connects two real pages
 over WebRTC, with the codes swapped through the panel, and plays them in lockstep through a level
 exit and the intermission into the next map, then a deathmatch. On the way it pauses from the host
-and goes on from the guest, saves from the host into both browsers, and in the end starts a
-netgame again from that save.
+and goes on from the guest, saves from the host into both browsers, and starts a netgame again
+from that save. Last, four pages play together, the host relaying for three guests. Each guest's keys
+move only their own player, and the four games agree while everyone fires. A chat to one player (G, I, B or
+R) reaches only them, and when one guest leaves, the other two are told. That last part was missing before
+the test: a guest's reason for stopping reached only the host, so the other guests froze without a word.
 
 ![The deathmatch intermission: killers down the side, victims along the top, each player's frags of each other and their totals](docs/screenshot-deathmatch.png)
 

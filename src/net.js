@@ -73,7 +73,12 @@ export class Lockstep {
     if (m.t === 'cmd' && this.host) this.collect(from, m.tic, m.cmd);
     else if (m.t === 'tic' && !this.host) { if (m.tic > this.executed) this.early.set(m.tic, m.cmds); }
     else if (m.t === 'sum' && this.host) this.checksum(from, m.tic, m.sum);
-    else if (m.t === 'desync') this.fail(m.why);
+    else if (m.t === 'desync') {
+      // (host) a guest's reason for stopping goes on to the others: the host is the
+      // only link they have, so without it three or four players would just freeze
+      if (this.host) this.send('all', { t: 'desync', why: m.why });
+      this.fail(m.why);
+    }
   }
 
   /** (host) a command in; any tic now complete goes out, in order */

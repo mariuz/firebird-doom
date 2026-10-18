@@ -22,8 +22,6 @@ noticed:
   borrow Freedoom Phase 1's text, as DOOM II's borrow Phase 2's.
 - **Safari itself, pointer lock and touch** (Tooling): Firefox and WebKit are in CI now; a manual
   pass on a Mac and an iPhone would cover what headless engines can't.
-- **Four players over the network** (Tooling): the co-op test connects two pages; three and
-  four (the host relaying for everyone) aren't tested.
 - **Offline play** (Tooling): a service worker could cache the engine, the page and the
   Freedoom WADs, so it plays without a connection once loaded.
 - **A faster test suite** (Tooling): the pre-commit set takes about 25 minutes, one test after
@@ -227,9 +225,11 @@ Everything else below is done.
   made by `npm run save-fixtures` from git worktrees of each schema commit. `savegame-test`
   loads each with today's code: every saved value back, and 35 tics played on. None needed
   migrating; newer columns take their defaults.
-- **Four players over the network.** `npm run test:coop` connects two pages. Three and four
-  players go through the host as a star, and nothing tests that relay with more than one guest;
-  the test could open four contexts and check the checksums agree.
+- ~~**Four players over the network.**~~ Done: `npm run test:coop` ends with four pages, the host
+  relaying for three guests: each one's keys move only their player, the four checksums agree
+  while all fire, a chat to one player reaches only them, and a guest leaving stops the rest.
+  It found the host keeping a guest's desync to itself (the others froze); `Lockstep.receive`
+  now passes it on, and `netgame-test` checks that with four peers in a star.
 - **Offline play.** A service worker could cache the page, the engine and the Freedoom WADs, so
   the game starts without a connection once it has loaded once. (The page had one for cross-origin
   isolation until the engine's build without threads made that unnecessary; a new one must not be

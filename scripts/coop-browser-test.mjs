@@ -5,6 +5,7 @@
 // consistency checks agreeing for hundreds of tics, and the host told when
 // the guest leaves. Then a deathmatch: the mode, timer and launch options from
 // the panel, the players at deathmatch starts with every key, a frag in both games.
+// Then four players, the host relaying for all three guests.
 //
 //   npm run test:coop
 //
@@ -356,6 +357,123 @@ try {
       && d.game.DEATHMATCH === 0 && d.net.deathmatch === 0 && d.mode === '0' && d.game.PLAYERS === 2) && loadedSame.same,
     `the host starts from its save: both games are on ${savedGame.map} at the save's tic ${savedGame.tic} and on (${loaded.map((d) => d.game.TIC).join(', ')}; ${loaded[0].net.tic} tics since the start), co-op as saved, and in step (tic ${loadedSame.tic})`);
   await guest.evaluate(() => document.getElementById('net-leave').click());
+
+  // four players: the host invites three guests in turn, each with an invite of
+  // their own, and relays everyone's ticcmds (a star: d_net.c's arbitrator, with
+  // the host as the hub). Everyone walks, the four games agree while all of them
+  // fire, a chat to one player reaches only them, and a guest leaving stops it all
+  await host.evaluate(() => document.getElementById('net-leave').click());
+  await until(host, () => !window.doom.net);
+  const g3 = await open('guest 3');
+  const g4 = await open('guest 4');
+  const four = [host, guest, g3, g4];
+  await host.selectOption('#net-save', '-1');
+  await host.selectOption('#net-mode', '0');
+  // (-nomonsters: nothing but the guests' own keys moves anyone in this one)
+  await host.evaluate(() => { for (const [o, on] of [['nomonsters', true], ['respawn', false], ['fast', false]]) document.getElementById(`net-${o}`).checked = on; });
+  const join = async (g, n) => {
+    await host.evaluate(() => document.getElementById('net-host').click());
+    await until(host, () => document.getElementById('net-out').value.length > 50);
+    await g.evaluate(() => document.getElementById('net-join').click());
+    await g.fill('#net-in', await value(host, 'net-out'));
+    await g.evaluate(() => document.getElementById('net-connect').click());
+    await until(g, () => document.getElementById('net-out').value.length > 50);
+    await host.fill('#net-in', await value(g, 'net-out'));
+    await host.evaluate(() => document.getElementById('net-connect').click());
+    await until(host, (k) => document.getElementById('net-status').textContent.startsWith(`${k} players`), n, 30000);
+    await until(g, () => /^Connected/.test(document.getElementById('net-status').textContent), null, 30000);
+  };
+  for (const [g, n] of [[guest, 2], [g3, 3], [g4, 4]]) await join(g, n);
+  await host.evaluate(() => document.getElementById('net-start').click());
+  for (const pg of four) await until(pg, () => window.doom.net?.tic > 10 && window.doom.screen === 'level' && !window.doom.melting);
+  const roles = await Promise.all(four.map((pg) => pg.evaluate(async () => ({
+    net: window.doom.net,
+    view: (await window.doom.sql('SELECT g.players, v.player_id FROM game g CROSS JOIN viewcfg v'))[0],
+  }))));
+  assert(roles.every((r, i) => r.net.me === i + 1 && r.net.players === 4 && r.view.PLAYERS === 4 && r.view.PLAYER_ID === i + 1),
+    'four players: the host and three guests, each in E1M1 through their own player\'s eyes (1, 2, 3, 4)');
+
+  // each guest walks: on the host's screen their player moves, no one else's
+  const walkAs = async (pg, pid, far = 32) => {
+    const from = (await players(host))[pid - 1];
+    let moved = 0;
+    for (const key of ['KeyW', 'KeyS']) {
+      await pg.keyboard.down(key);
+      for (let i = 0; i < (key === 'KeyW' ? 20 : 150) && moved <= far; i++) {
+        await pg.waitForTimeout(200);
+        const at = (await players(host))[pid - 1];
+        moved = Math.hypot(at.X - from.X, at.Y - from.Y);
+      }
+      await pg.keyboard.up(key);
+      if (moved > far) break;
+    }
+    return moved;
+  };
+  // (where each page stands, when a wait below gives up)
+  const dump4 = () => Promise.all(four.map((pg) => pg.evaluate(() => ({ me: window.doom.net?.me, error: window.doom.net?.error, tic: window.doom.net?.tic,
+    status: document.getElementById('net-status').textContent, msg: window.doom.message, screen: window.doom.screen }))));
+  const walked = [];
+  for (const [pg, pid] of [[guest, 2], [g3, 3], [g4, 4]]) {
+    // (the last one to walk comes to a stop first: the commands it had queued ahead in the
+    // lockstep, then P_XYMovement's friction. Counted in the host's tics: four engines on
+    // one machine can stall the game for longer than any fixed wait)
+    for (let i = 0, prev = ''; i < 30; i++) {
+      const now = JSON.stringify(await players(host));
+      if (now === prev) break;
+      prev = now;
+      const t = await host.evaluate(() => window.doom.net.tic);
+      for (let k = 0; k < 300 && (await host.evaluate(() => window.doom.net.tic)) < t + 20; k++) await host.waitForTimeout(50);
+    }
+    const before4 = await players(host);
+    await pg.evaluate(() => document.activeElement?.blur());   // (out of the Co-op panel's boxes)
+    await pg.click('#screen', { position: { x: 300, y: 200 } }).catch(() => {});
+    const m = await walkAs(pg, pid);
+    const after4 = await players(host);
+    const shifted = after4.map((q, i) => (i === pid - 1 || (q.X === before4[i].X && q.Y === before4[i].Y) ? null : `${i + 1} by ${Math.hypot(q.X - before4[i].X, q.Y - before4[i].Y).toFixed(0)}`)).filter(Boolean);
+    walked.push({ pid, m, shifted, ok: m > 16 && shifted.length === 0 });   // (four starts close together: one can be in another's way)
+  }
+  assert(walked.every((w) => w.ok), `each guest's W moves their own player on the host's screen (${walked.map((w) => `${w.pid}: ${w.m.toFixed(0)}${w.shifted.length ? `, and ${w.shifted.join(', ')}` : ''}`).join('; ')}), and no one else`);
+
+  // the four games at the same tic: the next checksum all four have made
+  const agree4 = async () => {
+    const after = Math.max(...await Promise.all(four.map((pg) => pg.evaluate(() => window.doom.net.tic))));
+    for (let i = 0; i < 600; i++) {
+      const sums = await Promise.all(four.map((pg) => pg.evaluate(() => window.doom.net.sums)));
+      const t = Object.keys(sums[0]).map(Number).find((k) => k > after && sums.every((x) => k in x));
+      if (t !== undefined) return { tic: t, same: sums.every((x) => x[t] === sums[0][t]) };
+      await host.waitForTimeout(100);
+    }
+    return { tic: null, same: false };
+  };
+  const tic4 = async () => Math.min(...await Promise.all(four.map((pg) => pg.evaluate(() => window.doom.net.tic))));
+  const from4 = await tic4();
+  for (const pg of four) await pg.keyboard.down('ControlLeft');
+  for (let i = 0; i < 1200 && (await tic4()) < from4 + 140; i++) await host.waitForTimeout(100);
+  for (const pg of four) await pg.keyboard.up('ControlLeft');
+  const same4 = await agree4();
+  const errs4 = await Promise.all(four.map((pg) => pg.evaluate(() => window.doom.net.error)));
+  assert(same4.same && errs4.every((e) => !e) && (await tic4()) >= from4 + 140,
+    `140 tics with all four firing, and the four games agree at tic ${same4.tic}`);
+
+  // with more than two, a chat goes to one player: player 3 presses G (green, player 1)
+  await g3.keyboard.press('g');
+  await g3.keyboard.type('to one');
+  await g3.keyboard.press('Enter');
+  await until(host, () => /TO ONE/.test(window.doom.message ?? ''), null, 30000);
+  await host.waitForTimeout(1000);
+  const heard4 = await Promise.all(four.map((pg) => pg.evaluate(() => window.doom.message ?? '')));
+  assert(/TO ONE$/.test(heard4[0]) && heard4[0] !== 'TO ONE' && heard4[2] === 'TO ONE' && !/TO ONE/.test(heard4[1]) && !/TO ONE/.test(heard4[3]),
+    `player 3's G sends to player 1 alone: "${heard4[0]}" on the host's screen, its own line on player 3's, nothing on 2's or 4's`);
+  const chat4 = await agree4();
+  assert(chat4.same, `…and the games still agree (tic ${chat4.tic})`);
+
+  // player 4 leaves: the host stops, and tells the other two
+  await g4.evaluate(() => document.getElementById('net-leave').click());
+  await until(host, () => /player 4 left/.test(window.doom.net?.error ?? ''), null, 30000).catch(async (e) => { console.log(JSON.stringify(await dump4())); throw e; });
+  await until(guest, () => !!window.doom.net?.error, null, 30000);
+  await until(g3, () => !!window.doom.net?.error, null, 30000);
+  const why4 = await Promise.all([host, guest, g3].map((pg) => pg.evaluate(() => window.doom.net.error)));
+  assert(why4.every((w) => /player 4 left/.test(w)), `player 4 leaves: the host's game and both other guests' stop (${why4.join('; ')})`);
 } catch (err) {
   console.error(err);
   failures++;
