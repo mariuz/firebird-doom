@@ -31,7 +31,7 @@ import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
 import { captureGame } from '../src/savegame.js';
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync('sql/' + n + '.sql', 'utf8')]));
-const db = new FirebirdBrowser('memory://fixture', { transport: new DirectTransport() });
+const db = new FirebirdBrowser('memory://fixture', { transport: new DirectTransport({ threads: false }) });
 await createSchema(db, sql);
 const wad = new Wad(fs.readFileSync('public/wads/freedoom1.wad'));
 const res = await loadResources(db, wad);

@@ -108,7 +108,7 @@ assert(app.types.find((t) => t.type === 2007).amount === 20 && app.types.find((t
 
 // played out in Firebird
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
-const db = new FirebirdBrowser('memory://deh', { transport: new DirectTransport() });
+const db = new FirebirdBrowser('memory://deh', { transport: new DirectTransport({ threads: false }) });
 await createSchema(db, sql);
 const res = await loadResources(db, wad, { dehacked: PATCH });
 const one = async (q) => (await db.query(q)).rows[0];

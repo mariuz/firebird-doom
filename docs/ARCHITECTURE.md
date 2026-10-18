@@ -41,7 +41,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `src/cheats.js` | `cht_CheckCheat`: readers for fixed cheats, IDCLEV/IDMUS digits, `clevMap`, `idmusMap`. |
 | `src/audio.js` / `src/channels.js` | Sound effects from `SOUND_EVENTS` on DOOM's 8 channels (`S_StartSound`, `S_getChannel`, `S_AdjustSoundParams`, `S_UpdateSounds`). |
 | `src/music.js` / `src/dmx.js` / `src/opl.js` / `src/opl-worklet.js` | Music: MUS/MIDI read into events, DOOM's DMX driver turning them into register writes with the WAD's `GENMIDI`, an emulated YM3812 (OPL2), all in an AudioWorklet. |
-| `public/` | `index.html`, `style.css`, `coi-serviceworker.js` (cross-origin isolation for the Worker), and `wads/` (fetched, not committed). |
+| `public/` | `index.html`, `style.css`, and `wads/` (fetched, not committed). |
 | `scripts/` | The build (`build.mjs`, esbuild-wasm), `fetch-wad.mjs`, the tests, `screenshot.mjs`, `bench.mjs`. |
 
 ## Boot
@@ -222,8 +222,10 @@ GitHub Pages.
 
 - The native `esbuild` binary can't spawn in some sandboxes, so the build uses `esbuild-wasm`.
 - `.sql` files are imported as text by the build.
-- The page needs cross-origin isolation for the Worker's shared memory. `coi-serviceworker.js`
-  provides it on GitHub Pages, and the dev server (`npm run build -- --serve`) doesn't send
-  COOP/COEP itself.
+- The Worker runs `firebird-wasm`'s build without threads (`firebird-embedded-st`, `threads:
+  false`; the Node tests load the same one). It needs no `SharedArrayBuffer`, so the page needs
+  no cross-origin isolation, and neither GitHub Pages nor the dev server sends COOP/COEP. The page
+  once had `coi-serviceworker.js` for that; `openDatabase` unregisters it where a browser still
+  has it.
 - The game loop pauses while `document.hidden`, which includes the desktop app's browser pane when
   it's hidden. Verify live behaviour with the pane visible, or drive the state machines headless.

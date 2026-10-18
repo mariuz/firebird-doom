@@ -69,7 +69,7 @@ assert(strings.get('GOTARMOR') === 'Picked up some PWAD armour.' && strings.has(
 
 // in Firebird
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
-const db = new FirebirdBrowser('memory://pwad', { transport: new DirectTransport() });
+const db = new FirebirdBrowser('memory://pwad', { transport: new DirectTransport({ threads: false }) });
 await createSchema(db, sql);
 const res = await loadResources(db, wad, { dehacked: 'Misc 0\nInitial Health = 123\n' });
 const flatEntry = res.flats.find((l) => l.name === 'NUKAGE1');

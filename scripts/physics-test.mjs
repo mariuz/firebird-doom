@@ -12,7 +12,7 @@ import { createSchema, loadResources, loadMap } from '../src/loader.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
-const db = new FirebirdBrowser('memory://physics', { transport: new DirectTransport() });
+const db = new FirebirdBrowser('memory://physics', { transport: new DirectTransport({ threads: false }) });
 await createSchema(db, sql);
 const wad = new Wad(fs.readFileSync(process.env.WAD ?? path.join(root, 'public/wads/freedoom1.wad')));
 const res = await loadResources(db, wad);

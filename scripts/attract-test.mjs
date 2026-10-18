@@ -21,7 +21,7 @@ const assert = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) f
 for (const label of ['freedoom1.wad', 'freedoom2.wad']) {
   const file = path.join(root, 'public/wads', label);
   if (!fs.existsSync(file)) { console.log(`(no ${label})`); continue; }
-  const db = new FirebirdBrowser(`memory://attract-test-${label}`, { transport: new DirectTransport() });
+  const db = new FirebirdBrowser(`memory://attract-test-${label}`, { transport: new DirectTransport({ threads: false }) });
   await createSchema(db, sql);
   const wad = new Wad(fs.readFileSync(file));
   const res = await loadResources(db, wad);

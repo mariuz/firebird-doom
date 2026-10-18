@@ -996,8 +996,10 @@ npm run serve
 them. *Phase 1* plays like DOOM (E1M1–E4M9). *Phase 2* plays like DOOM II (MAP01–MAP32), with
 the super shotgun, the megasphere and DOOM II's monsters. Phase 2 downloads only when you pick it. `npm test` runs the game SQL in the real WASM engine under Node. `npm run serve` builds
 `dist/` and serves it on http://localhost:8080 **without** COOP/COEP headers, just like
-GitHub Pages. That way the service worker is what makes the page cross-origin isolated
-(Firebird's pthreads need `SharedArrayBuffer`).
+GitHub Pages. The page doesn't need them: it runs `firebird-wasm`'s build without threads, which
+needs no `SharedArrayBuffer`, so there's no cross-origin isolation and no service worker. It was
+also the faster of the two here (a tic ~15 ms against ~18, a map load ~0.5 s against ~0.7, and
+the engine starts in half the time).
 
 You can also load your own `DOOM1.WAD` / `DOOM.WAD` / `DOOM2.WAD` with the file picker. Nothing
 is uploaded anywhere.

@@ -159,7 +159,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   for (const [label, list] of Object.entries(ATTRACT)) {
     const file = path.join(root, 'public/wads', label);
     if (!fs.existsSync(file)) { console.log(`(no ${label})`); continue; }
-    const db = new FirebirdBrowser(`memory://attract-${label}`, { transport: new DirectTransport() });
+    const db = new FirebirdBrowser(`memory://attract-${label}`, { transport: new DirectTransport({ threads: false }) });
     await createSchema(db, sql);
     const wad = new Wad(fs.readFileSync(file));
     const res = await loadResources(db, wad);

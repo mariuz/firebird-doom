@@ -22,8 +22,8 @@ noticed:
 - **A browser matrix** (Tooling): what's known to work outside Chromium.
 - **Four players over the network** (Tooling): the co-op test connects two pages; three and
   four (the host relaying for everyone) aren't tested.
-- **Offline play** (Tooling): the service worker that isolates the page could also cache the
-  engine, the page and the Freedoom WADs, so it plays without a connection once loaded.
+- **Offline play** (Tooling): a service worker could cache the engine, the page and the
+  Freedoom WADs, so it plays without a connection once loaded.
 - **A faster test suite** (Tooling): the pre-commit set takes about 25 minutes, one test after
   another; most of them could run side by side.
 - **Declined extras**, noted where they come up: random sound pitch, the OPL3's rhythm mode and
@@ -152,7 +152,10 @@ Everything else below is done.
     +2.2 ms), so formatting them isn't the cost either. A binary result encoding would remove
     the formatting and parsing, ~0.5–1 ms of the 20, and keep the per-row fetch. That agrees
     with `firebird-wasm`'s own plan (`docs/plans/typed-results.md` in `mariuz/electric-firebird`),
-    which argues against replacing its JSON results. The page is on 0.6.1, using the binary
+    which argues against replacing its JSON results. The page is on 0.7.0 and its build without
+    threads (`firebird-embedded-st`), which measured faster than the threaded one: a tic
+    15.4–15.9 ms against 17.9–18.1, `FRAME_WALLS` 23 against 25–28, a map load ~520 ms against
+    ~715, the engine started in 1.3 s against 2.6, and no cross-origin isolation. It uses the binary
     parameters and `execBatch` (0.4) for loads and saves. Two later options measured within the
     noise here and are left off: 0.5.0's prepared-statement cache, and 0.6.0's `sharedReads`
     (autocommit reads in one shared read-only transaction; it played a 300-tic game to the same
@@ -223,9 +226,10 @@ Everything else below is done.
 - **Four players over the network.** `npm run test:coop` connects two pages. Three and four
   players go through the host as a star, and nothing tests that relay with more than one guest;
   the test could open four contexts and check the checksums agree.
-- **Offline play.** The page already has a service worker, which makes it cross-origin isolated
-  on GitHub Pages. It could also cache the page, the engine and the Freedoom WADs, so the game
-  starts without a connection once it has loaded once.
+- **Offline play.** A service worker could cache the page, the engine and the Freedoom WADs, so
+  the game starts without a connection once it has loaded once. (The page had one for cross-origin
+  isolation until the engine's build without threads made that unnecessary; a new one must not be
+  unregistered by `openDatabase`, which clears the old.)
 - **A faster test suite.** The full pre-commit set runs one test after another and takes about
   25 minutes here. The SQL tests each open their own database, so most could run side by side
   (`npm run test:all`, with the browser tests on their own ports), and CI could split them

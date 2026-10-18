@@ -3,7 +3,7 @@
 //   node scripts/build.mjs            build
 //   node scripts/build.mjs --serve    build, then serve dist/ on :8080 WITHOUT
 //                                     COOP/COEP headers – exactly like GitHub
-//                                     Pages – so the service worker is tested.
+//                                     Pages, which the page doesn't need.
 //
 // Everything is referenced relatively: a project site lives under /<repo>/.
 
@@ -19,7 +19,7 @@ const PKG = path.join(root, 'node_modules/firebird-wasm/dist');
 
 // wasm-loader.js has a Node-only require() of the Emscripten glue; browsers
 // take the globalThis path, so keep the glue out of the bundle.
-const EXTERNAL = ['*firebird-embedded.js'];
+const EXTERNAL = ['*firebird-embedded.js', '*firebird-embedded-st.js'];
 
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
@@ -52,6 +52,10 @@ await build({
 
 // The engine Worker: a classic script that loads the Emscripten glue first and
 // finds the .wasm next to itself, whatever path prefix the site is served from.
+// It's firebird-wasm's build without threads (firebird-embedded-st): no
+// SharedArrayBuffer, so the page needs no cross-origin isolation, and it ran
+// the game faster than the threaded one (a tic ~15 ms against ~18, a map load
+// ~0.5 s against ~0.7, the engine started in half the time).
 const worker = await build({
   entryPoints: [path.join(PKG, 'browser/worker-entry.js')],
   bundle: true,
@@ -65,12 +69,12 @@ const worker = await build({
 });
 fs.writeFileSync(
   path.join(OUT, 'firebird-engine-worker.js'),
-  "importScripts(new URL('./firebird-embedded.js', self.location.href).href);\n" +
-    'self.FIREBIRD_WORKER_OPTIONS = { locateFile: (f) => new URL(f, self.location.href).href };\n' +
+  "importScripts(new URL('./firebird-embedded-st.js', self.location.href).href);\n" +
+    'self.FIREBIRD_WORKER_OPTIONS = { threads: false, locateFile: (f) => new URL(f, self.location.href).href };\n' +
     worker.outputFiles[0].text,
 );
 
-for (const f of ['firebird-embedded.js', 'firebird-embedded.wasm']) {
+for (const f of ['firebird-embedded-st.js', 'firebird-embedded-st.wasm']) {
   fs.copyFileSync(path.join(PKG, 'wasm', f), path.join(OUT, f));
 }
 

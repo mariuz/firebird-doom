@@ -1505,16 +1505,11 @@ for (const b of document.querySelectorAll('[data-sql]')) {
 
 // ── boot ────────────────────────────────────────────────────────────────
 async function openDatabase() {
-  if (!window.crossOriginIsolated && window.isSecureContext && 'serviceWorker' in navigator &&
-      Number(sessionStorage.getItem('firebird-doom:coi-reloads') || '0') < 2) {
-    // coi-serviceworker.js is about to reload the page with COOP/COEP in place
-    setStatus('Enabling cross-origin isolation for Firebird WASM (one-time reload)…');
-    return new Promise(() => {});
-  }
-  if (!window.crossOriginIsolated) {
-    throw new Error('This page is not cross-origin isolated, so Firebird WASM cannot start. ' +
-      'Reload once (the service worker enables it), and use HTTPS or localhost.');
-  }
+  // The engine is firebird-wasm's build without threads, in a Worker: it needs no
+  // SharedArrayBuffer, so no cross-origin isolation. The page once had a service
+  // worker for that (coi-serviceworker.js); a browser that still has it lets it go.
+  navigator.serviceWorker?.getRegistrations?.()
+    .then((regs) => regs.forEach((r) => r.unregister())).catch(() => {});
   setStatus('Starting Firebird 6 (WebAssembly)…');
   const instance = new FirebirdBrowser('memory://doom', {
     worker: new Worker(new URL('./firebird-engine-worker.js', import.meta.url)),

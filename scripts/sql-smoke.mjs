@@ -27,7 +27,7 @@ function assert(cond, msg) {
 }
 
 const t = () => performance.now();
-const db = new FirebirdBrowser('memory://doom', { transport: new DirectTransport() });
+const db = new FirebirdBrowser('memory://doom', { transport: new DirectTransport({ threads: false }) });
 
 let t0 = t();
 await createSchema(db, sql);

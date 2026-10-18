@@ -16,7 +16,7 @@ import { TRANSLATIONS } from '../src/renderer.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
-const db = new FirebirdBrowser('memory://net', { transport: new DirectTransport() });
+const db = new FirebirdBrowser('memory://net', { transport: new DirectTransport({ threads: false }) });
 await createSchema(db, sql);
 const wad = new Wad(fs.readFileSync(process.env.WAD ?? path.join(root, 'public/wads/freedoom1.wad')));
 const res = await loadResources(db, wad);
@@ -193,7 +193,7 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
 // ── two peers in lockstep (net.js), each with its own Firebird, linked by a
 // pretend network that delivers messages late and out of step with each other ──
 {
-  const db2 = new FirebirdBrowser('memory://net-peer2', { transport: new DirectTransport() });
+  const db2 = new FirebirdBrowser('memory://net-peer2', { transport: new DirectTransport({ threads: false }) });
   await createSchema(db2, sql);
   const res2 = await loadResources(db2, wad);
   const peers = [{ db, me: 1 }, { db: db2, me: 2 }];
