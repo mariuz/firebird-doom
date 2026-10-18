@@ -5,7 +5,7 @@ name: Browsers
 
 on:
   push:
-    branches: [main]
+    branches: [main, browsers-trial2]
   workflow_dispatch:
 
 permissions:
