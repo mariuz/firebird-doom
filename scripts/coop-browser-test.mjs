@@ -37,11 +37,12 @@ const browser = await launchBrowser();   // (BROWSER=firefox or webkit for those
 console.log(`(in ${browserName} ${browser.version()})`);
 const errors = [];
 const consoleLog = [];
+const stacks = [];   // (where each page error came from, printed if there are any)
 try {
   const open = async (who) => {
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 900 } });
     const page = await ctx.newPage();
-    page.on('pageerror', (e) => errors.push(`${who}: ${e.message}`));
+    page.on('pageerror', (e) => { errors.push(`${who}: ${e.message}`); stacks.push(`${who}: ${e.stack}`); });
     const recent = [];
     page.on('console', (m) => {
       if (m.type() === 'error') consoleLog.push(`${who}: ${m.text().slice(0, 300)}`);
@@ -411,7 +412,8 @@ try {
   };
   // (where each page stands, when a wait below gives up)
   const dump4 = () => Promise.all(four.map((pg) => pg.evaluate(() => ({ me: window.doom.net?.me, error: window.doom.net?.error, tic: window.doom.net?.tic,
-    status: document.getElementById('net-status').textContent, msg: window.doom.message, screen: window.doom.screen }))));
+    status: document.getElementById('net-status').textContent, msg: window.doom.message, screen: window.doom.screen, chat: window.doom.chat }))));
+  const until4 = (pg, fn, arg, timeout) => until(pg, fn, arg, timeout).catch(async (e) => { console.log(JSON.stringify(await dump4())); throw e; });
   const walked = [];
   for (const [pg, pid] of [[guest, 2], [g3, 3], [g4, 4]]) {
     // (the last one to walk comes to a stop first: the commands it had queued ahead in the
@@ -459,7 +461,7 @@ try {
   await g3.keyboard.press('g');
   await g3.keyboard.type('to one');
   await g3.keyboard.press('Enter');
-  await until(host, () => /TO ONE/.test(window.doom.message ?? ''), null, 30000);
+  await until4(host, () => /TO ONE/.test(window.doom.message ?? ''), null, 30000);
   await host.waitForTimeout(1000);
   const heard4 = await Promise.all(four.map((pg) => pg.evaluate(() => window.doom.message ?? '')));
   assert(/TO ONE$/.test(heard4[0]) && heard4[0] !== 'TO ONE' && heard4[2] === 'TO ONE' && !/TO ONE/.test(heard4[1]) && !/TO ONE/.test(heard4[3]),
@@ -469,9 +471,9 @@ try {
 
   // player 4 leaves: the host stops, and tells the other two
   await g4.evaluate(() => document.getElementById('net-leave').click());
-  await until(host, () => /player 4 left/.test(window.doom.net?.error ?? ''), null, 30000).catch(async (e) => { console.log(JSON.stringify(await dump4())); throw e; });
-  await until(guest, () => !!window.doom.net?.error, null, 30000);
-  await until(g3, () => !!window.doom.net?.error, null, 30000);
+  await until4(host, () => /player 4 left/.test(window.doom.net?.error ?? ''), null, 30000);
+  await until4(guest, () => !!window.doom.net?.error, null, 30000);
+  await until4(g3, () => !!window.doom.net?.error, null, 30000);
   const why4 = await Promise.all([host, guest, g3].map((pg) => pg.evaluate(() => window.doom.net.error)));
   assert(why4.every((w) => /player 4 left/.test(w)), `player 4 leaves: the host's game and both other guests' stop (${why4.join('; ')})`);
 } catch (err) {
@@ -482,6 +484,7 @@ try {
   server.kill();
 }
 assert(!errors.length, `no page errors${errors.length ? `: ${errors.join('; ')}` : ''}`);
+if (stacks.length) console.log(`where they came from:\n${stacks.join('\n')}`);
 if (failures) {
   console.log(`${failures} failure(s)`);
   process.exit(1);

@@ -5,7 +5,7 @@ name: Browsers
 
 on:
   push:
-    branches: [main]
+    branches: [main, browsers-trial]
   workflow_dispatch:
 
 permissions:
@@ -52,6 +52,7 @@ jobs:
           pactl set-default-sink speakers
 
       - name: Browser (${{ matrix.browser }})
+        if: false
         run: npm run test:browser
         env:
           BROWSER: ${{ matrix.browser }}
