@@ -412,8 +412,10 @@ try {
   };
   // (where each page stands, when a wait below gives up)
   const dump4 = () => Promise.all(four.map((pg) => pg.evaluate(() => ({ me: window.doom.net?.me, error: window.doom.net?.error, tic: window.doom.net?.tic,
-    status: document.getElementById('net-status').textContent, msg: window.doom.message, screen: window.doom.screen, chat: window.doom.chat }))));
-  const until4 = (pg, fn, arg, timeout) => until(pg, fn, arg, timeout).catch(async (e) => { console.log(JSON.stringify(await dump4())); throw e; });
+    status: document.getElementById('net-status').textContent, msg: window.doom.message, screen: window.doom.screen, chat: window.doom.chat,
+    focus: document.activeElement?.id || document.activeElement?.tagName, hidden: document.hidden }))));
+  let hp4 = null;
+  const until4 = (pg, fn, arg, timeout) => until(pg, fn, arg, timeout).catch(async (e) => { console.log(JSON.stringify({ pages: await dump4(), hp: hp4 })); throw e; });
   const walked = [];
   for (const [pg, pid] of [[guest, 2], [g3, 3], [g4, 4]]) {
     // (the last one to walk comes to a stop first: the commands it had queued ahead in the
@@ -458,6 +460,8 @@ try {
     `140 tics with all four firing, and the four games agree at tic ${same4.tic}`);
 
   // with more than two, a chat goes to one player: player 3 presses G (green, player 1)
+  await g3.evaluate(() => document.activeElement?.blur());
+  hp4 = await players(host).then(() => host.evaluate(() => window.doom.sql('SELECT p.id, t.hp FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id')));
   await g3.keyboard.press('g');
   await g3.keyboard.type('to one');
   await g3.keyboard.press('Enter');
