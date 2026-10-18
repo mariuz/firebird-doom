@@ -42,6 +42,15 @@ jobs:
       - name: Install ${{ matrix.browser }}
         run: npx playwright install --with-deps ${{ matrix.browser }}
 
+      # The runner has no sound card: a PulseAudio null sink gives the page's
+      # AudioContext somewhere to play, as a player's speakers would.
+      - name: A sound device
+        run: |
+          sudo apt-get install -y pulseaudio
+          pulseaudio -D --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=speakers
+          pactl set-default-sink speakers
+
       - name: Browser (${{ matrix.browser }})
         run: npm run test:browser
         env:

@@ -91,7 +91,12 @@ try {
   page.setDefaultTimeout(120000);
   await page.goto(`http://localhost:${port}/`);
   const doom = (fn, arg) => page.evaluate(fn, arg);
-  const until = (fn, arg, timeout = 120000) => page.waitForFunction(fn, arg, { timeout, polling: 50 });
+  // (a wait that times out says where the page was)
+  const until = (fn, arg, timeout = 120000) => page.waitForFunction(fn, arg, { timeout, polling: 50 }).catch(async (err) => {
+    const at = await page.evaluate(() => ({ screen: window.doom?.screen, melting: window.doom?.melting, settled: window.doom?.settled,
+      status: document.getElementById('status')?.textContent })).catch((e) => e.message);
+    throw new Error(`${err.message.split('\n')[0]} waiting for ${String(fn).slice(0, 80)}; the page: ${JSON.stringify(at)}`);
+  });
   const key = async (k, wait = 150) => { await page.keyboard.press(k); await page.waitForTimeout(wait); };
   const tic = () => doom(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));
   const pos = () => doom(() => window.doom.sql("SELECT x, y FROM things WHERE kind = 'player'").then((r) => r[0]));
@@ -134,6 +139,7 @@ try {
   await page.waitForTimeout(500);
   const music3 = await doom(async () => {
     const a = window.doom.audio;
+    if (!a.opl) return { state: a.ctx?.state ?? 'none' };
     const an = a.ctx.createAnalyser();
     a.musicGain.connect(an);
     const buf = new Float32Array(2048);
@@ -147,7 +153,7 @@ try {
     return { opl3: a.opl3, channels: a.opl.channelCount, rms: Math.sqrt(sum / 20480), song: a.currentMusic };
   });
   assert(music3.opl3 && music3.rms > 0.003 && music3.song === 'D_E1M1',
-    `Synth OPL3: the music plays on from the OPL3 worklet (level ${music3.rms.toFixed(3)})`);
+    `Synth OPL3: the music plays on from the OPL3 worklet (level ${music3.rms?.toFixed(3) ?? music3.state})`);
   await page.selectOption('#synth', 'opl2');
 
   // F6 picks the quicksave slot; walk away; F9 brings the game back
