@@ -1509,8 +1509,11 @@ async function openDatabase() {
   // The engine is firebird-wasm's build without threads, in a Worker: it needs no
   // SharedArrayBuffer, so no cross-origin isolation. The page once had a service
   // worker for that (coi-serviceworker.js); a browser that still has it lets it go.
+  // Today's (sw.js) is for offline play.
   navigator.serviceWorker?.getRegistrations?.()
-    .then((regs) => regs.forEach((r) => r.unregister())).catch(() => {});
+    .then((regs) => regs.filter((r) => /coi-serviceworker/.test(r.active?.scriptURL ?? '')).forEach((r) => r.unregister()))
+    .then(() => navigator.serviceWorker.register('./sw.js'))
+    .catch((err) => console.warn('[firebird-doom] no offline play:', err.message));
   setStatus('Starting Firebird 6 (WebAssembly)…');
   const instance = new FirebirdBrowser('memory://doom', {
     worker: new Worker(new URL('./firebird-engine-worker.js', import.meta.url)),
@@ -1618,9 +1621,35 @@ async function loadWads() {
 async function loadGame(game) {
   const file = game === 'freedoom2' ? 'freedoom2.wad' : 'freedoom1.wad';
   setStatus(`Downloading ${file}…`);
-  const resp = await fetch(new URL(`./wads/${file}`, location.href));
-  if (!resp.ok) throw new Error(`could not fetch ${file} (${resp.status}); pick a WAD file instead`);
+  const url = new URL(`./wads/${file}`, location.href);
+  const resp = await fetch(url).catch(() => null);
+  if (!resp?.ok) {
+    throw new Error(`could not fetch ${file} (${resp ? resp.status : 'no answer: offline, and not played here before?'}); pick a WAD file instead`);
+  }
+  keepWad(url, resp.clone());
   await useWad(await resp.arrayBuffer(), file);
+}
+
+// Offline play: a WAD the page downloaded goes into the service worker's cache
+// (sw.js), as it came, unless that copy is already there: it isn't fetched twice
+const WAD_CACHE = 'firebird-doom-wads';
+async function keepWad(url, resp) {
+  try {
+    if (!('caches' in window)) return;
+    const c = await caches.open(WAD_CACHE);
+    const had = await c.match(url);
+    const same = (h) => ['etag', 'last-modified', 'content-length'].every((k) => had.headers.get(k) === resp.headers.get(k));
+    if (had && same()) return;
+    await c.put(url, resp);
+  } catch (err) { console.warn('[firebird-doom] the WAD stays online only:', err.message); }
+}
+
+/** What there is to play offline: the service worker in charge, its version, the WADs kept */
+async function offlineState() {
+  const sw = navigator.serviceWorker;
+  const wads = 'caches' in window ? (await (await caches.open(WAD_CACHE)).keys()).map((r) => r.url.split('/').pop()) : [];
+  const pages = 'caches' in window ? (await caches.keys()).filter((k) => k.startsWith('firebird-doom-page-')) : [];
+  return { controlled: !!sw?.controller, page: pages.map((k) => k.slice('firebird-doom-page-'.length)), wads };
 }
 
 async function boot() {
@@ -1632,6 +1661,7 @@ async function boot() {
     // for the devtools console: await doom.sql('SELECT * FROM player')
     window.doom = {
       db, audio, sql: (q, p) => db.query(q, p).then((r) => r.rows),
+      offline: offlineState,
       get renderer() { return renderer; }, get presenter() { return presenter; },
       // previews for testing a WAD's screens without playing to them (try id's
       // doom.wad: doom.finale('E3M8') is the bunny); afterwards the game goes on

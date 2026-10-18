@@ -91,6 +91,21 @@ fs.cpSync(path.join(root, 'public'), OUT, { recursive: true });
     fs.writeFileSync(path.join(OUT, 'wads/freedoom-strings.json'), JSON.stringify(strings, null, 1));
   }
 }
+// The service worker (offline play): the page's files it stores whole at install,
+// and a version from their contents, so each build's set replaces the last one's.
+{
+  const { createHash } = await import('node:crypto');
+  const shell = ['index.html', 'style.css', 'main.js', 'opl-worklet.js', 'firebird-engine-worker.js',
+    'firebird-embedded-st.js', 'firebird-embedded-st.wasm', 'wads/freedoom-strings.json', 'wads/FREEDOOM-COPYING.txt',
+    ...(fs.existsSync(path.join(OUT, 'demos')) ? fs.readdirSync(path.join(OUT, 'demos')).sort().map((f) => `demos/${f}`) : [])]
+    .filter((f) => fs.existsSync(path.join(OUT, f)));
+  const hash = createHash('sha256');
+  for (const f of shell) hash.update(f).update(fs.readFileSync(path.join(OUT, f)));
+  const sw = path.join(OUT, 'sw.js');
+  fs.writeFileSync(sw, fs.readFileSync(sw, 'utf8')
+    .replace("'__VERSION__'", JSON.stringify(hash.digest('hex').slice(0, 12)))
+    .replace('__SHELL__', JSON.stringify(['./', ...shell])));
+}
 // GitHub Pages runs Jekyll by default, which drops _underscored paths.
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
 

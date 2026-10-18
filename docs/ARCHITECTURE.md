@@ -41,7 +41,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `src/cheats.js` | `cht_CheckCheat`: readers for fixed cheats, IDCLEV/IDMUS digits, `clevMap`, `idmusMap`. |
 | `src/audio.js` / `src/channels.js` | Sound effects from `SOUND_EVENTS` on DOOM's 8 channels (`S_StartSound`, `S_getChannel`, `S_AdjustSoundParams`, `S_UpdateSounds`). |
 | `src/music.js` / `src/dmx.js` / `src/opl.js` / `src/opl-worklet.js` | Music: MUS/MIDI read into events, DOOM's DMX driver turning them into register writes with the WAD's `GENMIDI`, an emulated YM3812 (OPL2), all in an AudioWorklet. |
-| `public/` | `index.html`, `style.css`, and `wads/` (fetched, not committed). |
+| `public/` | `index.html`, `style.css`, `sw.js` (offline play: the build stamps in its version and file list), `demos/`, and `wads/` (fetched, not committed). |
 | `scripts/` | The build (`build.mjs`, esbuild-wasm), `fetch-wad.mjs`, the tests, `screenshot.mjs`, `bench.mjs`. |
 
 ## Boot

@@ -52,7 +52,7 @@ try {
     await page.goto(`http://localhost:${port}/`);
     // A page that doesn't start says where it stopped. In WebKit on CI the engine has now
     // and then trapped while a second page started ("Out of bounds memory access", about
-    // one co-op run in ten; docs/ROADMAP.md): then it's reloaded once, as a player would,
+    // a few co-op runs in a dozen; docs/ROADMAP.md): then it's reloaded once, as a player would,
     // and the test says so
     const started = () => page.waitForFunction(() => window.doom?.title || /memory access|RuntimeError/i.test(document.getElementById('status')?.textContent ?? ''),
       null, { timeout: 120000, polling: 100 }).then(() => page.evaluate(() => !!window.doom?.title));

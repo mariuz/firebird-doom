@@ -20,14 +20,12 @@ noticed:
   `test:finale`, and the same with `doom2.wad`) checks DOOM I's episode maps and the endings
   against id's own WADs; nobody has run it yet. Then decide whether DOOM I's endings should
   borrow Freedoom Phase 1's text, as DOOM II's borrow Phase 2's.
-- **A WebAssembly trap in WebKit** (Engine): about one co-op run in ten on CI, a page's engine stops
+- **A WebAssembly trap in WebKit** (Engine): in a few co-op runs out of a dozen on CI, a page's engine stops
   with `Out of bounds memory access` while a second page starts; 30 paired starts didn't repeat it.
   A source-mapped build of `firebird-embedded-st` would say where; it may be WebKit's or the engine's.
   The co-op test reloads such a page once, with a warning.
 - **Safari itself, pointer lock and touch** (Tooling): Firefox and WebKit are in CI now; a manual
   pass on a Mac and an iPhone would cover what headless engines can't.
-- **Offline play** (Tooling): a service worker could cache the engine, the page and the
-  Freedoom WADs, so it plays without a connection once loaded.
 - **A faster test suite** (Tooling): the pre-commit set takes about 25 minutes, one test after
   another; most of them could run side by side.
 - **Declined extras**, noted where they come up: random sound pitch, the OPL3's rhythm mode and
@@ -234,10 +232,11 @@ Everything else below is done.
   while all fire, a chat to one player reaches only them, and a guest leaving stops the rest.
   It found the host keeping a guest's desync to itself (the others froze); `Lockstep.receive`
   now passes it on, and `netgame-test` checks that with four peers in a star.
-- **Offline play.** A service worker could cache the page, the engine and the Freedoom WADs, so
-  the game starts without a connection once it has loaded once. (The page had one for cross-origin
-  isolation until the engine's build without threads made that unnecessary; a new one must not be
-  unregistered by `openDatabase`, which clears the old.)
+- ~~**Offline play.**~~ Done ([public/sw.js](../public/sw.js)): the page's files are stored whole
+  at install under a version the build stamps in, the WADs as the page downloads them
+  (`keepWad`); network first, the caches when there's none. `openDatabase` now unregisters only
+  the old `coi-serviceworker.js`. The browser test plays a level with the server stopped (Playwright's
+  `setOffline` doesn't reach a service worker's own fetches, so stopping the server is the test).
 - **A faster test suite.** The full pre-commit set runs one test after another and takes about
   25 minutes here. The SQL tests each open their own database, so most could run side by side
   (`npm run test:all`, with the browser tests on their own ports), and CI could split them

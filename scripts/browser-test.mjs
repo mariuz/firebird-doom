@@ -546,6 +546,41 @@ try {
     await p3.close();
   }
 
+  // offline play (sw.js): a first visit leaves the page, the engine and the WAD it
+  // played in the caches; offline, a reload still starts, and a game plays. A WAD
+  // never downloaded says why it can't come. (Offline is the server stopped: Playwright's
+  // setOffline doesn't reach a service worker's own fetches. So this goes last.)
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1000, height: 800 } });
+    const p4 = await ctx.newPage();
+    p4.on('pageerror', (e) => errors.push(e.message));
+    await p4.goto(`http://localhost:${port}/`);
+    await p4.waitForFunction(() => window.doom?.title, null, { timeout: 120000, polling: 100 });
+    let ready = null;
+    for (let i = 0; i < 200 && !(ready?.controlled && ready.page.length && ready.wads.includes('freedoom1.wad')); i++) {
+      ready = await p4.evaluate(() => window.doom.offline());
+      await p4.waitForTimeout(100);
+    }
+    assert(ready.controlled && ready.page.length === 1 && ready.wads.join() === 'freedoom1.wad',
+      `a first visit leaves it ready to play offline (the page's files as version ${ready.page[0]}, and ${ready.wads.join(', ')})`);
+    server.kill();
+    await new Promise((r) => (server.exitCode !== null ? r() : server.once('exit', r)));
+    await p4.reload();
+    await p4.waitForFunction(() => window.doom?.title, null, { timeout: 120000, polling: 100 });
+    const offTic = () => p4.evaluate(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));
+    await p4.evaluate(() => { const m = document.getElementById('map'); m.value = 'E1M2'; m.dispatchEvent(new Event('change')); });
+    await p4.waitForFunction(() => window.doom.screen === 'level' && window.doom.settled, null, { timeout: 120000, polling: 100 });
+    const o0 = await offTic();
+    for (let i = 0; i < 100 && (await offTic()) <= o0 + 10; i++) await p4.waitForTimeout(100);
+    const offMap = (await p4.evaluate(() => window.doom.sql('SELECT map_name FROM game').then((r) => r[0].MAP_NAME))).trim();
+    assert(offMap === 'E1M2' && (await offTic()) > o0 + 10, `with the server gone, a reload starts from the caches and ${offMap} plays`);
+    await p4.selectOption('#game', 'freedoom2');
+    await p4.waitForFunction(() => /could not fetch freedoom2\.wad/.test(document.getElementById('status')?.textContent ?? ''), null, { timeout: 30000, polling: 100 });
+    const said = await p4.evaluate(() => document.getElementById('status').textContent);
+    assert(/no answer: offline/.test(said), `…and Phase 2, never downloaded, says why it can't come ("${said}")`);
+    await ctx.close();
+  }
+
   assert(errors.length === 0, `no page errors${errors.length ? `: ${errors.join('; ')}` : ''}`);
 } catch (err) {
   console.log(`FAIL ${err.message}`);
