@@ -17,6 +17,7 @@ in `sql/render.sql`. JS (`src/`) only rasterises, presents, plays audio and runs
 ```bash
 npm ci
 npm run fetch-wad          # Freedoom 0.13.0 → public/wads/ (+ FREEDOOM-COPYING.txt); needed by everything
+npm run test:all           # everything below that CI runs, side by side (scripts/test-all.mjs; JOBS=n)
 npm test                   # SQL smoke test
 WAD=public/wads/freedoom2.wad npm run test:weapons   # weapons/specials/physics take WAD=: run both WADs
 npm run test:finale && npm run test:intermission && npm run test:menu
@@ -44,8 +45,8 @@ npm run build -- --serve   # dev server (the desktop app's launch config "firebi
 npm run screenshots        # regenerates docs/screenshot-*.png and docs/screenshots.json
 ```
 
-Before every commit, run the smoke test, weapons/specials/physics on **both** WADs, finale,
-intermission, menu, automap, light, statusbar, sound, music, dehacked, pwad, and savegame, demo and netgame (both WADs), attract, the visual test, the build, the browser test and the co-op test. A change that
+Before every commit, run `npm run test:all`: the smoke test, weapons/specials/physics on **both** WADs, finale,
+intermission, menu, automap, light, statusbar, sound, music, dehacked, pwad, and savegame, demo and netgame (both WADs), attract, the visual test, the renderers, the build, the browser test and the co-op test, as many at once as there are cores (about 9 minutes here; one after another it was 25). Each test's output is in `test-logs/`; `npm run test:all -- music pwad` runs only those. A change that
 means to alter what's drawn fails the visual test: look at `screenshots-diff/`, then run `npm run
 screenshots` and commit `docs/`. A change to the simulation fails the attract test: run `npm run
 attract` and commit `public/demos/`. All of them must pass; CI runs the same set.

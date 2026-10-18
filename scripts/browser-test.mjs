@@ -264,9 +264,9 @@ try {
     const a0 = await facing();
     await doom(() => window.doom.mouse.button(2, true));
     for (let i = 0; i < 6; i++) { await doom(() => window.doom.mouse.move(4, 0)); await page.waitForTimeout(50); }
-    await page.waitForTimeout(300);   // (a frame takes the last move before the button goes up: after, it would turn)
+    await waitTics(3);   // (a frame takes the last move before the button goes up: after, it would turn)
     await doom(() => window.doom.mouse.button(2, false));
-    await page.waitForTimeout(300);
+    await waitTics(3);
     const a1 = await facing();
     const s1 = along(a0, a1);
     await doom((p) => window.doom.sql(`UPDATE things SET x = ${p.X}, y = ${p.Y}, momx = 0, momy = 0 WHERE kind = 'player'`), a0);   // (back to the open floor)

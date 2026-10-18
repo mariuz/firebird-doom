@@ -1,6 +1,7 @@
 // build.mjs – assemble the static site into dist/.
 //
 //   node scripts/build.mjs            build
+//   NO_BUILD=1 node scripts/build.mjs --serve   serve the dist/ there is, unbuilt
 //   node scripts/build.mjs --serve    build, then serve dist/ on :8080 WITHOUT
 //                                     COOP/COEP headers – exactly like GitHub
 //                                     Pages, which the page doesn't need.
@@ -21,6 +22,10 @@ const PKG = path.join(root, 'node_modules/firebird-wasm/dist');
 // take the globalThis path, so keep the glue out of the bundle.
 const EXTERNAL = ['*firebird-embedded.js', '*firebird-embedded-st.js'];
 
+// NO_BUILD=1 with --serve: serve the dist/ that's there (test-all.mjs builds once
+// and runs the browser tests side by side, which mustn't each write it again)
+const skipBuild = process.argv.includes('--serve') && process.env.NO_BUILD === '1' && fs.existsSync(path.join(OUT, 'index.html'));
+if (!skipBuild) {
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -115,6 +120,8 @@ console.log(`dist/ ${(size(OUT) / 1024 / 1024).toFixed(1)} MB`);
 if (!fs.existsSync(path.join(OUT, 'wads/freedoom1.wad'))) {
   console.warn('note: no public/wads/freedoom1.wad – run `npm run fetch-wad`, or pick a WAD in the page');
 }
+
+}   // (!skipBuild)
 
 if (process.argv.includes('--serve')) {
   const TYPES = {

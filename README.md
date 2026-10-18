@@ -1009,7 +1009,8 @@ npm run fetch-wad
 ```
 
 ```bash
-npm test
+npm test            # the SQL smoke test
+npm run test:all    # every test, as many at once as there are cores
 ```
 
 ```bash
@@ -1136,14 +1137,15 @@ map the WAD hasn't got, is said in the status line. `src/cmdline.js` reads them.
 ## Deploying
 
 [.github/workflows/pages.yml](.github/workflows/pages.yml) runs on every push to `main`. It
-installs, fetches and caches Freedoom, and runs every test: the SQL smoke test, weapons,
-specials and physics on both WADs, the screens, menus, saves, demos, light, sound and the
-BSP-vs-brute-force renderer check, and `npm run test:visual`, which renders this README's
-pictures again and fails if a single pixel differs from `docs/screenshots.json` (the pictures
-that changed are uploaded for a look). Then comes `npm run test:browser`, which drives the built page
-in headless Chromium through Playwright: the title, the menus, E1M1 melting in, quicksave and
-quickload, a level exit, the intermission, E1M2, an ending and End Game, with no page errors
-allowed. Then it builds and publishes `dist/` to GitHub Pages. Pull requests run everything except the deploy.
+installs, fetches and caches Freedoom, and runs every test with `npm run test:all`, four at a time
+([scripts/test-all.mjs](scripts/test-all.mjs), the longest first). The tests are the SQL smoke test,
+weapons, specials, physics, saves, demos and the netgame on both WADs, the screens, menus, light, sound
+and music, and the BSP-vs-brute-force renderer check. `npm run test:visual` renders this README's
+pictures again and fails if a single pixel differs from `docs/screenshots.json`. The two browser tests
+drive the built page in headless Chromium through Playwright: the title, the menus, E1M1 melting in,
+quicksave and quickload, a level exit, the intermission, E1M2, an ending, End Game and offline play, then
+co-op and deathmatch over WebRTC, with no page errors allowed. On a failure every test's log (`test-logs/`)
+and the pictures that changed are uploaded for a look. Then it builds and publishes `dist/` to GitHub Pages. Pull requests run everything except the deploy.
 
 ### Browsers
 

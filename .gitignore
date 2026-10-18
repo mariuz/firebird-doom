@@ -5,3 +5,4 @@ public/wads/FREEDOOM-COPYING.txt
 *.log
 .claude/
 screenshots-diff/
+test-logs/

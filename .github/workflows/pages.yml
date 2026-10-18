@@ -41,119 +41,26 @@ jobs:
         if: steps.wad.outputs.cache-hit != 'true'
         run: npm run fetch-wad
 
-      # Runs the game's SQL inside the real Firebird WASM engine under Node:
-      # loads E1M1, walks, shoots, opens a door, renders frames, and checks
-      # that the procedural and window-function clippers agree.
-      - name: SQL smoke test
-        run: npm test
+      # Every test, four at a time (scripts/test-all.mjs): the game's SQL in the real
+      # Firebird WASM engine on both WADs, the screens, saves, demos, light, sound
+      # and music, the BSP-vs-brute-force renderer check, the README's pictures
+      # pixel for pixel, and the built page in headless Chromium (the browser test
+      # and co-op over WebRTC). Each test's output is in test-logs/.
+      - name: Install Chromium for the browser tests
+        run: npx playwright install --with-deps chromium
 
-      - name: Weapons, Phase 1 (fist to BFG, chainsaw)
-        run: npm run test:weapons
+      - name: Tests (npm run test:all)
+        run: npm run test:all
 
-      - name: Weapons, Phase 2 (adds the super shotgun)
-        run: npm run test:weapons
-        env:
-          WAD: public/wads/freedoom2.wad
-
-      - name: Specials, Phase 1 (hanging bodies, boss deaths)
-        run: npm run test:specials
-
-      - name: Specials, Phase 2 (Commander Keen, MAP07, the Icon of Sin)
-        run: npm run test:specials
-        env:
-          WAD: public/wads/freedoom2.wad
-
-      - name: Physics, Phase 1 (crushers, 3D projectile aiming)
-        run: npm run test:physics
-
-      - name: Physics, Phase 2 (adds a floor crusher)
-        run: npm run test:physics
-        env:
-          WAD: public/wads/freedoom2.wad
-
-      - name: DOOM II finale (story text, cast call)
-        run: npm run test:finale
-
-      - name: Intermission (kills, items, secrets, time, par)
-        run: npm run test:intermission
-
-      - name: Title screen and menus
-        run: npm run test:menu
-
-      - name: Save and load, Phase 1
-        run: npm run test:savegame
-
-      - name: Save and load, Phase 2
-        run: npm run test:savegame
-        env:
-          WAD: public/wads/freedoom2.wad
-
-      - name: Demos (determinism), Phase 1
-        run: npm run test:demo
-
-      - name: Demos (determinism), Phase 2
-        run: npm run test:demo
-        env:
-          WAD: public/wads/freedoom2.wad
-
-      - name: DEHACKED patches
-        run: npm run test:dehacked
-
-      - name: PWADs
-        run: npm run test:pwad
-
-      - name: Automap
-        run: npm run test:automap
-
-      - name: Light diminishing
-        run: npm run test:light
-
-      - name: Status bar face
-        run: npm run test:statusbar
-
-      - name: Sound channels
-        run: npm run test:sound
-
-      - name: Music (the OPL2 emulator and the DMX driver)
-        run: npm run test:music
-
-      - name: Attract demos (the title loop's, replayed against their checksums)
-        run: npm run test:attract
-
-      - name: Netgame, Phase 1 (two players in Firebird)
-        run: npm run test:netgame
-
-      - name: Netgame, Phase 2
-        run: npm run test:netgame
-        env:
-          WAD: public/wads/freedoom2.wad
-
-      # BSP + solidsegs must find exactly the walls brute force finds
-      - name: Renderer equivalence (BSP vs brute force)
-        run: npm run test:renderers -- E1M1 E1M2 E1M3
-
-      # The README's pictures, rendered again pixel for pixel (docs/screenshots.json)
-      - name: Visual regression (docs/screenshot-*.png)
-        run: npm run test:visual
-
-      - name: Upload the pictures that changed
+      - name: Upload the logs and the pictures that changed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: screenshots-diff
-          path: screenshots-diff/
+          name: test-logs
+          path: |
+            test-logs/
+            screenshots-diff/
           if-no-files-found: ignore
-
-      # The page itself in headless Chromium: title → menu → E1M1, the melt,
-      # quicksave/quickload, a level exit → the intermission → E1M2, End Game
-      - name: Install Chromium for the browser test
-        run: npx playwright install --with-deps chromium
-
-      - name: Browser (the live frame loop's hand-offs)
-        run: npm run test:browser
-
-      - name: Co-op (two pages over WebRTC, in lockstep)
-        run: npm run test:coop
 
       - name: Build site
         run: npm run build

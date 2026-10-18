@@ -26,8 +26,6 @@ noticed:
   The co-op test reloads such a page once, with a warning.
 - **Safari itself, pointer lock and touch** (Tooling): Firefox and WebKit are in CI now; a manual
   pass on a Mac and an iPhone would cover what headless engines can't.
-- **A faster test suite** (Tooling): the pre-commit set takes about 25 minutes, one test after
-  another; most of them could run side by side.
 - **Declined extras**, noted where they come up: random sound pitch, the OPL3's rhythm mode and
   4-operator channels, a frag limit and obituaries (none of them vanilla 1.9).
 
@@ -237,10 +235,11 @@ Everything else below is done.
   (`keepWad`); network first, the caches when there's none. `openDatabase` now unregisters only
   the old `coi-serviceworker.js`. The browser test plays a level with the server stopped (Playwright's
   `setOffline` doesn't reach a service worker's own fetches, so stopping the server is the test).
-- **A faster test suite.** The full pre-commit set runs one test after another and takes about
-  25 minutes here. The SQL tests each open their own database, so most could run side by side
-  (`npm run test:all`, with the browser tests on their own ports), and CI could split them
-  across jobs.
+- ~~**A faster test suite.**~~ Done (`npm run test:all`, `scripts/test-all.mjs`): the 28 tests run
+  as many at once as there are cores, the longest first, after one build that the two browser
+  tests serve (`NO_BUILD=1`). About 9 minutes here against 25 one after another; CI runs it too,
+  in one step, with the logs uploaded on a failure. The browser tests are the critical path now
+  (~8 minutes with the rest beside them); splitting them would be the next step.
 - ~~**A browser matrix.**~~ Done (`.github/workflows/browsers.yml`, `scripts/launch-browser.mjs`):
   the browser and co-op tests run in Firefox and WebKit as well as Chromium, all passing; the
   README's **Browsers** lists what that covers. It found WebKit throwing on a send over a
