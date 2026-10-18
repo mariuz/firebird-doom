@@ -15,7 +15,7 @@ import { spawn } from 'node:child_process';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { launchBrowser, browserName } from './launch-browser.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -32,10 +32,8 @@ await new Promise((resolve, reject) => {
   server.on('exit', (code) => reject(new Error(`the server exited (${code})`)));
 });
 
-const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM || undefined,
-  args: ['--autoplay-policy=no-user-gesture-required', '--disable-features=WebRtcHideLocalIpsWithMdns'],
-});
+const browser = await launchBrowser();   // (BROWSER=firefox or webkit for those)
+console.log(`(in ${browserName} ${browser.version()})`);
 const errors = [];
 const consoleLog = [];
 try {

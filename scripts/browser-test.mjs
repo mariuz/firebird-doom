@@ -8,12 +8,13 @@
 //
 // It builds and serves dist/ itself (build.mjs --serve, on a free port) and needs
 // Playwright's Chromium (npx playwright install chromium; set
-// CHROMIUM=/path/to/chrome to use another).
+// CHROMIUM=/path/to/chrome to use another). BROWSER=firefox or webkit runs it
+// in those instead (launch-browser.mjs).
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { launchBrowser, browserName } from './launch-browser.mjs';
 import { MouseInput, moveCommand, mouseRate, MOUSEX_RAD } from '../src/mouse.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -81,7 +82,8 @@ await new Promise((resolve, reject) => {
   server.on('exit', (code) => reject(new Error(`the server exited (${code})`)));
 });
 
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined, args: ['--autoplay-policy=no-user-gesture-required'] });
+const browser = await launchBrowser();
+console.log(`(in ${browserName} ${browser.version()})`);
 const errors = [];
 try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
