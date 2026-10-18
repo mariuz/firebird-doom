@@ -16,9 +16,10 @@ noticed:
   written there.
 - **A TURN relay** for multiplayer behind strict NATs (needs a server; the page has none): a
   Cloudflare Worker minting TURN credentials, with short room codes for the invites.
-- **Two checks that need id's WADs** (Screens): DOOM I's episode maps at the intermission, and
-  whether its endings should borrow Freedoom's text – with a `WAD=` for the screen tests so they
-  can be run against a real `doom.wad` where one is to hand.
+- **Run the id-WAD checks** (Screens): `WAD=/path/to/doom.wad npm run test:intermission` (and
+  `test:finale`, and the same with `doom2.wad`) checks DOOM I's episode maps and the endings
+  against id's own WADs; nobody has run it yet. Then decide whether DOOM I's endings should
+  borrow Freedoom Phase 1's text, as DOOM II's borrow Phase 2's.
 - **A browser matrix** (Tooling): what's known to work outside Chromium.
 - **Four players over the network** (Tooling): the co-op test connects two pages; three and
   four (the host relaying for everyone) aren't tested.
@@ -188,10 +189,12 @@ Everything else below is done.
 ## Screens
 
 - **Doom I episode maps with id's WADs.** The intermission's splats, "you are here" pointer and
-  animations are implemented, but only tested with stubs, because Freedoom ships them as empty
-  placeholders. Check them with a real `doom.wad`: `doom.intermission('E1M3', 'E1M4')` in the
-  console. Better: let `intermission-test` and `finale-test` take `WAD=` pointing at an id WAD
-  (never shipped), so whoever has one runs the check in a minute.
+  animations are drawn and checked pixel by pixel through the real renderer (`intermission-test`),
+  with Freedoom's 1×1 placeholders lent a picture of its own. `intermission-test` and
+  `finale-test` take `WAD=` (`scripts/wad-arg.mjs`): pointed at id's `doom.wad` they check
+  that every episode-map picture is real and drawn where it belongs, and that each episode's end
+  goes straight to its art. With `doom2.wad` they check the cast call and the borrowed text.
+  What's left is for someone with the WADs to run it.
 - ~~**Netgame chat.**~~ Done: `hu_stuff.c`'s T to everyone, G/I/B/R to one player (with three
   or more), Alt+0–9 the macros (our own defaults, a DEHACKED's `HUSTR_CHATMACRO`s over them), the
   sender named by the DEHACKED's `player_names[]`. The text goes a character a tic in the ticcmd's

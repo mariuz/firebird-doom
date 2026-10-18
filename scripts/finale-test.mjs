@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Wad } from '../src/wad.js';
 import { THING_TYPES } from '../src/thinginfo.js';
 import { FinaleState, buildCast, parseDehStrings, Finale, frontLump } from '../src/finale.js';
+import { wadFromEnv, placeholder } from './wad-arg.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -189,6 +190,50 @@ if (fs.existsSync(wad1Path)) {
     // DOOM I's endings don't borrow: without words they still go straight to the art
     const e3 = new Finale(null, { playMusic() {}, playEvents() {} }, ultimate, THING_TYPES, 'E3M8');
     assert(e3.state.stage === 'art' && !e3.borrowed, '…and DOOM I\'s endings still go straight to their art');
+    setFallbackStrings(null);
+  }
+}
+
+// WAD=: the endings against id's own IWAD, where the tests above only simulate
+// its layout (scripts/wad-arg.mjs)
+const env = wadFromEnv();
+if (env && !env.idStyle) console.log(`(WAD=${env.name} has a DEHACKED: not id's layout, nothing more to check here)`);
+else if (env && !env.doom2) {
+  const w = env.wad;
+  const quiet = { playMusic() {}, playEvents() {} };
+  const arts = { 1: w.lump('E4M1') ? 'CREDIT' : 'HELP2', 2: 'VICTORY2', 3: 'bunny', 4: 'ENDPIC' };
+  const seen = [];
+  for (const e of [1, 2, 3, 4]) {
+    if (!w.lump(`E${e}M8`)) continue;
+    const f = new Finale(null, quiet, w, THING_TYPES, `E${e}M8`);
+    const pics = f.art === 'bunny' ? ['PFUB1', 'PFUB2', ...[0, 1, 2, 3, 4, 5, 6].map((i) => `END${i}`)] : [f.art];
+    const fake = pics.filter((p) => placeholder(w, p));
+    assert(Finale.available(w, `E${e}M8`) && f.state.stage === 'art' && f.state.text === '' && f.art === arts[e] && fake.length === 0,
+      `WAD=${env.name}: E${e}M8 goes straight to ${f.art}${fake.length ? ` (missing: ${fake.join(' ')})` : ''}`);
+    seen.push(`E${e}M8`);
+  }
+  console.log(`   (DOOM I's endings show no text with id's WAD: its words are in the executable. ${seen.join(', ')} checked)`);
+} else if (env) {
+  const w = env.wad;
+  const cm = [];
+  const c = new Finale(null, { playMusic: (m) => cm.push(m), playEvents() {} }, w, THING_TYPES, 'MAP30');
+  const names = w.lumps.map((l) => l.name);
+  const cast = buildCast(THING_TYPES, new Map());
+  const missing = cast.flatMap((k) => [...new Set([...k.walk, ...(k.attack ?? ''), ...(k.melee ?? ''), ...k.death])]
+    .filter((f) => !frontLump(names, k.sprite, f)).map((f) => k.sprite + f));
+  assert(!Finale.available(w, 'MAP06') && Finale.available(w, 'MAP30') && c.state.stage === 'cast' && cm[0] === 'D_EVIL' && missing.length === 0,
+    `WAD=${env.name}: without words no MAP06 screen; MAP30 goes straight to the cast, to ${cm[0]}, every frame in the WAD${missing.length ? ` (missing ${missing.join(' ')})` : ''}`);
+  const d2Path = path.join(root, 'public/wads/freedoom2.wad');
+  if (fs.existsSync(d2Path)) {
+    const { setFallbackStrings, freedoomStrings } = await import('../src/finale.js');
+    const extracted = freedoomStrings(new Wad(fs.readFileSync(d2Path)));
+    setFallbackStrings(extracted);
+    const shown = ['MAP06', 'MAP11', 'MAP20', 'MAP30'].filter((m) => {
+      const f = new Finale(null, { playMusic() {}, playEvents() {} }, w, THING_TYPES, m);
+      return Finale.available(w, m) && f.borrowed && f.state.stage === 'text';
+    });
+    assert(shown.length === 4 && Finale.available(w, 'MAP15', true) && Finale.available(w, 'MAP31', true),
+      `WAD=${env.name}: with Freedoom's text the page borrows, MAP06, 11, 20 and 30 show it, and both secret exits (${shown.join(', ')})`);
     setFallbackStrings(null);
   }
 }

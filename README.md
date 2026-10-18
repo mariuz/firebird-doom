@@ -562,6 +562,16 @@ doom.intermission('E2M3', 'E2M4', { kills: 20, totalKills: 20 })
 Afterwards the game goes on to the next map, as if you'd just finished the one named, except
 after DOOM I's endings, which end the game.
 `npm run test:finale` simulates both id layouts by hiding Freedoom's `DEHACKED` (and `E4M1`).
+`npm run test:intermission` draws the episode maps through the real renderer and checks them pixel
+by pixel: the splats on the levels done, the pointer blinking on the next, every animation. It
+lends Freedoom's placeholders a picture of its own (the status bar face) to do that. If you have
+id's WADs, point the two tests at them with `WAD=`. The WADs stay on your disk; nothing copies them:
+
+```bash
+WAD=~/wads/doom.wad npm run test:intermission    # every episode-map picture real, and drawn where it belongs
+WAD=~/wads/doom.wad npm run test:finale          # each episode's end goes straight to its art
+WAD=~/wads/doom2.wad npm run test:finale         # the cast call's frames, Freedoom's borrowed text
+```
 
 ### The title screen and the menus
 

@@ -7,6 +7,7 @@ import { Wad } from '../src/wad.js';
 import { Renderer } from '../src/renderer.js';
 import { Intermission, IntermissionState, NetgameState, DeathmatchState, fragSum, levelOf, parTime } from '../src/intermission.js';
 import { Melt } from '../src/wipe.js';
+import { wadFromEnv, placeholder, lendPictures } from './wad-arg.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -197,9 +198,12 @@ assert(s3.done, '…for ten tics, then on');
   assert(wrong.length === 0, `the secret levels' intermissions (${routes.length} routes${wrong.length ? `; ${wrong.join('; ')}` : ''})`);
 }
 
-// the screens draw from each WAD's own graphics
-for (const [file, from, to] of [['freedoom1.wad', 'E1M3', 'E1M4'], ['freedoom2.wad', 'MAP07', 'MAP08']]) {
-  const p = path.join(root, 'public/wads', file);
+// the screens draw from each WAD's own graphics (and WAD='s, if given)
+const env = wadFromEnv();
+const own = [['freedoom1.wad', 'E1M3', 'E1M4'], ['freedoom2.wad', 'MAP07', 'MAP08']]
+  .map(([file, from, to]) => [file, path.join(root, 'public/wads', file), from, to]);
+if (env) own.push([`WAD=${env.name}`, env.path, ...(env.doom2 ? ['MAP07', 'MAP08'] : ['E1M3', 'E1M4'])]);
+for (const [file, p, from, to] of own) {
   if (!fs.existsSync(p)) { console.log(`(no ${file})`); continue; }
   const wad = new Wad(fs.readFileSync(p));
   const r = new Renderer(wad, { texDefs: [], flats: [] });
@@ -212,6 +216,82 @@ for (const [file, from, to] of [['freedoom1.wad', 'E1M3', 'E1M4'], ['freedoom2.w
   const lit = r.sfb.reduce((n, v) => n + (v ? 1 : 0), 0);
   assert(drew === 400 && lit > 20000 && music[0] === (from.startsWith('MAP') ? 'D_DM2INT' : 'D_INTER'),
     `${file}: ${from} → ${to} draws (${lit} pixels lit) to ${music[0]}`);
+}
+
+// DOOM I's episode maps drawn for real, pixel by pixel: the splats on the levels
+// done, "you are here" blinking on the next, the animations. Freedoom's
+// WISPLAT, WIURH0/1 and WIA* are 1×1 placeholders, so here they're lent
+// Freedoom's STFST01 face; WAD= an id doom.wad (or doom1.wad) checks its own.
+{
+  const { LNODES, BACK_ANIMS } = await import('../src/intermission.js');
+  const quiet = { playMusic() {}, playEvents() {} };
+  // the share of a picture's opaque pixels showing on the screen where it was drawn
+  // (leaving out what `over`, pictures drawn after it, cover: [pic, x, y])
+  const inside = (pic, x, y, sx, sy) => sx >= x - pic.left && sx < x - pic.left + pic.w && sy >= y - pic.top && sy < y - pic.top + pic.h;
+  const shows = (r, pic, x, y, over = []) => {
+    let opaque = 0;
+    let on = 0;
+    for (let px = 0; px < pic.w; px++) {
+      for (let py = 0; py < pic.h; py++) {
+        const sx = x - pic.left + px;
+        const sy = y - pic.top + py;
+        if (!pic.alpha[px * pic.h + py] || sx < 0 || sx >= 320 || sy < 0 || sy >= 200) continue;
+        if (over.some(([p, ox, oy]) => inside(p, ox, oy, sx, sy))) continue;
+        opaque++;
+        if (r.sfb[sy * 320 + sx] === r.cmap[pic.pix[px * pic.h + py]]) on++;
+      }
+    }
+    return opaque ? on / opaque : 0;
+  };
+  const episodeMaps = (wad, label) => {
+    for (let e = 0; e < 3; e++) {
+      const E = e + 1;
+      if (!wad.lump(`WIMAP${e}`) || !wad.lump(`E${E}M4`)) continue;
+      const r = new Renderer(wad, { texDefs: [], flats: [] });
+      const wi = new Intermission(r, quiet, wad, `E${E}M3`, `E${E}M4`, stats);
+      wi.tick(true);   // the count, done
+      wi.tick(true);   // on to the map
+      for (let i = 0; i < 12; i++) wi.tick(false);   // every animation on
+      const splat = r.pictureByName('WISPLAT');
+      const urh = r.pictureByName('WIURH0');
+      // (the frame drawn first: wait for the pointer to blink off, then on)
+      while (wi.state.pointer) wi.tick(false);
+      wi.draw();
+      const off = shows(r, urh, ...LNODES[e][3]);
+      const splats = [0, 1, 2].map((n) => shows(r, splat, ...LNODES[e][n]));
+      const over = [0, 1, 2].map((n) => [splat, ...LNODES[e][n]]);
+      const anims = wi.anims.frames.map((f) => ({ ...f, share: shows(r, r.pictureByName(f.lump), f.x, f.y, over) }));
+      while (!wi.state.pointer) wi.tick(false);
+      wi.draw();
+      const on = shows(r, urh, ...LNODES[e][3]);
+      const want = e === 1 ? 1 : BACK_ANIMS[e].length;   // (episode 2: only E2M4's light)
+      assert(wi.state.stage === 'next' && splats.every((s) => s > 0.9) && on > 0.9 && off < 0.5
+        && anims.length === want && anims.every((a) => a.share > 0.5),
+        `${label}: E${E}M3 → E${E}M4 on WIMAP${e}: splats on maps 1–3 (${splats.map((s) => Math.round(s * 100)).join('/')}% showing), `
+        + `"you are here" on map 4 blinking (${Math.round(on * 100)}% / ${Math.round(off * 100)}%), ${anims.length} animation${anims.length === 1 ? '' : 's'} drawn`);
+    }
+  };
+  const fd1 = path.join(root, 'public/wads/freedoom1.wad');
+  if (fs.existsSync(fd1)) {
+    const lent = lendPictures(new Wad(fs.readFileSync(fd1)), (n) => /^WI(SPLAT|URH[01]|A\d{5})$/.test(n), 'STFST01');
+    episodeMaps(lent, "freedoom1.wad, its placeholders lent STFST01");
+  }
+  if (env && !env.doom2) {
+    // every picture the episode maps use is a real one in id's WAD
+    const names = ['WISPLAT', 'WIURH0', 'WIURH1'];
+    BACK_ANIMS.forEach((list, e) => {
+      if (!env.wad.lump(`WIMAP${e}`)) return;
+      list.forEach(([, frames], j) => {
+        for (let f = 0; f < frames; f++) names.push(`WIA${e}${String(e === 1 && j === 8 ? 4 : j).padStart(2, '0')}${String(f).padStart(2, '0')}`);
+      });
+    });
+    const held = names.filter((n) => placeholder(env.wad, n));
+    if (held.length === names.length) console.log(`(WAD=${env.name}: its episode-map pictures are placeholders, as Freedoom's are)`);
+    else {
+      assert(held.length === 0, `WAD=${env.name}: all ${names.length} episode-map pictures are real${held.length ? ` (placeholders: ${held.join(' ')})` : ''}`);
+      episodeMaps(env.wad, `WAD=${env.name}`);
+    }
+  }
 }
 
 // the screen melt (f_wipe.c): the old screen slides down in two-pixel columns over the new one

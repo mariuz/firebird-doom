@@ -20,6 +20,7 @@ npm run fetch-wad          # Freedoom 0.13.0 → public/wads/ (+ FREEDOOM-COPYIN
 npm test                   # SQL smoke test
 WAD=public/wads/freedoom2.wad npm run test:weapons   # weapons/specials/physics take WAD=: run both WADs
 npm run test:finale && npm run test:intermission && npm run test:menu
+WAD=~/doom.wad npm run test:intermission   # (and test:finale; doom2.wad too) id's WADs, where one is to hand: never in the repo
 WAD=public/wads/freedoom2.wad npm run test:savegame  # (and without WAD=); also loads every old save in scripts/fixtures/saves
 npm run save-fixtures      # after a schema change: a save in the new shape (git worktrees of each schema commit)
 npm run test:demo      # determinism (and without WAD=)
