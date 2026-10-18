@@ -1137,8 +1137,9 @@ map the WAD hasn't got, is said in the status line. `src/cmdline.js` reads them.
 ## Deploying
 
 [.github/workflows/pages.yml](.github/workflows/pages.yml) runs on every push to `main`. It
-installs, fetches and caches Freedoom, and runs every test with `npm run test:all`, four at a time
-([scripts/test-all.mjs](scripts/test-all.mjs), the longest first). The tests are the SQL smoke test,
+installs, fetches and caches Freedoom, and runs every test with `npm run test:all`
+([scripts/test-all.mjs](scripts/test-all.mjs)), in three jobs side by side: the SQL tests four at a time
+(`--part=sql`), and each browser test on a runner of its own (`--part=browser`, `--part=coop`). The SQL tests are the smoke test,
 weapons, specials, physics, saves, demos and the netgame on both WADs, the screens, menus, light, sound
 and music, and the BSP-vs-brute-force renderer check. `npm run test:visual` renders this README's
 pictures again and fails if a single pixel differs from `docs/screenshots.json`. The two browser tests

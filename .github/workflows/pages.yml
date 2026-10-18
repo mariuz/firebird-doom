@@ -16,8 +16,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  # Every test (scripts/test-all.mjs) in three shares on runners of their own, side
+  # by side: the SQL tests four at a time (the game's SQL in the real Firebird WASM
+  # engine on both WADs, the screens, saves, demos, light, sound and music, the
+  # BSP-vs-brute-force renderer check, the README's pictures pixel for pixel), and
+  # each of the two browser tests alone (the built page in headless Chromium, and
+  # co-op over WebRTC), which on a 4-core runner are the slow ones.
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [sql, browser, coop]
     steps:
       - uses: actions/checkout@v4
 
@@ -41,26 +51,46 @@ jobs:
         if: steps.wad.outputs.cache-hit != 'true'
         run: npm run fetch-wad
 
-      # Every test, four at a time (scripts/test-all.mjs): the game's SQL in the real
-      # Firebird WASM engine on both WADs, the screens, saves, demos, light, sound
-      # and music, the BSP-vs-brute-force renderer check, the README's pictures
-      # pixel for pixel, and the built page in headless Chromium (the browser test
-      # and co-op over WebRTC). Each test's output is in test-logs/.
-      - name: Install Chromium for the browser tests
+      - name: Install Chromium
+        if: matrix.part != 'sql'
         run: npx playwright install --with-deps chromium
 
-      - name: Tests (npm run test:all)
-        run: npm run test:all
+      - name: Tests (npm run test:all -- --part=${{ matrix.part }})
+        run: npm run test:all -- --part=${{ matrix.part }}
 
       - name: Upload the logs and the pictures that changed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs
+          name: test-logs-${{ matrix.part }}
           path: |
             test-logs/
             screenshots-diff/
           if-no-files-found: ignore
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Cache Freedoom
+        id: wad
+        uses: actions/cache@v4
+        with:
+          path: public/wads/
+          key: freedoom1-0.13.0-${{ hashFiles('scripts/fetch-wad.mjs') }}
+
+      - name: Fetch Freedoom
+        if: steps.wad.outputs.cache-hit != 'true'
+        run: npm run fetch-wad
 
       - name: Build site
         run: npm run build

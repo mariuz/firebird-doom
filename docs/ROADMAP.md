@@ -237,9 +237,10 @@ Everything else below is done.
   `setOffline` doesn't reach a service worker's own fetches, so stopping the server is the test).
 - ~~**A faster test suite.**~~ Done (`npm run test:all`, `scripts/test-all.mjs`): the 28 tests run
   as many at once as there are cores, the longest first, after one build that the two browser
-  tests serve (`NO_BUILD=1`). About 9 minutes here against 25 one after another; CI runs it too,
-  in one step, with the logs uploaded on a failure. The browser tests are the critical path now
-  (~8 minutes with the rest beside them); splitting them would be the next step.
+  tests serve (`NO_BUILD=1`). About 9 minutes here against 25 one after another. CI runs it in
+  three jobs side by side (`--part=sql|browser|coop`): in one job on a 4-core runner the browser
+  tests took 12–16 minutes beside the rest, longer than the old steps one at a time. The
+  browser tests are the critical path; splitting the browser test itself would be the next step.
 - ~~**A browser matrix.**~~ Done (`.github/workflows/browsers.yml`, `scripts/launch-browser.mjs`):
   the browser and co-op tests run in Firefox and WebKit as well as Chromium, all passing; the
   README's **Browsers** lists what that covers. It found WebKit throwing on a send over a

@@ -3,6 +3,7 @@
 //   npm run test:all              as many at once as there are cores
 //   JOBS=2 npm run test:all       or that many
 //   npm run test:all -- music pwad    only the tests whose names contain these
+//   npm run test:all -- --part=sql    all but the two browser tests (or --part=browser, --part=coop)
 //
 // Every SQL test opens its own in-memory database and the browser tests serve on
 // free ports, so they don't step on each other. The site is built once, first,
@@ -40,8 +41,17 @@ const TESTS = [
   ...['music', 'statusbar', 'light', 'sound', 'intermission', 'automap', 'finale', 'menu'].map((t) => [t, npm(`test:${t}`), 5]),
 ];
 
-const only = process.argv.slice(2);
-const chosen = TESTS.filter(([name]) => !only.length || only.some((o) => name.includes(o)));
+// --part=sql|browser|coop: one share of the set (CI runs the three on runners of their own,
+// side by side: on a 4-core runner the browser tests are the slow ones, and slower still
+// beside the rest). Other arguments pick tests whose names contain them.
+const args = process.argv.slice(2);
+const part = args.find((a) => a.startsWith('--part='))?.slice(7);
+const only = args.filter((a) => !a.startsWith('--'));
+const PAGES = ['browser', 'coop'];
+if (part && !['sql', ...PAGES].includes(part)) throw new Error(`--part=${part}: sql, browser or coop`);
+const chosen = TESTS.filter(([name]) => (!part || (part === 'sql' ? !PAGES.includes(name) : name === part))
+  && (!only.length || only.some((o) => name.includes(o))));
+if (!chosen.length) { console.log(`no test matches ${args.join(' ')}`); process.exit(1); }
 const jobs = Math.max(1, Number(process.env.JOBS) || os.availableParallelism?.() || os.cpus().length);
 const logs = path.join(root, 'test-logs');
 fs.mkdirSync(logs, { recursive: true });
