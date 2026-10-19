@@ -186,8 +186,11 @@ try {
   await page.selectOption('#synth', 'opl2');
 
   // F6 picks the quicksave slot; walk away; F9 brings the game back
+  await doom(() => document.activeElement?.blur());   // (out of the Synth select the test just changed)
   await key('F6');
-  assert(await doom(() => window.doom.menu.current.name) === 'save', 'F6: Save Game, to pick the quicksave slot');
+  for (let i = 0; i < 50 && (await doom(() => window.doom.menu.current?.name)) !== 'save'; i++) await page.waitForTimeout(100);
+  const f6 = await doom(() => ({ active: window.doom.menu.active, name: window.doom.menu.current?.name, canSave: window.doom.menu.actions?.canSave, screen: window.doom.screen }));
+  assert(f6.name === 'save' && f6.active, `F6: Save Game, to pick the quicksave slot${f6.name === 'save' ? '' : ` (${JSON.stringify(f6)})`}`);
   await key('Enter');
   for (const c of 'BROWSER') await key(c, 30);
   await key('Enter', 1500);
@@ -207,7 +210,9 @@ try {
     await page.waitForTimeout(100);
     back = (await pos()) ?? back;   // (no player for a moment while the save goes back in)
   }
-  await until(() => !window.doom.melting);
+  // (the save is back in the tables before the melt starts: wait for it, then for its end)
+  await until(() => window.__melted, null, 30000).catch(() => {});
+  await until(() => !window.doom.melting && window.doom.settled);
   const melted = await doom(() => { clearInterval(window.__meltWatch); return window.__melted; });
   const off = Math.hypot(back.X - saved.X, back.Y - saved.Y);
   assert(moved > 32 && off < moved / 2 && melted,
