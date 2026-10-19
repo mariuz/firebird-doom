@@ -309,15 +309,18 @@ try {
     await doom(() => window.doom.sql("UPDATE things SET momx = 0, momy = 0 WHERE kind = 'player'"));
     await page.waitForTimeout(1000);
     const r0 = await doom(() => window.doom.debug.wallsReused);
-    await page.waitForTimeout(1000);
-    const r1 = await doom(() => window.doom.debug.wallsReused);
+    // (three frames, however long they take: beside every other test the page draws ~2 a second)
+    let r1 = r0;
+    const t0 = Date.now();
+    for (let i = 0; i < 50 && r1 - r0 < 3; i++) { await page.waitForTimeout(100); r1 = await doom(() => window.doom.debug.wallsReused); }
+    const took = (Date.now() - t0) / 1000;
     const same = await doom(() => window.doom.wallsMatch());
     await doom(() => window.doom.sql("UPDATE sectors SET ceil_h = ceil_h + 24 WHERE id = (SELECT t.sector_id FROM things t WHERE t.kind = 'player')"));
     await page.waitForTimeout(500);
     const moved = await doom(() => window.doom.wallsMatch());
     await doom(() => window.doom.sql("UPDATE sectors SET ceil_h = ceil_h - 24 WHERE id = (SELECT t.sector_id FROM things t WHERE t.kind = 'player')"));
     assert(r1 - r0 >= 3 && same && moved,
-      `standing still the walls are drawn from the last answer (${r1 - r0} frames in a second), the same as asking again; the ceiling moved, they're asked anew`);
+      `standing still the walls are drawn from the last answer (${r1 - r0} frames in ${took.toFixed(1)} s), the same as asking again; the ceiling moved, they're asked anew`);
   }
 
   // key bindings (default.cfg's keys): Forward's first key set to I in the Keys panel walks, and W

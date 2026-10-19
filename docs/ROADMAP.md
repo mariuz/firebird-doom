@@ -7,8 +7,8 @@ items as they land, and add what you find missing.
 ## Still open
 
 The vanilla features are all done, including those a second pass through `g_game.c`,
-`d_main.c` and `m_misc.c` found missing. What's left is engineering, in the order it would be
-noticed:
+`d_main.c` and `m_misc.c` found missing. What's left is engineering, two steps toward exact
+fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players around the game:
 
 - **Performance** of `FRAME_WALLS` (Rendering): ~21 ms a frame now (from ~26), nothing at all
   while standing still. The plan's three steps are done or measured out; what's left is the
@@ -27,6 +27,36 @@ noticed:
   The co-op test reloads such a page once, with a warning.
 - **Safari itself, pointer lock and touch** (Tooling): Firefox and WebKit are in CI now; a manual
   pass on a Mac and an iPhone would cover what headless engines can't.
+- **DOOM's frame tables** (Simulation): `info.c`'s states (`states[]`, each frame's sprite, tics,
+  action and next state) in a table that `MONSTERS_THINK` steps through, instead of the rules that
+  follow DOOM's movement but not its exact frame timings. DEHACKED Frame and code-pointer patches
+  would then apply (loading Freedoom 2 logs "Frame N: not applied (no state tables in this port)"
+  for its own), and monster timing would be vanilla's. The biggest gap to vanilla left; a
+  big job (`sql/game.sql`, `src/thinginfo.js`, `src/dehacked.js`).
+- **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
+  tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
+  fidelity ends (the README lists "no `.lmp` demos" as a deviation).
+- **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
+  would let the page install like an app, with its own window. Small.
+- **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
+  phones and tablets, reading into `readInput` like the gamepad does. Pairs with the iPhone pass.
+- **Export and import saves** (Save and load): a save as a file to download, and one to load
+  from a file into another browser. `packSave` and `unpackSave` (the netgame's start from a
+  save) already do the packing.
+- **Rejoining a netgame** (Multiplayer): a dropped player ends the game for everyone now. The
+  host could send the current game to a player who comes back, the way a netgame starts from a
+  save, and the lockstep go on from that tic.
+- **Drawing off the main thread** (Rendering): the renderer and presenter in a Worker with an
+  OffscreenCanvas, so input, sound and the page stay responsive when frames are slow (the browser
+  test saw 3 frames a second with every test running beside it). The engine's ~17 ms of wall work
+  doesn't shrink this way, but the page would stop waiting on it.
+- **A debug build of firebird-wasm** (Engine): an engine build with source maps and assertions,
+  made in `mariuz/electric-firebird`, to find where the WebKit trap above happens.
+- **Splitting the browser test** (Tooling): it's the slowest CI job now (~4 minutes alone); two
+  halves on runners side by side (`--part=browser` in two) would bring CI to about 3.
+- **Rewind** (Showcase; not vanilla, ask first): the whole game is in tables, so a snapshot every
+  second (as a save) would let a player step back in time, or open a past tic in the SQL console.
+  Something only this port could do; DOOM never did it.
 - **Declined extras**, noted where they come up: random sound pitch, the OPL3's rhythm mode and
   4-operator channels, a frag limit and obituaries (none of them vanilla 1.9).
 
