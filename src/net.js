@@ -15,7 +15,11 @@
 // The connection: WebRTC data channels, peer to peer, a star through the
 // host. With no server to introduce the players, they swap codes themselves
 // (the host's invite, the guest's reply): an SDP offer and answer, sent once
-// ICE gathering has finished, through a public STUN server.
+// ICE gathering has finished, through a public STUN server. With a relay
+// (worker/relay.js, a Cloudflare Worker: relayClient below) the host's invite
+// waits there under a six-letter room code and the reply comes back the same
+// way, and its TURN servers carry the game for players whose NATs won't let
+// them reach each other directly.
 
 export const NET_VERSION = 4;   // (2: the launch options and the chatchar; 3: the special; 4: a save in the start message)
 
@@ -140,6 +144,44 @@ export class Lockstep {
 
 // ── the connection ─────────────────────────────────────────────────────────
 const ICE = [{ urls: 'stun:stun.l.google.com:19302' }];
+
+export { isRoomCode } from '../worker/relay.js';
+
+/**
+ * The relay at BASE (worker/relay.js): its ICE servers, and rooms that keep
+ * an invite under a short code until the guest's reply comes back.
+ */
+export function relayClient(base) {
+  const root = String(base).endsWith('/') ? String(base) : `${base}/`;
+  const call = async (path, body) => {
+    const r = await fetch(new URL(path, root), body
+      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : { cache: 'no-store' });
+    const data = r.status === 204 ? null : await r.json().catch(() => null);
+    if (!r.ok) throw new Error(data?.error ?? `the relay said ${r.status}`);
+    return { status: r.status, data };
+  };
+  return {
+    base,
+    /** ICE servers with TURN credentials of their own (they expire in hours) */
+    iceServers: async () => (await call('ice')).data.iceServers,
+    /** the host's invite into a new room: its code */
+    open: async (invite) => (await call('room', { code: invite })).data.room,
+    /** the invite in ROOM */
+    invite: async (room) => (await call(`room/${room}`)).data.code,
+    /** the guest's reply into ROOM */
+    reply: async (room, reply) => { await call(`room/${room}/reply`, { code: reply }); },
+    /** the reply, once there is one (polled every EVERY ms while ALIVE()), or null */
+    async waitReply(room, alive, every = 1000) {
+      while (alive()) {
+        const r = await call(`room/${room}/reply`);
+        if (r.status === 200) return r.data.code;
+        await new Promise((res) => setTimeout(res, every));
+      }
+      return null;
+    },
+  };
+}
 
 const encode = (o) => btoa(unescape(encodeURIComponent(JSON.stringify(o))));
 const decode = (s) => JSON.parse(decodeURIComponent(escape(atob(String(s).trim()))));

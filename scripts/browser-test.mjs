@@ -197,14 +197,21 @@ try {
   const walked = await pos();
   await key('F9', 300);
   assert(/BROWSER/.test(await doom(() => window.doom.menu.message?.text ?? '')), 'F9 asks to quickload BROWSER');
+  // (G_DoLoadLevel: a load melts in. Watched from inside the page, every 10 ms: with every
+  // test running beside this one, a whole melt has slipped between the test's own looks)
+  await doom(() => { window.__melted = false; window.__meltWatch = setInterval(() => { if (window.doom.melting) window.__melted = true; }, 10); });
   await key('y', 0);
-  await until(() => window.doom.melting);           // (G_DoLoadLevel: a load melts in)
-  await until(() => !window.doom.melting);
-  await page.waitForTimeout(300);
-  const back = await pos();
   const moved = Math.hypot(walked.X - saved.X, walked.Y - saved.Y);
+  let back = walked;
+  for (let i = 0; i < 600 && Math.hypot(back.X - saved.X, back.Y - saved.Y) >= moved / 2; i++) {
+    await page.waitForTimeout(100);
+    back = (await pos()) ?? back;   // (no player for a moment while the save goes back in)
+  }
+  await until(() => !window.doom.melting);
+  const melted = await doom(() => { clearInterval(window.__meltWatch); return window.__melted; });
   const off = Math.hypot(back.X - saved.X, back.Y - saved.Y);
-  assert(moved > 32 && off < moved / 2, `…and the player is back (walked ${moved.toFixed(0)} away, ${off.toFixed(0)} from the save after loading)`);
+  assert(moved > 32 && off < moved / 2 && melted,
+    `…and the player is back, melting in (walked ${moved.toFixed(0)} away, ${off.toFixed(0)} from the save after loading)`);
 
   // the other function keys (M_Responder): F1 help, F2 save, F3 load, F4 sound, F5 detail, F7 end game, F8 messages, F10 quit, F11 gamma
   if (!process.env.SKIP_FKEYS) {

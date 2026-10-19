@@ -111,6 +111,9 @@ fs.cpSync(path.join(root, 'public'), OUT, { recursive: true });
     .replace("'__VERSION__'", JSON.stringify(hash.digest('hex').slice(0, 12)))
     .replace('__SHELL__', JSON.stringify(['./', ...shell])));
 }
+// The netgame relay the site uses (worker/relay.js, deployed): RELAY_URL at build
+// time, CI's repository variable of that name. None: room codes are off.
+if (process.env.RELAY_URL) fs.writeFileSync(path.join(OUT, 'relay.json'), JSON.stringify({ url: process.env.RELAY_URL }));
 // GitHub Pages runs Jekyll by default, which drops _underscored paths.
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
 

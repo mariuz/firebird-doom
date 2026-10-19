@@ -738,8 +738,19 @@ complete with their ICE candidates, found through a public STUN server. The host
 three players this way, picks **Co-op**, **Deathmatch** or **Deathmatch 2** and a **Timer**, then presses
 **Start**. Everyone loads the host's map at the host's skill,
 with the host's random seed. Everyone must have the same WAD loaded: a guest with another one is
-told which. Behind a strict NAT (some mobile networks, some offices) two browsers may not reach each
-other without a TURN relay, which this page doesn't have.
+told which.
+
+With a **relay** ([worker/relay.js](worker/relay.js), a small Cloudflare Worker) it gets simpler. The
+host's invite becomes a six-letter room code, like `5HVDTX`. The guest types it (in any case, dashes
+allowed), and the reply goes back through the relay, so there's nothing to paste back. The relay also
+hands out TURN servers with short-lived credentials. Behind a strict NAT (some mobile networks, some
+offices) two browsers can't reach each other directly; with TURN, the game goes through Cloudflare's
+relay instead. Only the handshake and, when it's needed, that relayed traffic touch the server; the game
+itself is still peer to peer. The site uses the relay set at deploy time (`RELAY_URL`), and the panel's
+**Relay** field or `?relay=URL` points it at another. Without one, codes go by hand as above, through
+STUN only. Deploying it takes a Cloudflare account and four commands ([worker/README.md](worker/README.md)).
+`npm run relay` runs it locally, `npm run test:relay` checks it, and the co-op test ends with two pages
+joining by a room code.
 
 It plays the way DOOM did over IPX: in lockstep (`d_net.c`). Nothing about the game crosses the
 wire but each player's ticcmd, once a tic: forward, strafe, turn, fire, use, weapon and run. The

@@ -26,7 +26,7 @@ import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 import { createPresenter } from './present.js';
 import { Melt } from './wipe.js';
-import { Lockstep, createInvite, acceptInvite, MAX_PLAYERS, SPECIAL_PAUSE, SPECIAL_SAVE } from './net.js';
+import { Lockstep, createInvite, acceptInvite, relayClient, isRoomCode, MAX_PLAYERS, SPECIAL_PAUSE, SPECIAL_SAVE } from './net.js';
 import { Chat, chatStrings, HU_MSGTIMEOUT } from './chat.js';
 import { MouseInput, moveCommand } from './mouse.js';
 import { parseCommandLine, startMapFor } from './cmdline.js';
@@ -902,7 +902,7 @@ function leaveNet(why) {
     for (const l of links) { l.dead = true; setTimeout(() => l.close(), 1000); }
   } else for (const l of links) l.close();
   lobby.invite?.cancel();
-  Object.assign(lobby, { role: null, links: [], invite: null, guest: null });
+  Object.assign(lobby, { role: null, links: [], invite: null, guest: null, room: null });
   if (net) console.info(`[firebird-doom] co-op over: ${why}`);
   net = null;
   netPanel();
@@ -920,14 +920,71 @@ function netPanel(say) {
   else if (net) $('net-status').textContent = net.ls.error ? `Stopped: ${net.ls.error}.` : `In the ${net.deathmatch ? 'deathmatch' : 'game'}: player ${net.me} of ${net.players}.`;
 }
 
+// The netgame relay (worker/relay.js): ?relay=URL, else the panel's Relay field,
+// else the site's own (relay.json, written by the build from RELAY_URL); none: codes by hand
+let siteRelay = '';
+fetch(new URL('./relay.json', location.href)).then((r) => (r.ok ? r.json() : null))
+  .then((d) => { if (typeof d?.url === 'string') { siteRelay = d.url; showRelay(); } }).catch(() => {});
+const relayUrl = () => new URLSearchParams(location.search).get('relay') ?? settings.relay ?? siteRelay;
+const relay = () => (relayUrl() ? relayClient(relayUrl()) : null);
+function showRelay() { $('net-relay').value = relayUrl(); }
+showRelay();
+$('net-relay').addEventListener('change', (e) => {
+  settings.relay = e.target.value.trim();
+  saveSettings();
+});
+/** the relay's ICE servers (its TURN among them), or the page's own when there's none or it doesn't answer */
+async function iceServers() {
+  const r = relay();
+  if (!r) return undefined;
+  try { return await r.iceServers(); } catch (err) {
+    console.warn('[firebird-doom] the relay gave no ICE servers:', err.message);
+    return undefined;
+  }
+}
+
+/** (host) a guest's reply: the link, as player 2, 3 or 4 */
+async function hostAccept(reply) {
+  netPanel('Connecting…');
+  const link = await lobby.invite.accept(reply);
+  lobby.invite = null;
+  lobby.room = null;
+  const pid = lobby.links.length + 2;
+  lobby.links.push({ pid, link });
+  link.onclose = () => {
+    lobby.links = lobby.links.filter((l) => l.link !== link);
+    if (!net) netPanel(`Player ${pid} went away.`);
+  };
+  $('net-out').value = '';
+  $('net-in').value = '';
+  netPanel(`${lobby.links.length + 1} players. Invite another, or Start (${$('map').value}, skill ${settings.skill}).`);
+}
+
 $('net-host').addEventListener('click', async () => {
   try {
     lobby.role = 'host';
     netPanel('Making an invite…');
-    lobby.invite = await createInvite();
-    $('net-out').value = lobby.invite.code;
+    const invite = await createInvite({ iceServers: await iceServers() });
+    lobby.invite = invite;
     $('net-in').value = '';
-    netPanel(`Send the code above to player ${lobby.links.length + 2}, then paste their reply and press Connect.`);
+    const r = relay();
+    let room = null;
+    if (r) {
+      try { room = await r.open(invite.code); } catch (err) {
+        netPanel(`The relay didn't take the invite (${err.message}): send the code above instead, and paste their reply.`);
+      }
+    }
+    if (!room) {
+      $('net-out').value = invite.code;
+      if (!r) netPanel(`Send the code above to player ${lobby.links.length + 2}, then paste their reply and press Connect.`);
+      return;
+    }
+    // the room code is all the guest needs; their reply comes back through the relay
+    lobby.room = room;
+    $('net-out').value = room;
+    netPanel(`Send the room code ${room} to player ${lobby.links.length + 2}: they press Join, paste it and Connect. Waiting for them…`);
+    const reply = await r.waitReply(room, () => lobby.invite === invite);
+    if (reply && lobby.invite === invite) await hostAccept(reply);
   } catch (err) { netPanel(`Couldn't make an invite: ${err.message}`); }
 });
 $('net-join').addEventListener('click', () => {
@@ -935,31 +992,35 @@ $('net-join').addEventListener('click', () => {
   lobby.replied = false;
   $('net-out').value = '';
   $('net-in').value = '';
-  netPanel("Paste the host's invite below and press Connect.");
+  netPanel(relay() ? "Paste the host's room code (or invite) below and press Connect." : "Paste the host's invite below and press Connect.");
 });
 $('net-connect').addEventListener('click', async () => {
   const code = $('net-in').value.trim();
   if (!code) return;
   try {
     if (lobby.role === 'host' && lobby.invite) {
-      netPanel('Connecting…');
-      const link = await lobby.invite.accept(code);
-      lobby.invite = null;
-      const pid = lobby.links.length + 2;
-      lobby.links.push({ pid, link });
-      link.onclose = () => {
-        lobby.links = lobby.links.filter((l) => l.link !== link);
-        if (!net) netPanel(`Player ${pid} went away.`);
-      };
-      $('net-out').value = '';
-      $('net-in').value = '';
-      netPanel(`${lobby.links.length + 1} players. Invite another, or Start (${$('map').value}, skill ${settings.skill}).`);
+      await hostAccept(code);   // (a reply pasted by hand, relay or not)
     } else if (lobby.role === 'guest') {
+      // a room code (six letters and digits) is the relay's; anything longer is an invite
+      const room = code.replace(/[\s-]/g, '').toUpperCase();
+      const r = relay();
+      let invite = code;
+      if (isRoomCode(room)) {
+        if (!r) throw new Error('that is a room code: it needs the relay the host uses (the Relay field)');
+        netPanel(`Joining room ${room}…`);
+        invite = await r.invite(room);
+      }
       netPanel('Making a reply…');
-      const { reply, link } = await acceptInvite(code);
+      const { reply, link } = await acceptInvite(invite, { iceServers: await iceServers() });
       lobby.replied = true;
-      $('net-out').value = reply;
-      netPanel('Send the reply above to the host, and wait for them to connect and start.');
+      if (invite !== code) {
+        await r.reply(room, reply);
+        $('net-out').value = '';
+        netPanel(`In room ${room}: connecting to the host…`);
+      } else {
+        $('net-out').value = reply;
+        netPanel('Send the reply above to the host, and wait for them to connect and start.');
+      }
       const l = await link;
       lobby.guest = l;
       netPanel(`Connected. Waiting for the host to start (load the same WAD: ${$('wadname').textContent}).`);

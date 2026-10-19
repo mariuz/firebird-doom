@@ -14,8 +14,9 @@ noticed:
   while standing still. The plan's three steps are done or measured out; what's left is the
   engine's own work (~17 ms: the BSP walk, the projection, the clip), with the ideas tried
   written there.
-- **A TURN relay** for multiplayer behind strict NATs (needs a server; the page has none): a
-  Cloudflare Worker minting TURN credentials, with short room codes for the invites.
+- **Deploy the relay** (Multiplayer): `worker/relay.js` is written and tested (room codes, TURN
+  credentials); it needs a Cloudflare account, a TURN key and `RELAY_URL` set for the site
+  ([worker/README.md](../worker/README.md)). Then a check of TURN between two real networks.
 - **Run the id-WAD checks** (Screens): `WAD=/path/to/doom.wad npm run test:intermission` (and
   `test:finale`, and the same with `doom2.wad`) checks DOOM I's episode maps and the endings
   against id's own WADs; nobody has run it yet. Then decide whether DOOM I's endings should
@@ -117,7 +118,10 @@ Everything else below is done.
   checksum every 35 tics. The other players are animated (`S_PLAY…`) and coloured
   (`R_InitTranslationTables`); deathmatch has its starts, frags, `-altdeath`'s respawning items,
   `-timer`, the status bar's frag count and the frag matrix at the intermission; co-op the per-player
-  intermission. Still missing: a TURN relay for players behind strict NATs.
+  intermission. The relay ([worker/relay.js](../worker/relay.js), a Cloudflare Worker): six-letter
+  room codes instead of pasted replies, and TURN servers with short-lived credentials for players
+  behind strict NATs; tested locally (`npm run test:relay`, and the co-op test through
+  `scripts/relay-dev.mjs`), deployed once someone has the Cloudflare account.
 - ~~**DEHACKED beyond `[STRINGS]`.**~~ Done ([src/dehacked.js](../src/dehacked.js)): Thing, Ammo,
   Misc, Cheat and BEX [PARS]. Not possible: Frame, Pointer, Weapon, Sound and Text blocks need
   state tables the port doesn't have. Loading a `.deh` file comes with PWADs (the loader already

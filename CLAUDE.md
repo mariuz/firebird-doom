@@ -36,6 +36,8 @@ npm run test:music         # the emulated OPL2 and OPL3, DOOM's DMX music driver
 WAD=public/wads/freedoom2.wad npm run test:netgame  # two players through NET_TIC, co-op and deathmatch (and without WAD=)
 npm run test:browser       # the page in headless Chromium: title → game → intermission → next map
 npm run test:coop          # co-op and deathmatch: two pages, a real WebRTC link, invite → reply → Start → lockstep; then four pages
+npm run relay              # the netgame relay (worker/relay.js) under Node on :8787; open the page with ?relay=http://localhost:8787
+npm run test:relay         # the relay: rooms, expiry, limits, origins, the TURN request (Cloudflare faked)
 BROWSER=firefox npm run test:browser   # (and webkit; test:coop too) CI's browsers.yml runs both in both; Chromium is the default
 npm run test:visual        # the README's pictures, pixel for pixel against docs/screenshots.json
 npm run test:renderers -- E1M1 E1M2 E1M3

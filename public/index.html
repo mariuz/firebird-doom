@@ -95,7 +95,8 @@
           the reply; the host pastes the reply and presses <b>Connect</b>. Invite up to three, pick
           the game, then <b>Start</b>: the host's map and skill. Only each player's keys cross the
           wire, and every browser's Firebird plays the same game from them (lockstep, as DOOM did
-          over IPX).</p>
+          over IPX). With a <b>Relay</b>, the invite is a six-letter room code, there's no reply to
+          send back, and its TURN servers connect players whose networks won't let them meet.</p>
         <div class="net-row">
           <button id="net-host" type="button">Invite a player</button>
           <button id="net-join" type="button">Join</button>
@@ -120,6 +121,7 @@
         </div>
         <div class="net-row">
           <button id="net-connect" type="button" disabled>Connect</button>
+          <label title="A netgame relay (worker/relay.js, deployed as a Cloudflare Worker): room codes and TURN servers. Empty: codes by hand, STUN only">Relay <input id="net-relay" type="url" size="28" spellcheck="false" placeholder="none: codes by hand"></label>
           <span id="net-status" class="net-status"></span>
         </div>
       </details>

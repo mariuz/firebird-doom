@@ -34,7 +34,9 @@
     "test:browser": "node scripts/browser-test.mjs",
     "test:coop": "node scripts/coop-browser-test.mjs",
     "test:visual": "node scripts/screenshot.mjs --check",
-    "test:all": "node scripts/test-all.mjs"
+    "test:all": "node scripts/test-all.mjs",
+    "test:relay": "node scripts/relay-test.mjs",
+    "relay": "node scripts/relay-dev.mjs"
   },
   "license": "MIT",
   "dependencies": {

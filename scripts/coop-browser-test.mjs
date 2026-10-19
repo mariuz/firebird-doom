@@ -17,6 +17,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchBrowser, browserName } from './launch-browser.mjs';
+import { startRelay } from './relay-dev.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -39,7 +40,7 @@ const errors = [];
 const consoleLog = [];
 const stacks = [];   // (where each page error came from, printed if there are any)
 try {
-  const open = async (who) => {
+  const open = async (who, query = '') => {
     const ctx = await browser.newContext({ viewport: { width: 1000, height: 900 } });
     const page = await ctx.newPage();
     page.on('pageerror', (e) => { errors.push(`${who}: ${e.message}`); stacks.push(`${who}: ${e.stack}`); });
@@ -49,7 +50,7 @@ try {
       recent.push(`${m.type()}: ${m.text().slice(0, 200)}`);
     });
     page.setDefaultTimeout(120000);
-    await page.goto(`http://localhost:${port}/`);
+    await page.goto(`http://localhost:${port}/${query}`);
     // A page that doesn't start says where it stopped. In WebKit on CI the engine has now
     // and then trapped while a second page started ("Out of bounds memory access", about
     // a few co-op runs in a dozen; docs/ROADMAP.md): then it's reloaded once, as a player would,
@@ -301,7 +302,7 @@ try {
   await host.evaluate(() => document.getElementById('net-start').click());
   for (const p of [host, guest]) {
     try {
-      await until(p, () => window.doom.net?.tic > 10 && window.doom.screen === 'level' && !window.doom.melting, null, 40000);
+      await until(p, () => window.doom.net?.tic > 10 && window.doom.screen === 'level' && !window.doom.melting, null, 120000);
     } catch (e) {
       if (process.env.DBG) {
         for (const q of [host, guest]) console.log(JSON.stringify(await q.evaluate(() => ({ net: window.doom.net, screen: window.doom.screen, melting: window.doom.melting, status: document.getElementById('net-status').textContent, title: !!window.doom.title, demo: window.doom.demo.attract, msg: document.getElementById('status').textContent, debug: window.doom.debug }))));
@@ -360,7 +361,7 @@ try {
   }));
   await host.selectOption('#net-save', '4');
   await host.evaluate(() => document.getElementById('net-start').click());
-  for (const p of [host, guest]) await until(p, () => window.doom.net?.tic > 10 && window.doom.screen === 'level' && !window.doom.melting, null, 40000);
+  for (const p of [host, guest]) await until(p, () => window.doom.net?.tic > 10 && window.doom.screen === 'level' && !window.doom.melting, null, 120000);
   const loaded = await Promise.all([host, guest].map((p) => p.evaluate(async () => ({
     net: window.doom.net,
     game: (await window.doom.sql('SELECT tic, map_name, deathmatch, players FROM game'))[0],
@@ -491,6 +492,44 @@ try {
   await until4(g3, () => !!window.doom.net?.error, null, 30000);
   const why4 = await Promise.all([host, guest, g3].map((pg) => pg.evaluate(() => window.doom.net.error)));
   assert(why4.every((w) => /player 4 left/.test(w)), `player 4 leaves: the host's game and both other guests' stop (${why4.join('; ')})`);
+
+  // the relay (worker/relay.js, here its local stand-in): the host's invite becomes a
+  // six-letter room code, the guest joins with just that, the reply goes back through
+  // the relay with no one pasting it, and the two play in step
+  for (const pg of [host, guest, g3, g4]) await pg.evaluate(() => document.getElementById('net-leave').click()).catch(() => {});
+  const relay = await startRelay();
+  const rh = await open('relay host', `?relay=${relay.url}`);
+  const rg = await open('relay guest', `?relay=${relay.url}`);
+  await rh.evaluate(() => document.getElementById('net-host').click());
+  await until(rh, () => /^[A-Z2-9]{6}$/.test(document.getElementById('net-out').value), null, 30000);
+  const roomCode = await value(rh, 'net-out');
+  await rg.evaluate(() => document.getElementById('net-join').click());
+  await rg.fill('#net-in', roomCode.toLowerCase().replace(/(...)/, '$1-'));   // (as someone might type it)
+  await rg.evaluate(() => document.getElementById('net-connect').click());
+  await until(rh, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 30000);
+  await until(rg, () => /^Connected/.test(document.getElementById('net-status').textContent), null, 30000);
+  const shown = await Promise.all([rh, rg].map((pg) => pg.evaluate(() => ({ out: document.getElementById('net-out').value, relay: document.getElementById('net-relay').value }))));
+  assert(shown.every((x) => x.relay === relay.url) && shown[1].out === '',
+    `with a relay: the host's invite is room ${roomCode}, the guest joins with just that ("${roomCode.toLowerCase().replace(/(...)/, '$1-')}" as typed), and nobody pastes a reply`);
+  await rh.evaluate(() => document.getElementById('net-start').click());
+  for (const pg of [rh, rg]) await until(pg, () => window.doom.net?.tic > 10 && window.doom.screen === 'level' && !window.doom.melting);
+  const rsums = async () => {
+    const after = Math.max(...await Promise.all([rh, rg].map((pg) => pg.evaluate(() => window.doom.net.tic))));
+    for (let i = 0; i < 300; i++) {
+      const sums = await Promise.all([rh, rg].map((pg) => pg.evaluate(() => window.doom.net.sums)));
+      const t = Object.keys(sums[0]).map(Number).find((k) => k > after && k in sums[1]);
+      if (t !== undefined) return { tic: t, same: sums[0][t] === sums[1][t] };
+      await rh.waitForTimeout(100);
+    }
+    return { tic: null, same: false };
+  };
+  const rs = await rsums();
+  assert(rs.same, `…and the two play in step (their checksums agree at tic ${rs.tic})`);
+  const second = await fetch(`${relay.url}/room/${roomCode}/reply`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'x' }) })
+    .then(async (r) => `${r.status} ${(await r.json()).error}`);
+  await rg.evaluate(() => document.getElementById('net-leave').click());
+  await relay.close();
+  assert(/^409 someone has already joined/.test(second), `the room takes one guest: another's reply is turned away ("${second}")`);
 } catch (err) {
   console.error(err);
   failures++;

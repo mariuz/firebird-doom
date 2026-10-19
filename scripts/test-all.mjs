@@ -38,6 +38,7 @@ const TESTS = [
   ['pwad', npm('test:pwad'), 10],
   ['dehacked', npm('test:dehacked'), 9],
   ...both('weapons', 6),
+  ['relay', npm('test:relay'), 3],
   ...['music', 'statusbar', 'light', 'sound', 'intermission', 'automap', 'finale', 'menu'].map((t) => [t, npm(`test:${t}`), 5]),
 ];
 
@@ -64,7 +65,7 @@ function run(name, { cmd, env }) {
   const out = fs.createWriteStream(log);
   const t0 = Date.now();
   return new Promise((resolve) => {
-    const child = spawn(cmd[0], cmd.slice(1), { cwd: root, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(cmd[0], cmd.slice(1), { cwd: root, env: { ...process.env, TEST_ALL: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.pipe(out, { end: false });
     child.stderr.pipe(out, { end: false });
     child.on('close', (code) => out.end(() => resolve({ ok: code === 0, ms: Date.now() - t0, log })));

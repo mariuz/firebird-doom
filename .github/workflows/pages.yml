@@ -94,6 +94,9 @@ jobs:
 
       - name: Build site
         run: npm run build
+        env:
+          # the deployed netgame relay (worker/README.md), if the repository has one
+          RELAY_URL: ${{ vars.RELAY_URL }}
 
       - uses: actions/upload-pages-artifact@v3
         with:

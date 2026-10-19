@@ -12,6 +12,9 @@ import { parseSong } from '../src/music.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
 const assert = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) failures++; };
+// how much faster than real time the music must render: a margin when this runs alone; beside
+// every other test (npm run test:all sets TEST_ALL) only faster than real time, which is what playing needs
+const SPEED = (alone) => (process.env.TEST_ALL ? 1 : alone);
 
 // ── the chip ─────────────────────────────────────────────────────────────
 /**
@@ -253,7 +256,7 @@ for (const [w, name] of [[wad1, 'D_E1M1'], [wad1, 'D_INTER'], [wad1, 'D_E1M2'], 
   }
   const ms = performance.now() - t;
   const rms = Math.sqrt(sum / n);
-  assert(bad === 0 && rms > 0.01 && pk < 1 && ms < 6000 / 4,
+  assert(bad === 0 && rms > 0.01 && pk < 1 && ms < 6000 / SPEED(4),
     `${name}: 6 s rendered in ${ms.toFixed(0)} ms (needs under real time: ${(6000 / ms).toFixed(0)}× faster), level ${rms.toFixed(3)} rms, peak ${pk.toFixed(2)}`);
   // and in stereo on the OPL3: both sides sound, apart wherever the song pans
   const p3 = new DmxPlayer(parseGenmidiRaw(w.data(w.lump('GENMIDI'))), song, { loop: false, opl3: true });
@@ -276,7 +279,7 @@ for (const [w, name] of [[wad1, 'D_E1M1'], [wad1, 'D_INTER'], [wad1, 'D_E1M2'], 
     if (p3.opl.left !== p3.opl.right) apart++;
   }
   const ms3 = performance.now() - t3;
-  assert(sl > 0 && sr > 0 && (sided ? apart > 0 : apart === 0) && ms3 < 6000 / 3,
+  assert(sl > 0 && sr > 0 && (sided ? apart > 0 : apart === 0) && ms3 < 6000 / SPEED(3),
     `${name} on the OPL3: ${ms3.toFixed(0)} ms, ${(Math.sqrt(sl / n) / 32768).toFixed(3)} rms left, ${(Math.sqrt(sr / n) / 32768).toFixed(3)} right${sided ? `, apart ${(100 * apart / n).toFixed(1)}% of the time (a note on a panned channel)` : ' (nothing panned to a side yet)'}`);
 }
 

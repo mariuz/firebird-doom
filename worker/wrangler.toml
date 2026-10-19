@@ -1,0 +1,18 @@
+# The netgame relay (relay.js): `npx wrangler deploy` from this directory.
+# See README.md here for the TURN key and the secrets.
+name = "firebird-doom-relay"
+main = "relay.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# who may call it: the game's site (and a local dev server, if you like)
+ALLOWED_ORIGINS = "https://mariuz.github.io"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+# Durable Objects on SQLite storage (on the Workers free plan too)
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
