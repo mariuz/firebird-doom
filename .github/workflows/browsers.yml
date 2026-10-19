@@ -12,8 +12,9 @@ permissions:
   contents: read
 
 jobs:
+  # (ubuntu-24.04, not -latest: on 26.04 the pinned Playwright, 1.56, installs no browsers)
   page:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:

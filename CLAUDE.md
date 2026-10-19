@@ -101,6 +101,9 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   Patch scripts should `throw` when an anchor is missing, so nothing half-applies.
 - **Don't kill unknown `node` processes.** Port 8080 is often taken. The launch config has
   `autoPort`.
+- **CI runs on `ubuntu-24.04`, not `-latest`.** On 26.04 the pinned Playwright (1.56, the version
+  whose Chromium is installed here) can't install its browsers. Move both workflows on when
+  Playwright is upgraded.
 - **`git push` can 500 on GitHub.** Retry in a loop. Someone else (the user) may push to `main` too,
   so check `git status -sb` after pushing, then `git pull --ff-only`.
 - **Freedoom specifics:** `WISPLAT`, `WIURH0/1` and all `WIA*` intermission lumps are empty 1×1

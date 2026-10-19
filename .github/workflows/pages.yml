@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # (ubuntu-24.04, not -latest: on 26.04 the pinned Playwright, 1.56, installs no browsers)
   # Every test (scripts/test-all.mjs) in three shares on runners of their own, side
   # by side: the SQL tests four at a time (the game's SQL in the real Firebird WASM
   # engine on both WADs, the screens, saves, demos, light, sound and music, the
@@ -23,7 +24,7 @@ jobs:
   # each of the two browser tests alone (the built page in headless Chromium, and
   # co-op over WebRTC), which on a 4-core runner are the slow ones.
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -70,7 +71,7 @@ jobs:
 
   build:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -105,7 +106,7 @@ jobs:
   deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
