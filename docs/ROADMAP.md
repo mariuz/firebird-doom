@@ -31,8 +31,9 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   action and next state) in a table that `MONSTERS_THINK` steps through, instead of the rules that
   follow DOOM's movement but not its exact frame timings. DEHACKED Frame and code-pointer patches
   would then apply (loading Freedoom 2 logs "Frame N: not applied (no state tables in this port)"
-  for its own), and monster timing would be vanilla's. The biggest gap to vanilla left; a
-  big job (`sql/game.sql`, `src/thinginfo.js`, `src/dehacked.js`).
+  for its own), and monster timing would be vanilla's. The biggest gap to vanilla left, and a
+  big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
+  phases*). Phase 0 starts with a decision only the owner can make (the licence).
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -119,6 +120,83 @@ Everything else below is done.
   mouse's Y walking (`mousey`) is the **Mouse moves forward** setting, off by default.
 
 ## Simulation (`sql/game.sql`)
+
+### DOOM's frame tables, in phases
+
+**Where it stands.** A thing's behaviour is a mode, `things.st` (idle, chase, attack, pain, dying,
+dead, and a few of its own: charge, heal, fly…), with a countdown (`st_tics`, `st_len`) and a
+frame letter. Each mode's frames come from strings per type (`thing_types.walk_fr`, `atk_fr`,
+`pain_fr`, `death_fr`; `src/thinginfo.js`), and the walking frames are animated by the renderer
+(`render.sql`: a frame every 6 tics, offset by the thing's id), not by the simulation. The
+movement, the aiming, the damage and the sounds follow `p_enemy.c` (38 of its action functions
+are named in `game.sql`), but a zombieman's attack, say, isn't S_POSS_ATK1–3's 10 + 8 + 8 tics,
+and the weapons run on the player's own timers (`attack_tics`). So DEHACKED's Frame, Pointer
+and Weapon blocks are skipped (`dehacked.js` says so per block), and what an action does can't
+be moved to another frame.
+
+**Where it goes.** `info.c`'s two tables, as SQL: `states` (each frame's sprite, frame letter,
+full-bright bit, tics, action and next state) and `mobjinfo`'s state columns on `thing_types`
+(spawnstate, seestate, painstate, meleestate, missilestate, deathstate, xdeathstate,
+raisestate). A thing holds its `state` and its `tics` left; `P_SetMobjState` and the thinker's
+countdown (`P_MobjThinker`) run in SQL, and an action is called by name when its state is
+entered, as in DOOM. The renderer draws the state's own sprite and frame.
+
+**Phase 0: the licence, and the data.** The repo is MIT. `info.c` is id's code, GPL-2 since
+1999; its ~967 states with their action names are a table of id's code, not a handful of facts
+(the hit points and speeds already in `thinginfo.js` are). Before any of it lands, the owner
+picks one: relicense the repo to GPL-2 (DOOM ports usually are); keep the table in a file of its
+own under GPL-2 (`src/states.js`), which makes the site as a whole GPL when it ships; or
+describe the states afresh from watching the game, which is slower and loses the exactness this
+is for. Then: `states` and the mobjinfo state columns in `schema.sql`, loaded at startup like
+`thing_types`. Test: the counts, every `next` a state that exists, every action one the port knows
+or a no-op, and spot checks against the source (S_POSS_ATK1 is POSS A, 10 tics, A_FaceTarget).
+Changes nothing that plays.
+
+**Phase 1: the machine.** `things.state`, `things.tics` and an indexed `things.state_tic` (the
+tic its state ends, so a tic touches only the things whose state ends then, as the "idle things
+think every 8 tics" rule does now: per-thing countdowns in PSQL would cost every tic). A
+`SET_STATE` procedure follows `next` through 0-tic states and calls the actions; a thing with a
+NULL state keeps today's rules, so nothing moves yet. `FRAME_SPRITES` draws a stated thing's
+state. Test: a thing set to a state walks the table's chain with the table's timings, tic by
+tic, and a frame-bench run shows what it costs.
+
+**Phase 2: the monsters, family by family.** Zombieman, sergeant and chaingunner first
+(A_Look, A_Chase, A_FaceTarget, A_PosAttack, A_SPosAttack, A_CPosAttack, A_CPosRefire, A_Pain,
+A_Scream, A_XScream, A_Fall), then the imp, the demons, the lost soul, the cacodemon, the barons,
+the bosses, and DOOM II's. Each action's body is the code already in `MONSTERS_THINK`
+(`look_for_player`, `new_chase_dir`, `p_move`, `hitscan`, `monster_missile`), moved under its
+name; each family leaves its mode code behind when it moves. Test (a `states-test`, or in
+`physics-test`): a monster woken in front of the player goes through the table's states with
+its timings (the zombieman's 10 + 8 + 8 tics to fire), pain and death take its painstate and
+deathstate (xdeath when gibbed), and the existing behaviour tests still pass.
+
+**Phase 3: everything else that animates.** Projectiles (and their explosions), the player's
+own sprite (S_PLAY…), puffs and blood, barrels, the decorations and items, the teleport fog, the
+arch-vile's fire and the boss brain's cubes and spawn fire. Then the renderer's own walking
+animation and the frame strings in `thinginfo.js` go.
+
+**Phase 4: the weapons.** The player's two psprites (`ps_weapon`, `ps_flash`) as states:
+A_WeaponReady, A_ReFire, A_Lower, A_Raise, A_GunFlash and each weapon's fire action at the
+frames `info.c` gives them, the bobbing, and the renderer's psprite drawn from the state.
+`attack_tics` goes. Test: `weapons-test` (both WADs) gains each weapon's fire cycle in tics
+(the pistol's 4 + 6 + 4 + 5, the super shotgun's long reload).
+
+**Phase 5: DEHACKED.** Frame blocks (sprite, frame, tics, next state, bright), Pointer blocks
+(an action moved to another frame), Weapon blocks' states and Thing blocks' state fields, in
+`dehacked.js`, into the same tables. Freedoom's own Frame patches then apply (the log's "not
+applied (no state tables in this port)" lines go). Test: `dehacked-test` gains a patch that
+gives the imp a faster attack and another that moves an action, and checks both play out.
+
+**Phase 6: the cleanup.** `st`, `st_tics`, `st_len`, `step`, the frame strings and the
+per-mode code go; the README's "frame tables" deviation goes; what's still not vanilla (the
+fixed-point arithmetic, P_Random's call order) is said, for the `.lmp` item after this.
+
+**Every phase**, because the simulation changes: the attract demos are recorded again (`npm run
+attract`) and `DEMO_VERSION`, `NET_VERSION` and the save version go up; `npm run save-fixtures`
+adds a save in the new shape, and `restoreGame` migrates the older ones (an old `st` mapped to
+the type's spawn, see or death state). `p_random()` only, and an `ORDER BY` on every loop
+whose order counts (CLAUDE.md, *Determinism*). The visual test's pictures change in phase 3
+(the walking frames), and are taken again then.
 
 - ~~**Armour types.**~~ Done: green armour (type 1) absorbs ⅓, and blue armour, the megasphere
   and IDKFA (type 2) absorb ½. Bonuses keep the type, and used-up armour loses it.
