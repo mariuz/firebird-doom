@@ -3912,6 +3912,49 @@ BEGIN
   END
 END^
 
+-- A_TroopAttack, and its kin: face the target; within melee reach (P_CheckMeleeRange) a
+-- blow of (P_Random() % SIDES + 1) × MULT with SND, else P_SpawnMissile: the type's
+-- missile from 32 up, towards the target (at a shadow up to 22.5° astray), with its sound
+CREATE OR ALTER PROCEDURE a_melee_missile (tid INTEGER, sides INTEGER, mult INTEGER, snd VARCHAR(8))
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+DECLARE mtype INTEGER;
+DECLARE msnd VARCHAR(8);
+DECLARE adx DOUBLE PRECISION;
+DECLARE ady DOUBLE PRECISION;
+BEGIN
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL) THEN EXIT;
+  EXECUTE PROCEDURE a_face_target(tid);
+  SELECT t.x, t.y, t.z, t.radius, tt.missile_type, tt.atk_snd FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+   WHERE t.id = :tid INTO x, y, z, rad, mtype, msnd;
+  adx = ABS(px - x);
+  ady = ABS(py - y);
+  IF (palive = 1 AND adx + ady - MINVALUE(adx, ady) / 2 < 64 - 20 + prad AND mobj_sees(tid, px, py, pz, psec) = 1) THEN
+  BEGIN
+    IF (snd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(snd, tid, x, y);
+    EXECUTE PROCEDURE hurt_target(tgt, (MOD(p_rand256(), sides) + 1) * mult, tid, tp);
+    EXIT;
+  END
+  ang = ATAN2(py - y, px - x);
+  IF (shadow = 1) THEN ang = ang + (p_rand256() - p_rand256()) * PI() / 2048;
+  IF (msnd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(msnd, tid, x, y);
+  EXECUTE PROCEDURE monster_missile(tid, mtype, x, y, z, rad, ang, px, py, pz);
+END^
+
 -- A_CPosRefire: keep firing, unless (40 times in 256 it doesn't ask) the target is
 -- dead or out of sight: then back to the chase
 CREATE OR ALTER PROCEDURE a_cpos_refire (tid INTEGER, tic INTEGER)
@@ -4032,6 +4075,7 @@ DECLARE missile_state INTEGER;
 DECLARE spawn_state INTEGER;
 DECLARE atk_snd VARCHAR(8);
 DECLARE active_snd VARCHAR(8);
+DECLARE atk_kind VARCHAR(10);
 DECLARE tgt INTEGER;
 DECLARE tp SMALLINT;
 DECLARE px DOUBLE PRECISION;
@@ -4065,10 +4109,10 @@ DECLARE alive SMALLINT;
 BEGIN
   SELECT t.x, t.y, t.z, t.height, t.radius, t.angle, t.sector_id, t.reaction, t.threshold, t.movedir, t.movecount,
          t.just_attacked, t.just_hit, t.momz, tt.speed, tt.floats, tt.melee_state, tt.missile_state, tt.spawn_state,
-         tt.atk_snd, tt.active_snd
+         tt.atk_snd, tt.active_snd, tt.atk_kind
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
     INTO x, y, z, hgt, rad, ang, sec, reaction, threshold, movedir, movecount,
-         just_attacked, just_hit, momz, spd, fl, melee_state, missile_state, spawn_state, atk_snd, active_snd;
+         just_attacked, just_hit, momz, spd, fl, melee_state, missile_state, spawn_state, atk_snd, active_snd, atk_kind;
   SELECT g.skill, IIF(g.skill = 5 OR g.fast = 1, 1, 0), g.players FROM game g WHERE g.id = 1 INTO skill, fast, nplayers;
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (reaction > 0) THEN reaction = reaction - 1;
@@ -4113,7 +4157,7 @@ BEGIN
     IF (melee_state > 0 AND dist < 64 - 20 + prad) THEN
       IF (mobj_sees(tid, px, py, pz, psec) = 1) THEN
       BEGIN
-        snd = atk_snd;
+        snd = IIF(atk_kind = 'melee', atk_snd, NULL);
         nst = melee_state;
         fire = 1;
       END
@@ -4217,6 +4261,7 @@ BEGIN
   ELSE IF (act = 'A_SPosAttack') THEN EXECUTE PROCEDURE a_bullets(tid, 3, 'DSSHOTGN');
   ELSE IF (act = 'A_CPosAttack') THEN EXECUTE PROCEDURE a_bullets(tid, 1, 'DSSHOTGN');
   ELSE IF (act = 'A_CPosRefire') THEN EXECUTE PROCEDURE a_cpos_refire(tid, tic);
+  ELSE IF (act = 'A_TroopAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 8, 3, 'DSCLAW');
   ELSE IF (act = 'A_Fall') THEN
     -- A_Fall: the corpse no longer blocks (MF_SOLID off)
     UPDATE things SET solid = 0 WHERE id = :tid;

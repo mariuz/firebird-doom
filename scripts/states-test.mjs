@@ -84,14 +84,14 @@ await loadMap(db, wad, res, wad.mapNames()[0], { skill: 3 });
 // (phase 2: the map's zombiemen, shotgun guys and chaingunners in their spawn state, each
 // partway into it, 1 + P_Random() % 10 tics, with mobjinfo's reaction time)
 const onMap = await all(`SELECT t.thing_type, s.name, t.state_tic - g.tic left_tics, t.reaction, t.st FROM things t
-  JOIN states s ON s.id = t.state CROSS JOIN game g WHERE g.id = 1 AND t.thing_type IN (3004, 9, 65)`);
-const spawnName = { 3004: 'S_POSS_STND', 9: 'S_SPOS_STND', 65: 'S_CPOS_STND' };
+  JOIN states s ON s.id = t.state CROSS JOIN game g WHERE g.id = 1 AND t.thing_type IN (3004, 9, 65, 3001)`);
+const spawnName = { 3004: 'S_POSS_STND', 9: 'S_SPOS_STND', 65: 'S_CPOS_STND', 3001: 'S_TROO_STND' };
 const offsets = new Set(onMap.map((r) => r.LEFT_TICS));
-const unstated = await one('SELECT COUNT(*) n FROM things t WHERE t.thing_type IN (3004, 9, 65) AND t.state IS NULL');
+const unstated = await one('SELECT COUNT(*) n FROM things t WHERE t.thing_type IN (3004, 9, 65, 3001) AND t.state IS NULL');
 assert(onMap.length > 0 && unstated.N === 0
   && onMap.every((r) => r.NAME.trim() === spawnName[r.THING_TYPE] && r.LEFT_TICS >= 1 && r.LEFT_TICS <= 10 && r.REACTION === 8 && r.ST.trim() === 'idle')
   && (onMap.length < 4 || offsets.size > 1),
-  `the map's ${onMap.length} zombiemen, shotgun guys and chaingunners start in their spawn states, 1 to 10 tics in (${[...offsets].sort((a, b) => a - b).join(',')}), reaction time 8`);
+  `the map's ${onMap.length} zombiemen, shotgun guys, chaingunners and imps start in their spawn states, 1 to 10 tics in (${[...offsets].sort((a, b) => a - b).join(',')}), reaction time 8`);
 const ID = new Map(STATES.map((x, i) => [x[0], i]));
 const NAME = (i) => (i == null ? null : STATES[i][0]);
 const pl = await one("SELECT t.x, t.y, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1");
@@ -281,6 +281,33 @@ await db.exec('UPDATE player SET dead = 0 WHERE id = 1');
 assert(!/RUN/.test(burst) && (burst.match(/S_CPOS_ATK2/g) ?? []).length >= 3 && /S_CPOS_ATK4/.test(burst) && /S_CPOS_STND2?$/.test(stop),
   `A_CPosRefire: a burst while the player is in sight (${burst}); the player dead, it stops: …${stop.split(' ').slice(-3).join(' ')}`);
 await remove(cg);
+
+// the imp: A_TroopAttack claws within reach ((P_Random() % 8 + 1) × 3, DSCLAW), else throws a
+// fireball (DSFIRSHT); 8 + 8 + 6 tics, then the chase, whose first A_Chase, still within reach,
+// goes straight back into the attack (P_CheckMeleeRange: no MOVECOUNT wait for a melee)
+P = 2700;
+await atTic(P);
+const impNear = await spawnAt(3001, 40, facing);
+await db.exec('DELETE FROM sound_events');
+const hp0 = (await one('SELECT health FROM player WHERE id = 1')).HEALTH;
+const balls0 = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9000')).N;
+await setState(impNear, 'S_TROO_ATK1', P);
+const clawTrace = await trace(impNear, P, P + 25);
+const clawSnd = await sounds();
+const clawed = hp0 - (await one('SELECT health FROM player WHERE id = 1')).HEALTH;
+await remove(impNear);
+const impFar = await spawnAt(3001, 256, facing);
+await db.exec('DELETE FROM sound_events');
+await setState(impFar, 'S_TROO_ATK3', P + 30);
+const throwSnd = await sounds();
+const balls = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9000')).N - balls0;
+const ball = await one(`SELECT owner_id, SQRT(momx * momx + momy * momy) v FROM things WHERE thing_type = 9000 ORDER BY id DESC ROWS 1`);
+await remove(impFar);
+await db.exec('DELETE FROM things WHERE thing_type = 9000');
+assert(clawTrace.startsWith('0:S_TROO_ATK1 8:S_TROO_ATK2 16:S_TROO_ATK3 22:S_TROO_ATK1') && clawSnd.includes('DSCLAW') && !clawSnd.includes('DSFIRSHT')
+  && clawed >= 3 && clawed <= 24 && clawed % 3 === 0
+  && throwSnd.join() === 'DSFIRSHT' && balls === 1 && ball.OWNER_ID === impFar && Math.abs(ball.V - 10) < 0.01,
+  `the imp: ${clawTrace.split(' ').slice(0, 4).join(' ')}; up close A_TroopAttack claws (${clawed} damage, ${clawSnd.join()}), further off it throws a fireball (${throwSnd.join()}, speed ${ball.V})`);
 
 // an old save, from before these types were on the tables: ADOPT_STATES puts each where it was
 const olds = [await spawnAt(3004, 128, facing), await spawnAt(9, 160, facing), await spawnAt(65, 192, facing)];

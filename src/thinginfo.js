@@ -35,7 +35,7 @@ export const THING_TYPES = [
   M(3004, 'POSS', { hp: 20, speed: 8, painChance: 200, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKL', atk: 'hitscan', dmgLo: 3, dmgHi: 15, shots: 1, drop: 2007, seeSnd: 'DSPOSIT1', atkSnd: 'DSPISTOL', painSnd: 'DSPOPAIN', deathSnd: 'DSPODTH1', activeSnd: 'DSPOSACT' }),
   M(9, 'SPOS', { hp: 30, speed: 8, painChance: 170, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKL', atk: 'hitscan', dmgLo: 3, dmgHi: 15, shots: 3, drop: 2001, seeSnd: 'DSPOSIT2', atkSnd: 'DSSHOTGN', painSnd: 'DSPOPAIN', deathSnd: 'DSPODTH2', activeSnd: 'DSPOSACT' }),
   M(65, 'CPOS', { hp: 70, speed: 8, painChance: 170, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKLMN', atk: 'hitscan', dmgLo: 3, dmgHi: 15, shots: 1, drop: 2002, seeSnd: 'DSPOSIT2', atkSnd: 'DSSHOTGN', painSnd: 'DSPOPAIN', deathSnd: 'DSPODTH2', activeSnd: 'DSPOSACT' }),
-  M(3001, 'TROO', { hp: 60, speed: 8, painChance: 200, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLM', atk: 'missile', missile: 9000, dmgLo: 3, dmgHi: 24, seeSnd: 'DSBGSIT1', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSBGDTH1', activeSnd: 'DSBGACT' }),
+  M(3001, 'TROO', { hp: 60, speed: 8, painChance: 200, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLM', atk: 'missile', missile: 9000, dmgLo: 3, dmgHi: 24, seeSnd: 'DSBGSIT1', atkSnd: 'DSFIRSHT', painSnd: 'DSPOPAIN', deathSnd: 'DSBGDTH1', activeSnd: 'DSBGACT' }),
   M(3002, 'SARG', { hp: 150, speed: 10, radius: 30, painChance: 180, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMN', atk: 'melee', dmgLo: 4, dmgHi: 40, seeSnd: 'DSSGTSIT', atkSnd: 'DSSGTATK', painSnd: 'DSDMPAIN', deathSnd: 'DSSGTDTH', activeSnd: 'DSDMACT' }),
   M(58, 'SARG', { hp: 150, speed: 10, radius: 30, painChance: 180, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMN', atk: 'melee', dmgLo: 4, dmgHi: 40, seeSnd: 'DSSGTSIT', atkSnd: 'DSSGTATK', painSnd: 'DSDMPAIN', deathSnd: 'DSSGTDTH', activeSnd: 'DSDMACT' }),
   M(3006, 'SKUL', { hp: 100, speed: 8, radius: 16, painChance: 256, walk: 'AB', attack: 'CD', pain: 'E', death: 'FGHIJK', atk: 'skull', dmgLo: 3, dmgHi: 24, bright: 1, atkSnd: 'DSSKLATK', painSnd: 'DSDMPAIN', deathSnd: 'DSFIRXPL', activeSnd: 'DSDMACT' }),
@@ -149,4 +149,5 @@ export const SPAWN_STATE = { 9013: 'S_BRAINEXPLODE1' };
 // them family by family). The rest still run on MONSTERS_THINK's modes.
 export const ON_STATES = new Set([
   3004, 9, 65,   // the zombieman, the shotgun guy, the chaingunner
+  3001,          // the imp
 ]);

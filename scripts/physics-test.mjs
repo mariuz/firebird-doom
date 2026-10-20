@@ -678,19 +678,21 @@ if (sky) {
     assert(away.MOVED === 1 && away.MD !== want,
       `…but walking away from it, it doesn't turn straight round while another way is open (heading ${away.MD}, not ${want})`);
 
-    // A_Chase turns towards its heading 45° a step
+    // A_Chase turns towards its heading 45° a step (the imp lives on DOOM's frame tables:
+    // entering a run state calls A_Chase)
     const chaser = await placeMon(3001, 140);
-    await db.exec(`UPDATE things SET flags = 0, st = 'chase', st_tics = 1, reaction = 99, angle = 0.3, movedir = 2, movecount = 10 WHERE id = ${chaser}`);
-    await tic();
+    await db.exec(`UPDATE things SET flags = 0, reaction = 99, angle = 0.3, movedir = 2, movecount = 10 WHERE id = ${chaser}`);
+    await setState(chaser, 'S_TROO_RUN1');
     const turned = (await one(`SELECT angle FROM things WHERE id = ${chaser}`)).ANGLE;
     assert(Math.abs(turned - Math.PI / 4) < 1e-9, `A_Chase turns 45° a step towards its heading: 0.3 rad → ${turned.toFixed(4)} (π/4)`);
 
-    // a missile attack waits for MOVECOUNT to run out – except on Nightmare
+    // a missile attack waits for MOVECOUNT to run out – except on Nightmare. (MF_JUSTHIT set:
+    // P_CheckMissileRange then fires whenever it's asked, no roll against the distance)
     const [ax, ay] = at(80);
     const ready = (extra = '') => db.exec(`UPDATE things SET x = ${ax}, y = ${ay}, z = ${me.Z}, sector_id = sector_at(${ax}, ${ay}),
-        st = 'chase', st_tics = 1, reaction = 0, movecount = 5, just_attacked = 0, angle = ${dir + Math.PI} WHERE id = ${chaser}`)
+        reaction = 0, movecount = 5, just_attacked = 0, just_hit = 1, angle = ${dir + Math.PI} WHERE id = ${chaser}`)
       .then(() => extra && db.exec(`UPDATE things SET ${extra} WHERE id = ${chaser}`));
-    const stAfter = async () => { await tic(); return (await one(`SELECT st, just_attacked FROM things WHERE id = ${chaser}`)); };
+    const stAfter = async () => { await setState(chaser, 'S_TROO_RUN1'); return (await one(`SELECT st, just_attacked FROM things WHERE id = ${chaser}`)); };
     await ready();
     const waits = await stAfter();
     await db.exec('UPDATE game SET skill = 5');
@@ -718,9 +720,9 @@ if (sky) {
     const look = async (d, facing) => {
       const [lx, ly] = at(d);
       await db.exec(`UPDATE things SET x = ${lx}, y = ${ly}, z = ${me.Z}, sector_id = sector_at(${lx}, ${ly}),
-          st = 'idle', st_tics = 0, flags = 0, angle = ${facing} WHERE id = ${chaser}`);
+          flags = 0, angle = ${facing} WHERE id = ${chaser}`);
       await db.exec('UPDATE sectors SET sound_heard = 0');
-      for (let i = 0; i < 16; i++) await tic();
+      await setState(chaser, 'S_TROO_STND');   // (A_Look)
       return (await one(`SELECT st FROM things WHERE id = ${chaser}`)).ST;
     };
     const backTurned = await look(260, dir);
@@ -879,11 +881,13 @@ if (slimeMap) {
   let growls = 0;
   let others = 0;
   let seen = 0;
+  // (the imp is on DOOM's frame tables: A_Chase every 3 tics in its run states, 17 in 50 tics
+  // counting the one entering S_TROO_RUN1; put back 256 away each time, it never gets to claw)
   for (let k = 0; k < 80; k++) {
-    await db.exec(`UPDATE things SET st = 'chase', reaction = 99 WHERE id = ${imp}`);
-    const s0 = (await one(`SELECT step FROM things WHERE id = ${imp}`)).STEP;
+    await db.exec(`UPDATE things SET reaction = 99, x = ${p.X + 256}, y = ${p.Y}, sector_id = sector_at(${p.X + 256}, ${p.Y}) WHERE id = ${imp}`);
+    await setState(imp, 'S_TROO_RUN1');
     await tic(50);
-    steps += (await one(`SELECT step FROM things WHERE id = ${imp}`)).STEP - s0;
+    steps += 17;
     const c = await one(`SELECT COALESCE(MAX(id), ${seen}) top,
         COUNT(CASE WHEN sound = 'DSBGACT' AND origin = ${imp} THEN 1 END) mine,
         COUNT(CASE WHEN sound LIKE 'DS%ACT' AND origin <> ${imp} THEN 1 END) theirs

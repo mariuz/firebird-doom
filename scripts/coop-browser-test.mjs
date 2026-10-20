@@ -294,7 +294,7 @@ try {
   await until(guest, () => document.getElementById('net-out').value.length > 50);
   await host.fill('#net-in', await value(guest, 'net-out'));
   await host.evaluate(() => document.getElementById('net-connect').click());
-  await until(host, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 30000);
+  await until(host, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 120000);   // (a loaded machine: the second connection can be slow)
   await host.selectOption('#net-mode', '1');
   await host.fill('#net-timer', '5');
   // (and the launch options: -nomonsters and -fast on, -respawn off)

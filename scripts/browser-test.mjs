@@ -234,10 +234,14 @@ try {
   const f4 = await doom(() => [window.doom.menu.current.name, window.doom.menu.item.act].join(':'));
   await key('Escape');
   assert(f1 === 'HELP1' && f2 === 'save' && f3 === 'load' && f4 === 'sound:sfx', `F1 ${f1}, F2 ${f2}, F3 ${f3}, F4 ${f4}`);
+  // (doom.message is the HUD row the next frame fetches: on a loaded machine wait for it)
+  const said = (text) => until((t) => window.doom.message === t, text, 10000).catch(() => {});
   await key('F5');
+  await said('Detail: low');
   const f5 = await doom(() => [document.getElementById('detail').value, window.doom.message].join(' / '));
   await key('F5');
   await key('F8');
+  await said('Messages: off');
   const f8 = await doom(() => window.doom.message);
   await key('F8');
   assert(f5 === 'low / Detail: low' && f8 === 'Messages: off' && (await doom(() => document.getElementById('detail').value)) === 'high',
@@ -250,8 +254,10 @@ try {
   await key('n');
   assert(/End this game/.test(f7) && f10 && (await doom(() => window.doom.screen)) === 'level', 'F7 asks to end the game, F10 to quit; N keeps playing');
   await key('F11');
+  await said('Gamma: level 1');
   const g1 = await doom(() => [window.doom.gamma, window.doom.message].join(' / '));
   for (let i = 0; i < 4; i++) await key('F11');
+  await said('Gamma: off');
   const g0 = await doom(() => [window.doom.gamma, window.doom.message].join(' / '));
   assert(g1 === '1 / Gamma: level 1' && g0 === '0 / Gamma: off', `F11 steps the gamma (${g1}; four more: ${g0})`);
   }

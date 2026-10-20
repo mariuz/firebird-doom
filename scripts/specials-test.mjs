@@ -68,9 +68,13 @@ await bossTest('MAP07', 68, 'floor');
   const deathOf = async (type) => {
     const id = (await one(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN
         EXECUTE PROCEDURE spawn_thing(${type}, ${at.X}, ${at.Y}, NULL, 0) RETURNING_VALUES id; SUSPEND; END`)).ID;
-    await db.query(`EXECUTE PROCEDURE damage_thing(${id}, 100000)`);
-    const snd = (await one(`SELECT death_snd s FROM thing_types WHERE thing_type = ${type}`)).S;
-    const e = await one(`SELECT FIRST 1 origin, x FROM sound_events WHERE sound = '${snd}' ORDER BY id DESC`);
+    // (just killed, not gibbed; a monster on DOOM's frame tables cries in A_Scream, its
+    // second death frame, so the machine runs on a few tics; DOOM picks the imp's of two)
+    await db.query(`EXECUTE PROCEDURE damage_thing(${id}, (SELECT hp FROM things WHERE id = ${id}))`);
+    await db.query(`EXECUTE BLOCK AS DECLARE t INTEGER; DECLARE i INTEGER = 1; BEGIN SELECT tic FROM game WHERE id = 1 INTO t;
+      WHILE (i <= 12) DO BEGIN EXECUTE PROCEDURE states_think(t + i); i = i + 1; END END`);
+    const snd = (await one(`SELECT death_snd s FROM thing_types WHERE thing_type = ${type}`)).S.trim();
+    const e = await one(`SELECT FIRST 1 origin, x FROM sound_events WHERE sound LIKE '${snd.replace(/[12]$/, '')}%' ORDER BY id DESC`);
     await db.exec(`DELETE FROM things WHERE id = ${id}`);
     return { id, e };
   };
