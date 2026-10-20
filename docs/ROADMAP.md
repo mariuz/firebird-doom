@@ -33,8 +33,8 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   would then apply (loading Freedoom 2 logs "Frame N: not applied (no state tables in this port)"
   for its own), and monster timing would be vanilla's. The biggest gap to vanilla left, and a
   big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
-  phases*). Phase 0 is done (the table, GPL-2 in a file of its own); phase 1, the state machine,
-  is next.
+  phases*). Phases 0 and 1 are done (the table, GPL-2 in a file of its own; the machine in SQL);
+  phase 2, the monsters family by family, is next.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -157,7 +157,11 @@ is for. Then: `states` and the mobjinfo state columns in `schema.sql`, loaded at
 or a no-op, and spot checks against the source (S_POSS_ATK1 is POSS E, 10 tics, A_FaceTarget).
 Changes nothing that plays.
 
-**Phase 1: the machine.** `things.state`, `things.tics` and an indexed `things.state_tic` (the
+**Phase 1: the machine.** *Done:* `things.state` and `state_tic` (indexed), `SET_STATE`,
+`STATE_ACTION` (A_Scream and A_Fall so far) and `STATES_THINK` in `WORLD_TIC`; `MONSTERS_THINK` skips a
+stated thing, and `FRAME_SPRITES` draws its state's frame. ~5 µs a tic with nothing due. One thing
+for phase 2: `MONSTERS_THINK` also moves things (momentum, falling), so a stated thing stands still
+until that part runs for it too. The plan as it was: `things.state`, `things.tics` and an indexed `things.state_tic` (the
 tic its state ends, so a tic touches only the things whose state ends then, as the "idle things
 think every 8 tics" rule does now: per-thing countdowns in PSQL would cost every tic). A
 `SET_STATE` procedure follows `next` through 0-tic states and calls the actions; a thing with a

@@ -21,7 +21,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | Path | What it is |
 | --- | --- |
 | `sql/schema.sql` | Every table: the WAD as rows (`vertexes`, `linedefs`, `sidedefs`, `sectors`, `segs`, `ssectors`, `nodes`, `map_things`), the resource catalogue (`textures`, `flats`, `sprite_frames`, `thing_types`), live state (`game`, `player`, `things`, `movers`), and derived acceleration structures (`line_blocks`, `sound_links`, `sound_flood`, `screen_cols`, `viewcfg`). |
-| `sql/game.sql` | The simulation, as PSQL procedures. `DOOM_TIC` is the entry point (see below). |
+| `sql/game.sql` | The simulation, as PSQL procedures. `DOOM_TIC` is the entry point (see below). The frame tables' machine is here too: `SET_STATE` (`P_SetMobjState`), `STATE_ACTION` (the actions by name) and `STATES_THINK`, which `WORLD_TIC` runs after `MONSTERS_THINK`; a thing with a `state` is theirs, and `MONSTERS_THINK` leaves it alone. |
 | `sql/render.sql` | The visibility half of the renderer: `RENDER_SLICES` (brute force), `RENDER_SLICES_BSP` (BSP walk with solidsegs), `RENDER_WALLS` (clipping and visplane rows), `RENDER_SPRITES`, and the views `FRAME_WALLS`, `FRAME_WALLS_WINDOWED`, `FRAME_SPRITES`, `FRAME_SECTORS`, `FRAME_VISPLANES`. |
 | `src/main.js` | The page: boots Firebird, loads WADs and maps, reads input, runs the frame loop, and owns the intermission and finale objects, the settings and the cheats. |
 | `src/loader.js` | WAD → Firebird: `createSchema`, `loadResources` (textures, flats, sprites, thing types), `loadMap` (one level's lumps plus `INIT_MAP`), `setView`, `setRenderer`. Bulk inserts go through `execBatch`, with every value bound as a parameter. |

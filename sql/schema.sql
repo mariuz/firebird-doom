@@ -337,11 +337,17 @@ CREATE TABLE things (
   target_id  INTEGER,                               -- who a monster is after (NULL = the player)
   threshold  INTEGER DEFAULT 0 NOT NULL,            -- chase steps before it may switch target again
   tplayer    SMALLINT DEFAULT 1 NOT NULL,           -- the player it's after when TARGET_ID is NULL
-  translation SMALLINT DEFAULT 0 NOT NULL           -- a player's colours: 0 green, 1 indigo, 2 brown, 3 red (MF_TRANSLATION)
+  translation SMALLINT DEFAULT 0 NOT NULL,          -- a player's colours: 0 green, 1 indigo, 2 brown, 3 red (MF_TRANSLATION)
+  -- DOOM's frame tables (phase 1): the thing's state (STATES id; NULL: today's rules still
+  -- run it) and the tic that state ends (NULL: never, a -1 tics state). SET_STATE and
+  -- STATES_THINK move it on; MONSTERS_THINK leaves a stated thing alone.
+  state       INTEGER,
+  state_tic   INTEGER
 );
 CREATE INDEX things_kind ON things (kind);
 CREATE INDEX things_sector ON things (sector_id);
 CREATE INDEX things_x ON things (x);
+CREATE INDEX things_state_tic ON things (state_tic);   -- (STATES_THINK: only the things whose state ends this tic)
 
 CREATE TABLE player (
   id           SMALLINT NOT NULL PRIMARY KEY,

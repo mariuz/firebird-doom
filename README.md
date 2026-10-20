@@ -1190,6 +1190,13 @@ once and prints a warning, which is what a player would do.
 ## Simplifications
 
 Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
+That's changing, in phases ([docs/ROADMAP.md](docs/ROADMAP.md)). DOOM's state table is in Firebird now
+(`src/states.js`, see Licence), and so is the machine that runs it: `SET_STATE` is `P_SetMobjState`
+(a state's tics start, its action is called, a 0-tic state goes straight on, `S_NULL` removes the thing)
+and `STATES_THINK` moves on, each tic, only the things whose state ends then (an index on the tic it
+ends; about 5 µs a tic when none does). Nothing in a game is on it yet: the monsters move onto it family
+by family next, starting with the zombiemen. `npm run test:states` takes one through its attack at
+info.c's 10 + 8 + 8 tics, and through its death.
 Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods
 out from your sector through every open two-sided line. A closed door stops it, and a line flagged
 *sound block* lets it through once but never twice. Every sector it reaches remembers. Idle

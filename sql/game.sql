@@ -2714,6 +2714,7 @@ BEGIN
              tt.mass, tt.floats
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        WHERE t.kind IN ('monster', 'barrel', 'missile', 'fx', 'keen', 'brain', 'shooter', 'cube', 'flame')
+         AND t.state IS NULL                           -- (a thing on the frame tables runs there: STATES_THINK)
          AND (t.st <> 'dead' OR t.momz <> 0)          -- a corpse still falling
          AND NOT (t.kind = 'barrel' AND t.st = 'idle' AND t.momz = 0)
          AND NOT (t.st = 'idle' AND t.momz = 0 AND MOD(:tic + t.id, 8) <> 0)
@@ -3473,7 +3474,7 @@ BEGIN
   END
   -- …and here they count down, those the loop left out (still chasing, on the ground)
   UPDATE things t SET st_tics = t.st_tics - 1
-   WHERE t.kind = 'monster' AND t.st = 'chase' AND t.st_tics > 1 AND t.momz = 0
+   WHERE t.kind = 'monster' AND t.st = 'chase' AND t.st_tics > 1 AND t.momz = 0 AND t.state IS NULL
      AND t.think_tic IS DISTINCT FROM :tic
      AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type AND tt.floats = 1);
 END^
@@ -3703,11 +3704,95 @@ END^
 
 -- The world's half of a tic (P_Ticker after the players): movers, monsters,
 -- Nightmare's respawns, lights, and every player's counters.
+-- ── DOOM's frame tables (docs/ROADMAP.md: phase 1, the machine) ─────────────
+-- A thing with a STATE runs on info.c's states (the STATES table, src/states.js):
+-- each state shows a frame for its tics, calls its action as it's entered, and
+-- hands on to the next. Nothing is put on it yet; the phases after this move the
+-- monsters, then everything else, onto it.
+
+-- The actions, by name (info.c's codepointers). Only those the first things on the
+-- table need are here; any other name does nothing until its phase brings it.
+CREATE OR ALTER PROCEDURE state_action (tid INTEGER, act VARCHAR(24), tic INTEGER)
+AS
+DECLARE snd VARCHAR(8);
+DECLARE ttype INTEGER;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+BEGIN
+  IF (act = 'A_Fall') THEN
+    -- A_Fall: the corpse no longer blocks (MF_SOLID off)
+    UPDATE things SET solid = 0 WHERE id = :tid;
+  ELSE IF (act = 'A_Scream') THEN
+  BEGIN
+    -- A_Scream: the death sound; the spider mastermind's and the cyberdemon's at full volume
+    SELECT tt.death_snd, t.thing_type, t.x, t.y FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+     WHERE t.id = :tid INTO snd, ttype, x, y;
+    IF (ttype IN (7, 16)) THEN EXECUTE PROCEDURE play_sound(snd, 0, NULL, NULL);
+    ELSE EXECUTE PROCEDURE play_sound(snd, tid, x, y);
+  END
+END^
+
+-- P_SetMobjState: TID into state ST at TIC – its tics start, then its action is called.
+-- A state of 0 tics goes straight on to the next, and S_NULL (0) removes the thing
+-- (P_RemoveMobj). ALIVE says whether it's still there.
+CREATE OR ALTER PROCEDURE set_state (tid INTEGER, st INTEGER, tic INTEGER)
+RETURNS (alive SMALLINT)
+AS
+DECLARE tics INTEGER;
+DECLARE act VARCHAR(24);
+DECLARE nxt INTEGER;
+DECLARE n INTEGER = 0;
+BEGIN
+  alive = 1;
+  WHILE (n < 100) DO   -- (a ring of 0-tic states would hang DOOM; here it stops)
+  BEGIN
+    n = n + 1;
+    IF (st = 0) THEN
+    BEGIN
+      DELETE FROM things WHERE id = :tid;
+      alive = 0;
+      EXIT;
+    END
+    SELECT s.tics, s.action, s.next_state FROM states s WHERE s.id = :st INTO tics, act, nxt;
+    UPDATE things SET state = :st, state_tic = IIF(:tics < 0, NULL, :tic + :tics) WHERE id = :tid;
+    IF (act IS NOT NULL) THEN EXECUTE PROCEDURE state_action(tid, act, tic);
+    IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.id = :tid)) THEN
+    BEGIN
+      alive = 0;
+      EXIT;
+    END
+    -- (DOOM's loop runs while mobj->tics is 0: here, while its state ends this very tic)
+    IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.state_tic = :tic)) THEN EXIT;
+    st = nxt;
+  END
+END^
+
+-- P_MobjThinker's countdown, for the things on the table: each whose state ends this
+-- tic goes on to the next, in spawn order (P_RunThinkers). Only those are touched
+-- (the index on STATE_TIC), not every thing every tic.
+CREATE OR ALTER PROCEDURE states_think (tic INTEGER)
+AS
+DECLARE tid INTEGER;
+DECLARE nxt INTEGER;
+DECLARE alive SMALLINT;
+BEGIN
+  FOR SELECT t.id FROM things t WHERE t.state_tic = :tic ORDER BY t.id INTO tid
+  DO
+  BEGIN
+    -- (still due? an action before it may have changed or removed it)
+    nxt = NULL;
+    SELECT s.next_state FROM things t JOIN states s ON s.id = t.state
+     WHERE t.id = :tid AND t.state_tic = :tic INTO nxt;
+    IF (nxt IS NOT NULL) THEN EXECUTE PROCEDURE set_state(tid, nxt, tic) RETURNING_VALUES alive;
+  END
+END^
+
 CREATE OR ALTER PROCEDURE world_tic (tic INTEGER)
 AS
 BEGIN
   EXECUTE PROCEDURE movers_think;
   EXECUTE PROCEDURE monsters_think(tic);
+  EXECUTE PROCEDURE states_think(tic);
   -- (G_InitNew: respawnmonsters on Nightmare, or with -respawn)
   IF (MOD(tic, 32) = 0 AND EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND (g.skill = 5 OR g.respawn = 1))) THEN
     EXECUTE PROCEDURE nightmare_respawn(tic);

@@ -140,6 +140,7 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 | Screens between levels | `src/intermission.js`, `src/finale.js`, `src/progress.js`; the hand-off is in `main.js`'s `frame()` |
 | Cheats | SQL `CHEAT` procedure; readers in `src/cheats.js`; key handling in `main.js` |
 | Save and load | `src/savegame.js` (what's saved: its `WHOLE`/`MOVING` lists; **add a column there if the simulation starts changing a new one**); after a schema change run `npm run save-fixtures`, and if an old save stops loading, migrate it in `restoreGame`; `saveToSlot`/`loadFromSlot` in `main.js` |
+| DOOM's frame tables (states) | `src/states.js` (GPL-2, generated), the `states` table, `SET_STATE` / `STATE_ACTION` / `STATES_THINK` in `sql/game.sql`; the phases in `docs/ROADMAP.md` (Simulation) |
 | DeHackEd, rules a patch can change | `src/dehacked.js`, the `RULES` table (SQL reads it instead of hard-coding those numbers) |
 | Demos | `src/demo.js`; recording and playback in `main.js` (`startRecording`, `playDemo`, the frame loop); the title loop's in `scripts/record-attract.mjs` (`startAttract` in `main.js`) |
 | Keys, mouse, gamepad | `readInput` in `main.js`, reading `src/keys.js` (the bindings), `src/mouse.js`, `src/gamepad.js` |
