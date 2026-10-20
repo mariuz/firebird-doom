@@ -29,6 +29,8 @@ const port = await new Promise((resolve) => {
 const server = spawn(process.execPath, [path.join(root, 'scripts/build.mjs'), '--serve'], {
   env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'inherit'],
 });
+// (stopped however the test ends: a browser that won't launch would otherwise leave it running)
+process.on('exit', () => server.kill());
 await new Promise((resolve, reject) => {
   server.stdout.on('data', (d) => { if (String(d).includes('serving')) resolve(); });
   server.on('exit', (code) => reject(new Error(`the server exited (${code})`)));
@@ -85,8 +87,9 @@ try {
   assert(invite !== reply && /^[A-Za-z0-9+/=]+$/.test(invite + reply), `the invite and the reply are codes to copy and paste (${invite.length} and ${reply.length} characters)`);
   await host.fill('#net-in', reply);
   await host.click('#net-connect');
-  await until(host, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 30000);
-  await until(guest, () => /^Connected/.test(document.getElementById('net-status').textContent), null, 30000);
+  // (a WebRTC connection can take a while on a loaded machine: Firefox in CI took over 30 s)
+  await until(host, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 120000);
+  await until(guest, () => /^Connected/.test(document.getElementById('net-status').textContent), null, 120000);
   assert(true, `connected: the host says "${(await status(host)).slice(0, 40)}…", the guest "${(await status(guest)).slice(0, 40)}…"`);
 
   // Start: both into the host's map, the host player 1 and the guest player 2
@@ -354,7 +357,7 @@ try {
   await until(guest, () => document.getElementById('net-out').value.length > 50);
   await host.fill('#net-in', await value(guest, 'net-out'));
   await host.evaluate(() => document.getElementById('net-connect').click());
-  await until(host, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 30000);
+  await until(host, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 120000);
   const savedGame = await host.evaluate(() => window.doom.saveRecord(4).then((r) => {
     const g = r.save.tables.game;
     return { map: r.map, tic: g.rows[0][g.cols.indexOf('tic')] };
@@ -396,7 +399,7 @@ try {
     await host.fill('#net-in', await value(g, 'net-out'));
     await host.evaluate(() => document.getElementById('net-connect').click());
     await until(host, (k) => document.getElementById('net-status').textContent.startsWith(`${k} players`), n, 30000);
-    await until(g, () => /^Connected/.test(document.getElementById('net-status').textContent), null, 30000);
+    await until(g, () => /^Connected/.test(document.getElementById('net-status').textContent), null, 120000);
   };
   for (const [g, n] of [[guest, 2], [g3, 3], [g4, 4]]) await join(g, n);
   await host.evaluate(() => document.getElementById('net-start').click());
@@ -506,8 +509,8 @@ try {
   await rg.evaluate(() => document.getElementById('net-join').click());
   await rg.fill('#net-in', roomCode.toLowerCase().replace(/(...)/, '$1-'));   // (as someone might type it)
   await rg.evaluate(() => document.getElementById('net-connect').click());
-  await until(rh, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 30000);
-  await until(rg, () => /^Connected/.test(document.getElementById('net-status').textContent), null, 30000);
+  await until(rh, () => /^2 players/.test(document.getElementById('net-status').textContent), null, 120000);
+  await until(rg, () => /^Connected/.test(document.getElementById('net-status').textContent), null, 120000);
   const shown = await Promise.all([rh, rg].map((pg) => pg.evaluate(() => ({ out: document.getElementById('net-out').value, relay: document.getElementById('net-relay').value }))));
   assert(shown.every((x) => x.relay === relay.url) && shown[1].out === '',
     `with a relay: the host's invite is room ${roomCode}, the guest joins with just that ("${roomCode.toLowerCase().replace(/(...)/, '$1-')}" as typed), and nobody pastes a reply`);
