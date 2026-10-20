@@ -38,6 +38,8 @@ npm run test:browser       # the page in headless Chromium: title → game → i
 npm run test:coop          # co-op and deathmatch: two pages, a real WebRTC link, invite → reply → Start → lockstep; then four pages
 npm run relay              # the netgame relay (worker/relay.js) under Node on :8787; open the page with ?relay=http://localhost:8787
 npm run test:relay         # the relay: rooms, expiry, limits, origins, the TURN request (Cloudflare faked)
+npm run test:states        # DOOM's state table in Firebird: whole, consistent, every thing type tied to its DOOM type
+npm run gen-states         # regenerates src/states.js (GPL-2) from Chocolate Doom's info.c; never edit it by hand
 BROWSER=firefox npm run test:browser   # (and webkit; test:coop too) CI's browsers.yml runs both in both; Chromium is the default
 npm run test:visual        # the README's pictures, pixel for pixel against docs/screenshots.json
 npm run test:renderers -- E1M1 E1M2 E1M3
@@ -75,7 +77,9 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 - **Copyright.** Never put id Software's text (story screens, messages, names) in the repo. Freedoom
   is BSD-3-Clause: its `DEHACKED` strings may be used, with `FREEDOOM-COPYING.txt` shipped
   alongside. id's WADs (`doom.wad`, `doom2.wad`) are not distributable. Test their layout by hiding
-  lumps (see the id-style tests in `scripts/finale-test.mjs`).
+  lumps (see the id-style tests in `scripts/finale-test.mjs`). The one GPL file is `src/states.js`,
+  DOOM's state table (the owner's choice: GPL-2 in a file of its own, the rest MIT); it comes from
+  `npm run gen-states`. Don't copy id's code into any other file.
 
 ## Gotchas that cost time
 

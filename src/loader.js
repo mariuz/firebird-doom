@@ -3,7 +3,20 @@
 // Shared by the browser (src/main.js) and the Node smoke test
 // (scripts/sql-smoke.mjs), so CI exercises exactly the SQL the page runs.
 
-import { THING_TYPES } from './thinginfo.js';
+import { THING_TYPES, MOBJ_TYPE, SPAWN_STATE } from './thinginfo.js';
+import { STATES, MOBJINFO } from './states.js';
+
+// each thing type's eight states (spawn … raise), from its DOOM mobj type: by the
+// map number, else MOBJ_TYPE; [] when DOOM has no such type
+const MOBJ_BY_ED = new Map(Object.values(MOBJINFO).filter((m) => m.ednum > 0).map((m) => [m.ednum, m]));
+const STATE_ID = new Map(STATES.map((s, i) => [s[0], i]));
+export function typeStates(type) {
+  const m = MOBJ_TYPE[type] ? MOBJINFO[MOBJ_TYPE[type]] : MOBJ_BY_ED.get(type);
+  if (!m) return [0, 0, 0, 0, 0, 0, 0, 0];
+  const s = [...m.states];
+  if (SPAWN_STATE[type]) s[0] = STATE_ID.get(SPAWN_STATE[type]);
+  return s;
+}
 import { applyDehacked, parseDehacked } from './dehacked.js';
 import { parseDehStrings } from './finale.js';
 
@@ -98,7 +111,7 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
   const frames = new Map();
   for (const f of wad.spriteFrames()) frames.set(`${f.sprite}${f.frame}${f.rot}`, f);
 
-  await db.exec('DELETE FROM textures; DELETE FROM flats; DELETE FROM sprite_frames; DELETE FROM thing_types; DELETE FROM screen_cols; DELETE FROM game; DELETE FROM player; DELETE FROM viewcfg; DELETE FROM rules');
+  await db.exec('DELETE FROM textures; DELETE FROM flats; DELETE FROM sprite_frames; DELETE FROM thing_types; DELETE FROM states; DELETE FROM screen_cols; DELETE FROM game; DELETE FROM player; DELETE FROM viewcfg; DELETE FROM rules');
   await insertRows(db, 'textures', ['id', 'name', 'w', 'h'], texDefs.map((d, i) => [i + 1, d.name, d.w, d.h]));
   await insertRows(db, 'flats', ['id', 'name', 'is_sky'], flats.map((l, i) => [i + 1, l.name, l.name === 'F_SKY1' ? 1 : 0]));
   await insertRows(
@@ -111,7 +124,8 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
       'pain_fr', 'death_fr', 'death_sprite', 'bright', 'atk_kind', 'missile_type', 'dmg_lo', 'dmg_hi', 'shots',
       'drop_type', 'pickup', 'amount', 'label', 'see_snd', 'atk_snd', 'pain_snd', 'death_snd', 'hang',
       'melee_fr', 'melee_snd', 'melee_hit_snd', 'melee_dmg', 'melee_rolls', 'mass', 'floats', 'shadow', 'active_snd',
-      'count_kill', 'count_item'],
+      'count_kill', 'count_item', 'spawn_state', 'see_state', 'pain_state', 'melee_state', 'missile_state',
+      'death_state', 'xdeath_state', 'raise_state'],
     deh.types.map((t) => [
       t.type, t.sprite, t.kind, t.radius, t.height, t.solid ?? 0, t.hp ?? null, t.speed ?? null, t.painChance ?? null,
       t.walk ?? 'A', t.attack ?? null, t.pain ?? null, t.death ?? null, t.deathSprite ?? null, t.bright ?? 0,
@@ -120,8 +134,12 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
       t.seeSnd ?? null, t.atkSnd ?? null, t.painSnd ?? null, t.deathSnd ?? null, t.hang ?? 0,
       t.meleeFr ?? null, t.meleeSnd ?? null, t.meleeHitSnd ?? null, t.meleeDmg ?? null, t.meleeRolls ?? null,
       t.mass ?? 100, t.floats ?? 0, t.shadow ?? 0, t.activeSnd ?? null, t.countKill ?? 0, t.countItem ?? 0,
+      ...typeStates(t.type),
     ]),
   );
+  // DOOM's state table (src/states.js)
+  await insertRows(db, 'states', ['id', 'name', 'sprite', 'frame', 'bright', 'tics', 'action', 'next_state', 'misc1', 'misc2'],
+    STATES.map((s, i) => [i, ...s]));
   await db.exec(`SET TERM ^ ;
 EXECUTE BLOCK AS DECLARE i INTEGER = 0;
 BEGIN WHILE (i < 1280) DO BEGIN INSERT INTO screen_cols (x) VALUES (:i); i = i + 1; END END^

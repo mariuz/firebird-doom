@@ -131,3 +131,16 @@ for (const t of THING_TYPES) {
   if (MASS[t.type]) t.mass = MASS[t.type];
   if (FLOATERS.has(t.type)) t.floats = 1;
 }
+
+// DOOM's mobj type (states.js's MOBJINFO) for the types a map doesn't place, which
+// DOOM spawned by type: the player, the projectiles and the effects. The others
+// are found by their map number (doomednum).
+export const MOBJ_TYPE = {
+  1: 'MT_PLAYER', 9000: 'MT_TROOPSHOT', 9001: 'MT_HEADSHOT', 9002: 'MT_BRUISERSHOT', 9003: 'MT_ROCKET',
+  9004: 'MT_PLASMA', 9005: 'MT_BFG', 9006: 'MT_TRACER', 9007: 'MT_FATSHOT', 9008: 'MT_ARACHPLAZ',
+  9009: 'MT_SPAWNSHOT', 9010: 'MT_PUFF', 9011: 'MT_BLOOD', 9012: 'MT_EXTRABFG', 9013: 'MT_ROCKET',
+  9014: 'MT_SPAWNFIRE', 9015: 'MT_FIRE', 9016: 'MT_TFOG', 9017: 'MT_IFOG',
+};
+// …and where ours starts elsewhere than the type's spawnstate: A_BrainScream's
+// explosions are rockets set straight to S_BRAINEXPLODE1
+export const SPAWN_STATE = { 9013: 'S_BRAINEXPLODE1' };

@@ -1283,8 +1283,16 @@ Large maps with many monsters awake at once can still drop below 10 fps. The *Lo
 * Engine: [Electric Firebird](https://github.com/mariuz/electric-firebird) (`firebird-wasm`, Apache-2.0)
 * Game data: [Freedoom](https://freedoom.github.io/) (BSD-3-Clause; its licence ships as
   `wads/FREEDOOM-COPYING.txt`, covering the WADs and the story text derived from them)
-* DOOM © id Software. This is a clean-room SQL re-implementation that reads the WAD format.
+* DOOM © id Software. This is an SQL re-implementation that reads the WAD format. DOOM's state
+  table (`src/states.js`) is taken from id's source release (GPL-2), through
+  [Chocolate Doom](https://www.chocolate-doom.org/)'s `info.c`.
 * Inspired by [SQL DOOM / DOOMQL](https://github.com/cedardb/sqldoom) by CedarDB and
   [duckdb-doom](https://github.com/patricktrainer/duckdb-doom)
 
-MIT licensed.
+### Licence
+
+Firebird DOOM's own code is MIT ([LICENSE](LICENSE)). One file isn't: `src/states.js`, DOOM's state
+table (each frame of every thing's animation, how long it lasts and what it does), generated from id's
+`info.c` by `npm run gen-states`. It's GPL-2.0-or-later like its source ([LICENSES/GPL-2.0.md](LICENSES/GPL-2.0.md)).
+The page bundles it, so the site as built and deployed is distributed under the GPL as a whole; `dist/` ships
+both texts (`LICENSE.txt`, `GPL-2.0.txt`). Freedoom's WADs are BSD-3-Clause (above).

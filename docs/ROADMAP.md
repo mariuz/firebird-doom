@@ -33,7 +33,8 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   would then apply (loading Freedoom 2 logs "Frame N: not applied (no state tables in this port)"
   for its own), and monster timing would be vanilla's. The biggest gap to vanilla left, and a
   big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
-  phases*). Phase 0 starts with a decision only the owner can make (the licence).
+  phases*). Phase 0 is done (the table, GPL-2 in a file of its own); phase 1, the state machine,
+  is next.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -141,7 +142,11 @@ raisestate). A thing holds its `state` and its `tics` left; `P_SetMobjState` and
 countdown (`P_MobjThinker`) run in SQL, and an action is called by name when its state is
 entered, as in DOOM. The renderer draws the state's own sprite and frame.
 
-**Phase 0: the licence, and the data.** The repo is MIT. `info.c` is id's code, GPL-2 since
+**Phase 0: the licence, and the data.** *Done:* the table is kept in a file of its own under
+GPL-2 (`src/states.js`, made by `npm run gen-states` from Chocolate Doom 3.1.0's `info.c` and
+`info.h`); 967 states in the `states` table, each thing type's eight on `thing_types` (by map
+number, or `MOBJ_TYPE` in `thinginfo.js` for the projectiles and effects), and `npm run
+test:states` checking them. The plan as it was: The repo is MIT. `info.c` is id's code, GPL-2 since
 1999; its ~967 states with their action names are a table of id's code, not a handful of facts
 (the hit points and speeds already in `thinginfo.js` are). Before any of it lands, the owner
 picks one: relicense the repo to GPL-2 (DOOM ports usually are); keep the table in a file of its
@@ -149,7 +154,7 @@ own under GPL-2 (`src/states.js`), which makes the site as a whole GPL when it s
 describe the states afresh from watching the game, which is slower and loses the exactness this
 is for. Then: `states` and the mobjinfo state columns in `schema.sql`, loaded at startup like
 `thing_types`. Test: the counts, every `next` a state that exists, every action one the port knows
-or a no-op, and spot checks against the source (S_POSS_ATK1 is POSS A, 10 tics, A_FaceTarget).
+or a no-op, and spot checks against the source (S_POSS_ATK1 is POSS E, 10 tics, A_FaceTarget).
 Changes nothing that plays.
 
 **Phase 1: the machine.** `things.state`, `things.tics` and an indexed `things.state_tic` (the

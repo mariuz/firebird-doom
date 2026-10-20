@@ -36,6 +36,8 @@
     "test:visual": "node scripts/screenshot.mjs --check",
     "test:all": "node scripts/test-all.mjs",
     "test:relay": "node scripts/relay-test.mjs",
+    "test:states": "node scripts/states-test.mjs",
+    "gen-states": "node scripts/gen-states.mjs",
     "relay": "node scripts/relay-dev.mjs"
   },
   "license": "MIT",

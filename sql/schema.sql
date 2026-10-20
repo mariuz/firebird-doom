@@ -146,7 +146,33 @@ CREATE TABLE thing_types (
   melee_dmg     INTEGER,                     -- damage is melee_dmg × 1d(melee_rolls)
   melee_rolls   INTEGER,
   count_kill    SMALLINT DEFAULT 0 NOT NULL, -- MF_COUNTKILL: in the kill tally
-  count_item    SMALLINT DEFAULT 0 NOT NULL  -- MF_COUNTITEM: in the item tally
+  count_item    SMALLINT DEFAULT 0 NOT NULL, -- MF_COUNTITEM: in the item tally
+  -- mobjinfo's states (STATES ids; 0 = none): the frame tables, filled from src/states.js
+  spawn_state   INTEGER DEFAULT 0 NOT NULL,
+  see_state     INTEGER DEFAULT 0 NOT NULL,
+  pain_state    INTEGER DEFAULT 0 NOT NULL,
+  melee_state   INTEGER DEFAULT 0 NOT NULL,
+  missile_state INTEGER DEFAULT 0 NOT NULL,
+  death_state   INTEGER DEFAULT 0 NOT NULL,
+  xdeath_state  INTEGER DEFAULT 0 NOT NULL,
+  raise_state   INTEGER DEFAULT 0 NOT NULL
+);
+
+-- DOOM's state table, info.c's states[] (src/states.js, GPL-2): a frame of a
+-- thing's animation, how long it lasts, the action called when it's entered,
+-- and the state after it. The id is DOOM's statenum. (Loaded and checked, not
+-- yet played: docs/ROADMAP.md, "DOOM's frame tables, in phases".)
+CREATE TABLE states (
+  id         INTEGER NOT NULL PRIMARY KEY,
+  name       VARCHAR(24) NOT NULL,          -- S_POSS_ATK1 …
+  sprite     CHAR(4) NOT NULL,
+  frame      CHAR(1) NOT NULL,
+  bright     SMALLINT NOT NULL,             -- FF_FULLBRIGHT
+  tics       INTEGER NOT NULL,              -- -1: for ever
+  action     VARCHAR(24),                   -- A_Look …, NULL: none
+  next_state INTEGER NOT NULL,
+  misc1      INTEGER DEFAULT 0 NOT NULL,
+  misc2      INTEGER DEFAULT 0 NOT NULL
 );
 
 -- ── the map ─────────────────────────────────────────────────────────────

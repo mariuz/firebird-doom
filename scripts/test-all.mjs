@@ -39,6 +39,7 @@ const TESTS = [
   ['dehacked', npm('test:dehacked'), 9],
   ...both('weapons', 6),
   ['relay', npm('test:relay'), 3],
+  ...both('states', 5),
   ...['music', 'statusbar', 'light', 'sound', 'intermission', 'automap', 'finale', 'menu'].map((t) => [t, npm(`test:${t}`), 5]),
 ];
 

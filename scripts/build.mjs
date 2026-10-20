@@ -114,6 +114,10 @@ fs.cpSync(path.join(root, 'public'), OUT, { recursive: true });
 // The netgame relay the site uses (worker/relay.js, deployed): RELAY_URL at build
 // time, CI's repository variable of that name. None: room codes are off.
 if (process.env.RELAY_URL) fs.writeFileSync(path.join(OUT, 'relay.json'), JSON.stringify({ url: process.env.RELAY_URL }));
+// The licences: the site's code is MIT, but main.js bundles src/states.js (DOOM's
+// state table, GPL-2), so the site as a whole goes out under the GPL; both texts with it.
+fs.copyFileSync(path.join(root, 'LICENSE'), path.join(OUT, 'LICENSE.txt'));
+fs.copyFileSync(path.join(root, 'LICENSES/GPL-2.0.md'), path.join(OUT, 'GPL-2.0.txt'));
 // GitHub Pages runs Jekyll by default, which drops _underscored paths.
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
 
