@@ -180,8 +180,7 @@ let s = 3;
 const rnd = () => ((s = (s * 48271) % 2147483647) / 2147483647);
 const stream = Array.from({ length: 120 }, () => [0, 1].map(() => [rnd() < 0.7 ? 1 : 0, rnd() < 0.2 ? 1 : 0, (rnd() - 0.5) * 0.2, rnd() < 0.2 ? 1 : 0, rnd() < 0.05 ? 1 : 0, 0, rnd() < 0.3 ? 1 : 0]));
 async function play() {
-  await loadMap(db, wad, res, map, { skill: 4, players: 2 });
-  await db.exec('UPDATE game SET rng = 777 WHERE id = 1');
+  await loadMap(db, wad, res, map, { skill: 4, players: 2, seed: 777 });   // (the seed before the map: INIT_MAP draws on it)
   await db.exec('UPDATE player SET health = 100000');
   for (const c of stream) await tic(c);
   return JSON.stringify((await captureGame(db)).tables);
@@ -198,8 +197,7 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   const res2 = await loadResources(db2, wad);
   const peers = [{ db, me: 1 }, { db: db2, me: 2 }];
   for (const p of peers) {
-    await loadMap(p.db, wad, p.me === 1 ? res : res2, map, { skill: 4, players: 2, newGame: true });
-    await p.db.exec('UPDATE game SET rng = 4321 WHERE id = 1');
+    await loadMap(p.db, wad, p.me === 1 ? res : res2, map, { skill: 4, players: 2, newGame: true, seed: 4321 });
     await p.db.exec('UPDATE player SET health = 100000');
     await p.db.exec(`UPDATE viewcfg SET player_id = ${p.me} WHERE id = 1`);
   }
@@ -405,12 +403,16 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   // -fast: Nightmare's monsters at any skill (G_InitNew's fastparm)
   await loadMap(db, wad, res, map, { skill: 3, players: 2, nomonsters: 0, fast: 1 });
   const m0 = await thing(1);
-  await db.exec("UPDATE things SET st = 'dead', solid = 0 WHERE kind = 'monster'");   // (quiet: the rest stay out of it)
+  await db.exec("UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE kind = 'monster'");   // (quiet: the rest stay out of it)
   const imp = await spawn(3001, m0.X - 200, m0.Y);
   await db.exec(`EXECUTE PROCEDURE monster_missile(${imp}, 9000, ${m0.X + 300}, ${m0.Y + 300}, ${m0.Z}, 20, 0, ${m0.X + 500}, ${m0.Y + 300}, ${m0.Z})`);
   const ball = await one('SELECT SQRT(momx * momx + momy * momy) v FROM things WHERE thing_type = 9000 ORDER BY id DESC ROWS 1');
   await db.exec('DELETE FROM things WHERE thing_type = 9000');
-  const spawnReaction = (await one("SELECT MAX(reaction) r FROM things WHERE kind = 'monster' AND spawn_x IS NOT NULL")).R;
+  // (the old rules' 2; mobjinfo's 8 for the types on DOOM's frame tables)
+  const reactions = await one(`SELECT MAX(IIF(tt.on_states = 1, NULL, t.reaction)) r, MIN(IIF(tt.on_states = 1, t.reaction, NULL)) s,
+    MAX(IIF(tt.on_states = 1, t.reaction, NULL)) s2 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+    WHERE t.kind = 'monster' AND t.spawn_x IS NOT NULL`);
+  const spawnReaction = reactions.R === 2 && (reactions.S === null || (reactions.S === 8 && reactions.S2 === 8)) ? 2 : `${reactions.R}/${reactions.S}`;
   const stepsAt = async (fast) => {
     await db.exec(`UPDATE game SET fast = ${fast} WHERE id = 1`);
     const demon = await spawn(3002, m0.X + 96, m0.Y);
@@ -434,7 +436,7 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   await db.exec('DELETE FROM sound_events');
   const r0 = await thing(1);
   const corpse = await spawn(3001, r0.X + 64, r0.Y);
-  await db.exec(`UPDATE things SET st = 'dead', hp = 0, solid = 0, frame = 'M', dead_tic = 0, spawn_x = x, spawn_y = y, spawn_angle = 1.5 WHERE id = ${corpse}`);
+  await db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, hp = 0, solid = 0, frame = 'M', dead_tic = 0, spawn_x = x, spawn_y = y, spawn_angle = 1.5 WHERE id = ${corpse}`);
   // the next P_RANDOM is 0 from this state (the tic's only draw is P_NightmareRespawn's 4-in-256 roll), at a tic that's a multiple of 32
   const rise = async (respawn) => {
     await db.exec(`UPDATE game SET tic = 1023, rng = 2088216195, respawn = ${respawn} WHERE id = 1`);

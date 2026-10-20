@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
+import { ON_STATES } from '../src/thinginfo.js';
 import { createSchema, loadResources, loadMap, insertRows } from '../src/loader.js';
 import { captureGame, restoreGame, saveStore, exportSaves, importSaves, SAVE_VERSION, packSave, unpackSave, savePlayers, saveSetting } from '../src/savegame.js';
 
@@ -41,7 +42,7 @@ assert(saved.version === SAVE_VERSION && saved.map === map && saved.skill === 4 
 
 // play on: things move, monsters die, the clock runs
 for (let i = 0; i < 60; i++) await tic(1, 0.07, i % 5 === 0 ? 1 : 0);
-await db.exec("UPDATE things SET st = 'dead' WHERE kind = 'monster'");
+await db.exec("UPDATE things SET st = 'dead', state = NULL, state_tic = NULL WHERE kind = 'monster'");
 const changed = JSON.stringify(await captureGame(db)) !== before;
 
 // load: the map afresh, then the save written back
@@ -92,6 +93,13 @@ assert(fresh > maxId && ran === 35 && p.HEALTH > 0, `after loading, a new thing 
     const now = problem ? null : await captureGame(db);
     const added = [];
     const dropped = [];
+    // a save from before a type moved onto DOOM's frame tables: those things take a state
+    // (ADOPT_STATES), so their state, its end, their mode and their solidity may change
+    const tcols = old.tables.things.cols.map((c) => c.toLowerCase());
+    const adopted = new Set(old.tables.things.rows
+      .filter((r) => ON_STATES.has(r[tcols.indexOf('thing_type')]) && (tcols.indexOf('state') < 0 || r[tcols.indexOf('state')] === null))
+      .map((r) => JSON.stringify(r[0])));
+    const adoptable = new Set(['state', 'state_tic', 'st', 'solid']);
     if (now) {
       for (const [t, saved] of Object.entries(old.tables)) {
         const cur = now.tables[t];
@@ -103,6 +111,7 @@ assert(fresh > maxId && ran === 35 && p.HEALTH > 0, `after loading, a new thing 
           if (j < 0) { dropped.push(`${t}.${c}`); continue; }
           for (const row of saved.rows) {
             const back = byId.get(JSON.stringify(row[0]));
+            if (t === 'things' && adopted.has(JSON.stringify(row[0])) && adoptable.has(c.toLowerCase())) continue;
             if (!problem && (!back || JSON.stringify(back[j]) !== JSON.stringify(row[k]))) {
               problem = `${t} row ${row[0]} ${c}: ${JSON.stringify(row[k])} saved, ${JSON.stringify(back?.[j])} back`;
             }
@@ -114,7 +123,7 @@ assert(fresh > maxId && ran === 35 && p.HEALTH > 0, `after loading, a new thing 
       }
     }
     assert(!problem, `a save from ${label} loads${problem ? `: ${problem}` : `, every saved value back, and plays on`}`
-      + `${added.length ? `; ${added.length} newer columns take their defaults` : ''}${dropped.length ? `; dropped since: ${dropped.join(', ')}` : ''}`);
+      + `${adopted.size ? `; ${adopted.size} monsters join the frame tables` : ''}${added.length ? `; ${added.length} newer columns take their defaults` : ''}${dropped.length ? `; dropped since: ${dropped.join(', ')}` : ''}`);
   }
 }
 

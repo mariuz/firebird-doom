@@ -144,3 +144,9 @@ export const MOBJ_TYPE = {
 // …and where ours starts elsewhere than the type's spawnstate: A_BrainScream's
 // explosions are rockets set straight to S_BRAINEXPLODE1
 export const SPAWN_STATE = { 9013: 'S_BRAINEXPLODE1' };
+
+// The types whose behaviour runs on DOOM's frame tables (docs/ROADMAP.md: phase 2 moves
+// them family by family). The rest still run on MONSTERS_THINK's modes.
+export const ON_STATES = new Set([
+  3004, 9, 65,   // the zombieman, the shotgun guy, the chaingunner
+]);

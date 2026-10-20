@@ -33,8 +33,7 @@ for (let i = 0; i < 260; i++) {
 
 /** a fresh load, the seed, the calls; then everything that changes, as JSON */
 async function play(seed, calls) {
-  await loadMap(db, wad, res, map, { skill: 4 });
-  await db.exec(`UPDATE game SET rng = ${seed} WHERE id = 1`);
+  await loadMap(db, wad, res, map, { skill: 4, seed });   // (the seed before the map: INIT_MAP draws on it)
   await db.exec('UPDATE player SET health = 100000 WHERE id = 1');   // (a long demo shouldn't end in death)
   for (const c of calls) await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', c);
   const snap = await captureGame(db);
@@ -109,8 +108,7 @@ assert(first.A === again.A && first.B === again.B, `every load numbers the thing
   }
   const level2 = inputs.slice(0, 120);
   async function session(seed) {
-    await loadMap(db, wad, res, name, { skill: 4 });
-    await db.exec(`UPDATE game SET rng = ${seed} WHERE id = 1`);
+    await loadMap(db, wad, res, name, { skill: 4, seed });
     await db.exec('UPDATE player SET health = 100000 WHERE id = 1');
     await atExit();
     let exitKind = 0;
@@ -126,8 +124,10 @@ assert(first.A === again.A && first.B === again.B, `every load numbers the thing
   }
   const one = await session(4242);
   const two = await session(4242);
-  assert(one.exitKind === 1 && one.carried === one.rng && one.snap === two.snap,
-    `${name} → ${next}: the exit switch ends the level; the next one starts with the random state carried (${one.carried}) and plays out the same twice`);
+  // (the next map's load draws on the state carried, as P_SpawnMapThing does: its monsters'
+  // first tics; so it differs from the one at the exit unless nothing on the map draws)
+  assert(one.exitKind === 1 && one.rng === two.rng && one.carried === two.carried && one.snap === two.snap,
+    `${name} → ${next}: the exit switch ends the level; the next one starts from the random state carried (${one.rng}, ${one.carried} once the map's things are placed) and plays out the same twice`);
 
   // the recording's own bookkeeping: the screens' frames and level starts between the calls
   const r = new DemoRecorder({ wad: 'x.wad|36', map: name, skill: 4, seed: 4242 });

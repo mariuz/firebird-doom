@@ -271,7 +271,7 @@ try {
       const dy = b.Y - a.Y;
       return { fwd: dx * Math.cos(a.ANGLE) + dy * Math.sin(a.ANGLE), right: dx * Math.sin(a.ANGLE) - dy * Math.cos(a.ANGLE) };
     };
-    await doom(() => window.doom.sql("UPDATE things SET hp = 0, st = 'dead', solid = 0 WHERE kind = 'monster'"));
+    await doom(() => window.doom.sql("UPDATE things SET hp = 0, st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE kind = 'monster'"));
     await still();
     const a0 = await facing();
     await doom(() => window.doom.mouse.button(2, true));
@@ -556,7 +556,7 @@ try {
     await p3.waitForFunction(() => window.doom.screen === 'level' && window.doom.settled && !window.doom.menu.active, null, { timeout: 120000, polling: 100 });
     const at = () => p3.evaluate(() => window.doom.sql("SELECT x, y, angle FROM things WHERE kind = 'player'").then((r) => r[0]));
     const still = () => p3.evaluate(() => window.doom.sql("UPDATE things SET momx = 0, momy = 0 WHERE kind = 'player'"));
-    await p3.evaluate(() => window.doom.sql("UPDATE things SET hp = 0, st = 'dead', solid = 0 WHERE kind = 'monster'"));
+    await p3.evaluate(() => window.doom.sql("UPDATE things SET hp = 0, st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE kind = 'monster'"));
     const along = (a, b) => ({ fwd: (b.X - a.X) * Math.cos(a.ANGLE) + (b.Y - a.Y) * Math.sin(a.ANGLE), right: (b.X - a.X) * Math.sin(a.ANGLE) - (b.Y - a.Y) * Math.cos(a.ANGLE) });
     // (held for a number of the game's tics, not milliseconds: a slow runner's frames are long)
     const tic3 = () => p3.evaluate(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));

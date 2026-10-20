@@ -29,7 +29,10 @@ const spawn = async (type, x, y, z = null, ang = 0) =>
 const inside = (sec) => one(`SELECT FIRST 1 AVG(sg.x1) x, AVG(sg.y1) y FROM ssectors ss
                                JOIN segs sg ON sg.id BETWEEN ss.first_seg AND ss.first_seg + ss.seg_count - 1
                               WHERE ss.sector_id = ${sec} GROUP BY ss.id ORDER BY COUNT(*) DESC`);
-const quiet = () => db.exec(`UPDATE things SET st = 'dead', solid = 0 WHERE kind = 'monster'`);
+/** P_SetMobjState: a thing on DOOM's frame tables into the state named, now (its action runs) */
+const setState = (id, name) => db.query(`EXECUTE BLOCK AS DECLARE a SMALLINT; BEGIN
+  EXECUTE PROCEDURE set_state(${id}, (SELECT s.id FROM states s WHERE s.name = '${name}'), (SELECT g.tic FROM game g WHERE g.id = 1)) RETURNING_VALUES a; END`);
+const quiet = () => db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE kind = 'monster'`);
 
 // ── crushers ───────────────────────────────────────────────────────────
 const crushMap = maps.find((m) => wad.map(m).linedefs.some((l) => [6, 25, 73, 77].includes(l.special) && l.tag > 0));
@@ -43,7 +46,7 @@ if (crushMap) {
   const imp = await spawn(3001, at.X, at.Y);
   await db.exec(`UPDATE things SET st = 'idle', flags = 8, hp = 10000 WHERE id = ${imp}`);  // deaf, tough, stays put
   const corpse = await spawn(3004, at.X + 4, at.Y + 4);
-  await db.exec(`UPDATE things SET st = 'dead', solid = 0, frame = 'L' WHERE id = ${corpse}`);
+  await db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0, frame = 'L' WHERE id = ${corpse}`);
   await db.exec(`EXECUTE PROCEDURE activate_line(${line.ID}, 'walk')`);
   const spd = [6, 77].includes(line.SPECIAL) ? 2 : 1;
   let low = sec.CEIL_H;
@@ -239,7 +242,7 @@ if (sky) {
   // and not one in a sector the sound never reached
   await resetNoise();
   await db.exec('UPDATE player SET health = 100000');
-  await db.exec(`UPDATE things SET st = 'dead', solid = 0 WHERE kind = 'monster'`);
+  await db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE kind = 'monster'`);
   await db.exec(`EXECUTE PROCEDURE noise_alert(${pl.SEC}, 1000)`);
   const heardSet = new Set((await db.query('SELECT id FROM sectors WHERE sound_heard = 1')).rows.map((r) => r.ID));
   await resetNoise();
@@ -393,8 +396,7 @@ if (sky) {
     const blocker = await placeMon(3001, 140);
     let hit = false;
     for (let i = 0; i < 10 && !hit; i++) {
-      await db.exec(`UPDATE things SET st = 'attack', st_len = 16, st_tics = 8 WHERE id = ${zombie}`);
-      await tic(2);
+      await setState(zombie, 'S_POSS_ATK2');   // (A_PosAttack: it turns to the player and fires)
       hit = (await one(`SELECT hp FROM things WHERE id = ${blocker}`)).HP < 1000;
     }
     const b = await one(`SELECT hp, target_id FROM things WHERE id = ${blocker}`);
@@ -605,14 +607,15 @@ if (sky) {
     const pow = (await one(`SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSGETPOW'`)).N;
     assert(got.INVIS_TICS > 2090 && got.INVIS_TICS <= 2100 && sphereLeft.N === 0 && pow > 0,
       `picking up the partial invisibility sphere: ${got.INVIS_TICS} tics of it (DSGETPOW)`);
-    // a zombieman 280 units off, 80 volleys seen and 80 unseen
-    const shooter = await placeMon(3004, 280, `, angle = ${dir + Math.PI}`);
+    // a zombieman 128 units off, 120 shots seen and 120 unseen. A_PosAttack spreads a bullet
+    // up to ±22.5° (about half land at this range); at a shadow A_FaceTarget also turns it up
+    // to ±45° astray (about a quarter land)
+    const shooter = await placeMon(3004, 128, `, angle = ${dir + Math.PI}`);
     const volleys = async () => {
       let hits = 0;
-      for (let i = 0; i < 80; i++) {
+      for (let i = 0; i < 120; i++) {
         await db.exec('UPDATE player SET health = 1000, armor = 0');
-        await db.exec(`UPDATE things SET st = 'attack', st_len = 16, st_tics = 8, hp = 1000 WHERE id = ${shooter}`);
-        await tic();
+        await setState(shooter, 'S_POSS_ATK2');
         if ((await one('SELECT health FROM player')).HEALTH < 1000) hits++;
       }
       return hits;
@@ -621,8 +624,8 @@ if (sky) {
     const seenHits = await volleys();
     await db.exec('UPDATE player SET invis_tics = 2000');
     const unseenHits = await volleys();
-    assert(seenHits >= 30 && unseenHits < seenHits / 2,
-      `a zombieman hits you ${seenHits}/80 times, partially invisible only ${unseenHits}/80`);
+    assert(seenHits >= 48 && unseenHits < 48,
+      `a zombieman hits you ${seenHits}/120 times, partially invisible only ${unseenHits}/120`);
     await db.exec('UPDATE player SET invis_tics = 3');
     const worn = (await tic(5)).rows[0];
     assert(worn.INVIS_TICS === 0, `it wears off (${worn.INVIS_TICS} tics left)`);
@@ -813,7 +816,7 @@ if (sky) {
   await db.exec('DELETE FROM sound_events');
   const corpse = await spawn(3001, p.X + 64, p.Y);
   const soul = await spawn(3006, p.X - 64, p.Y);
-  await db.exec(`UPDATE things SET st = 'dead', hp = 0, solid = 0, frame = 'M', dead_tic = 0,
+  await db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, hp = 0, solid = 0, frame = 'M', dead_tic = 0,
                  spawn_x = x, spawn_y = y, spawn_angle = 1.5, x = x + 8 WHERE id IN (${corpse}, ${soul})`);
   let tries = 0;
   while ((await one(`SELECT st FROM things WHERE id = ${corpse}`)).ST === 'dead' && tries++ < 3000) {
@@ -829,7 +832,7 @@ if (sky) {
   await db.exec(`DELETE FROM things WHERE id IN (${corpse}, ${soul}) OR thing_type = 9016`);
   // a corpse younger than 12 seconds stays put
   const young = await spawn(3001, p.X + 64, p.Y);
-  await db.exec(`UPDATE things SET st = 'dead', hp = 0, solid = 0, dead_tic = 99900, spawn_x = x, spawn_y = y WHERE id = ${young}`);
+  await db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, hp = 0, solid = 0, dead_tic = 99900, spawn_x = x, spawn_y = y WHERE id = ${young}`);
   for (let i = 0; i < 300; i++) await db.exec('EXECUTE PROCEDURE nightmare_respawn(100000)');
   assert((await one(`SELECT st FROM things WHERE id = ${young}`)).ST === 'dead', 'a corpse dead less than 12 seconds stays down');
   await db.exec(`DELETE FROM things WHERE id = ${young}`);

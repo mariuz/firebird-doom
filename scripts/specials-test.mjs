@@ -146,7 +146,7 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
   for (const name of maps.slice(0, 12)) {
     await loadMap(db, wad, res, name);
     await godMode();
-    await db.exec(`UPDATE things SET hp = 1000000, st = 'dead' WHERE kind = 'monster'`); // keep the room quiet
+    await db.exec(`UPDATE things SET hp = 1000000, st = 'dead', state = NULL, state_tic = NULL WHERE kind = 'monster'`); // keep the room quiet
     p = await one(`SELECT t.x, t.y, t.z FROM things t WHERE t.kind = 'player'`);
     if ((s2 = await openSpot(400))) { console.log(`(volley and tracer tests on ${name})`); break; }
   }
@@ -266,7 +266,7 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
     await db.exec(`DELETE FROM things WHERE thing_type IN (64, 9015)`);
     const c = await db.query(`EXECUTE BLOCK RETURNS (corpse INTEGER, vile INTEGER) AS BEGIN
         EXECUTE PROCEDURE spawn_thing(3001, ${s2.x}, ${s2.y}, ${s2.z}, 0) RETURNING_VALUES corpse;
-        UPDATE things SET st = 'dead', hp = 0, solid = 0, frame = 'M' WHERE id = :corpse;
+        UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, hp = 0, solid = 0, frame = 'M' WHERE id = :corpse;
         EXECUTE PROCEDURE spawn_thing(64, ${s2.x - Math.cos(dir) * 50}, ${s2.y - Math.sin(dir) * 50}, ${s2.z}, ${dir}) RETURNING_VALUES vile;
         UPDATE things SET st = 'chase', st_tics = 1, reaction = 5 WHERE id = :vile;
         SUSPEND;

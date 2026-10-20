@@ -34,7 +34,8 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   for its own), and monster timing would be vanilla's. The biggest gap to vanilla left, and a
   big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
   phases*). Phases 0 and 1 are done (the table, GPL-2 in a file of its own; the machine in SQL);
-  phase 2, the monsters family by family, is next.
+  phase 2, the monsters family by family, is under way: the zombieman, shotgun guy and
+  chaingunner are on the table, the imp's family is next.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -169,7 +170,18 @@ NULL state keeps today's rules, so nothing moves yet. `FRAME_SPRITES` draws a st
 state. Test: a thing set to a state walks the table's chain with the table's timings, tic by
 tic, and a frame-bench run shows what it costs.
 
-**Phase 2: the monsters, family by family.** Zombieman, sergeant and chaingunner first
+**Phase 2: the monsters, family by family.** *Under way.* The first family is done: the zombieman,
+the shotgun guy and the chaingunner (`thinginfo.js`'s `ON_STATES`; `thing_types.on_states`) spawn
+into their spawn state, partway in, with mobjinfo's reaction time, and run on A_Look, A_Chase,
+A_FaceTarget, A_PosAttack, A_SPosAttack, A_CPosAttack, A_CPosRefire, A_Pain, A_Scream (the random
+cries), A_XScream and A_Fall, each a procedure of its own; `DAMAGE_THING` sends them into their
+pain, death and xdeath states (MF_JUSTHIT, the `&3` tic cut), and the arch-vile raises them through
+their raise state. Each state carries a `mode` the loader works out from mobjinfo's chains (idle,
+chase, attack, pain, dying, dead, raise), copied into `things.st`, so the code that asks "can it be
+shot, is it a corpse" works for both kinds. `STATES_THINK` lets a stated walker tossed into the
+air fall (P_ZMovement). `ADOPT_STATES` moves an old save's zombies onto the table. Next: the imp,
+then the demons, the lost soul, the cacodemon, the barons, the bosses and DOOM II's. The plan as
+it was: zombieman, sergeant and chaingunner first
 (A_Look, A_Chase, A_FaceTarget, A_PosAttack, A_SPosAttack, A_CPosAttack, A_CPosRefire, A_Pain,
 A_Scream, A_XScream, A_Fall), then the imp, the demons, the lost soul, the cacodemon, the barons,
 the bosses, and DOOM II's. Each action's body is the code already in `MONSTERS_THINK`

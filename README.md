@@ -1194,9 +1194,19 @@ That's changing, in phases ([docs/ROADMAP.md](docs/ROADMAP.md)). DOOM's state ta
 (`src/states.js`, see Licence), and so is the machine that runs it: `SET_STATE` is `P_SetMobjState`
 (a state's tics start, its action is called, a 0-tic state goes straight on, `S_NULL` removes the thing)
 and `STATES_THINK` moves on, each tic, only the things whose state ends then (an index on the tic it
-ends; about 5 µs a tic when none does). Nothing in a game is on it yet: the monsters move onto it family
-by family next, starting with the zombiemen. `npm run test:states` takes one through its attack at
-info.c's 10 + 8 + 8 tics, and through its death.
+ends; about 5 µs a tic when none does). The monsters move onto it family by family, and the first
+family is there: the zombieman, the shotgun guy and the chaingunner live entirely on DOOM's states.
+They start partway into their spawn state (`P_SpawnMapThing`'s `1 + P_Random() % tics`) and look
+(`A_Look`: the gunfire heard in their sector, or the player seen in the 180° ahead), chase
+(`A_Chase`: the 45° turns, `P_Move` and `P_NewChaseDir`, `P_CheckMissileRange` with its
+reaction time, `MF_JUSTHIT` and `MF_JUSTATTACKED`), take aim and fire (`A_FaceTarget`,
+`A_PosAttack`'s one bullet, `A_SPosAttack`'s three pellets, the chaingunner's `A_CPosRefire`
+bursts), and feel pain, die and get gibbed (`P_DamageMobj`, `P_KillMobj`: the pain chance, the
+death or xdeath state 0–3 tics short, the dropped weapon) at info.c's timings, with DOOM's three
+sight and death cries picked at random. Every action is a PSQL procedure under its own name
+(`A_LOOK`, `A_CHASE`, `A_BULLETS`, …). An old save's zombies join the table where they were.
+The other monsters still run on the old rules until their families move. `npm run test:states`
+wakes, hurts, kills and gibs them and times each step.
 Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods
 out from your sector through every open two-sided line. A closed door stops it, and a line flagged
 *sound block* lets it through once but never twice. Every sector it reaches remembers. Idle

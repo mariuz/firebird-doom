@@ -72,7 +72,7 @@ await db.exec(`UPDATE player SET has_launcher = 1, has_plasma = 1, has_bfg = 1, 
 {
   // (nobody to bother us while we count)
   const awake = (await db.query("SELECT id FROM things WHERE kind = 'monster' AND st <> 'dead'")).rows.map((r) => r.ID);
-  if (awake.length) await db.exec(`UPDATE things SET st = 'dead', solid = 0 WHERE id IN (${awake.join()})`);
+  if (awake.length) await db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE id IN (${awake.join()})`);
   // a level starts with the weapon coming up: RAISESPEED 6 a tic from 90 below
   let up = 0;
   const start = (await psprite()).WEAPON_Y;
@@ -175,7 +175,7 @@ assert(spray > 0, 'BFG ball exploded');
     return h0 - (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0].HP;
   };
   // (everyone but the punching bag lies down: a woken monster mustn't hurt us between action and check)
-  await db.exec(`UPDATE things SET st = 'dead', solid = 0 WHERE kind = 'monster' AND id <> ${target}`);
+  await db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE kind = 'monster' AND id <> ${target}`);
   await db.exec(`UPDATE things SET hp = 5000 WHERE id = ${target}`);
   const bare = await punches(4);
   await db.exec('UPDATE player SET health = 40, has_shotgun = 1, weapon = 3');
@@ -199,7 +199,7 @@ assert(spray > 0, 'BFG ball exploded');
 {
   // (nobody nibbling at the health checks; they get up again afterwards)
   const sleepers = (await db.query("SELECT id FROM things WHERE kind = 'monster' AND st <> 'dead'")).rows.map((r) => r.ID);
-  if (sleepers.length) await db.exec(`UPDATE things SET st = 'dead', solid = 0 WHERE id IN (${sleepers.join()})`);
+  if (sleepers.length) await db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE id IN (${sleepers.join()})`);
   const disarm = () => db.exec(`UPDATE player SET has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0,
                  has_bfg = 0, has_chainsaw = 0, has_ssg = 0, bullets = 1, shells = 0, rockets = 0, cells = 0, armor = 0, keycards = 0`);
   await disarm();

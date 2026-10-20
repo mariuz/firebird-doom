@@ -155,7 +155,8 @@ CREATE TABLE thing_types (
   missile_state INTEGER DEFAULT 0 NOT NULL,
   death_state   INTEGER DEFAULT 0 NOT NULL,
   xdeath_state  INTEGER DEFAULT 0 NOT NULL,
-  raise_state   INTEGER DEFAULT 0 NOT NULL
+  raise_state   INTEGER DEFAULT 0 NOT NULL,
+  on_states     SMALLINT DEFAULT 0 NOT NULL  -- 1: its behaviour runs on the frame tables (thinginfo.js's ON_STATES)
 );
 
 -- DOOM's state table, info.c's states[] (src/states.js, GPL-2): a frame of a
@@ -172,7 +173,11 @@ CREATE TABLE states (
   action     VARCHAR(24),                   -- A_Look …, NULL: none
   next_state INTEGER NOT NULL,
   misc1      INTEGER DEFAULT 0 NOT NULL,
-  misc2      INTEGER DEFAULT 0 NOT NULL
+  misc2      INTEGER DEFAULT 0 NOT NULL,
+  -- the old rules' word for where in its life a thing in this state is (idle, chase, attack,
+  -- pain, dying, dead, raise), kept in THINGS.ST so the code that asks it (what can be
+  -- shot, what's a corpse) works for both; worked out by the loader from mobjinfo's states
+  mode       VARCHAR(8)
 );
 
 -- ── the map ─────────────────────────────────────────────────────────────
@@ -342,7 +347,8 @@ CREATE TABLE things (
   -- run it) and the tic that state ends (NULL: never, a -1 tics state). SET_STATE and
   -- STATES_THINK move it on; MONSTERS_THINK leaves a stated thing alone.
   state       INTEGER,
-  state_tic   INTEGER
+  state_tic   INTEGER,
+  just_hit    SMALLINT DEFAULT 0 NOT NULL         -- MF_JUSTHIT: hurt into its pain state, it fights back next (P_CheckMissileRange)
 );
 CREATE INDEX things_kind ON things (kind);
 CREATE INDEX things_sector ON things (sector_id);

@@ -47,6 +47,13 @@ BEGIN
   RETURN (s / 65536) / 32768e0;
 END^
 
+-- P_Random() as DOOM uses it: 0…255 (for its % and & arithmetic)
+CREATE OR ALTER FUNCTION p_rand256 RETURNS INTEGER
+AS
+BEGIN
+  RETURN CAST(FLOOR(p_random() * 256) AS INTEGER);
+END^
+
 CREATE OR ALTER FUNCTION neighbor_h (sec INTEGER, what VARCHAR(12))
 RETURNS DOUBLE PRECISION
 AS
@@ -311,6 +318,15 @@ BEGIN
 END^
 
 -- ── spawning and damage ───────────────────────────────────────────────────
+-- (SET_STATE, P_SetMobjState, declared here for DAMAGE_THING and the others that call
+-- it; its body comes with the frame tables' machine, before WORLD_TIC)
+CREATE OR ALTER PROCEDURE set_state (tid INTEGER, st INTEGER, tic INTEGER)
+RETURNS (alive SMALLINT)
+AS
+BEGIN
+  alive = 1;
+END^
+
 CREATE OR ALTER PROCEDURE spawn_thing (
   ttype INTEGER, px DOUBLE PRECISION, py DOUBLE PRECISION, pz DOUBLE PRECISION, ang DOUBLE PRECISION)
 RETURNS (new_id INTEGER)
@@ -320,14 +336,20 @@ BEGIN
   new_id = NEXT VALUE FOR thing_seq;
   sec = sector_at(px, py);
   INSERT INTO things (id, thing_type, kind, x, y, z, angle, hp, radius, height, solid, sector_id,
-                      st, st_tics, st_len, frame)
+                      st, st_tics, st_len, frame, state, state_tic, reaction)
   SELECT :new_id, tt.thing_type, tt.kind, :px, :py,
          COALESCE(:pz, (SELECT floor_h FROM sectors WHERE id = :sec)), :ang,
          tt.hp, tt.radius, tt.height, tt.solid, :sec,
          CASE tt.kind WHEN 'fx' THEN 'fx' WHEN 'missile' THEN 'fly' ELSE 'idle' END,
          IIF(tt.kind = 'fx', CHAR_LENGTH(tt.walk_fr) * 4, 0),
          IIF(tt.kind = 'fx', CHAR_LENGTH(tt.walk_fr) * 4, 0),
-         IIF(tt.kind IN ('fx', 'missile', 'monster'), SUBSTRING(tt.walk_fr FROM 1 FOR 1), NULL)
+         IIF(tt.kind IN ('fx', 'missile', 'monster'), SUBSTRING(tt.walk_fr FROM 1 FOR 1), NULL),
+         -- on the frame tables: its spawn state, as P_SpawnMobj sets it (no action), and
+         -- its reaction time (mobjinfo's 8; none on Nightmare)
+         IIF(tt.on_states = 1, tt.spawn_state, NULL),
+         IIF(tt.on_states = 1, (SELECT IIF(s.tics < 0, NULL, g.tic + s.tics) FROM states s CROSS JOIN game g
+                                 WHERE s.id = tt.spawn_state AND g.id = 1), NULL),
+         IIF(tt.on_states = 1, (SELECT IIF(g.skill = 5, 0, 8) FROM game g WHERE g.id = 1), 0)
     FROM thing_types tt WHERE tt.thing_type = :ttype;
 END^
 
@@ -410,15 +432,81 @@ DECLARE vatk VARCHAR(10);
 DECLARE thr INTEGER;
 DECLARE count_kill SMALLINT;
 DECLARE ttype INTEGER;
+DECLARE on_states SMALLINT;
+DECLARE spawn_hp INTEGER;
+DECLARE state INTEGER;
+DECLARE spawn_state INTEGER;
+DECLARE see_state INTEGER;
+DECLARE pain_state INTEGER;
+DECLARE death_state INTEGER;
+DECLARE xdeath_state INTEGER;
+DECLARE tic INTEGER;
+DECLARE alive SMALLINT;
+DECLARE spid SMALLINT;
 BEGIN
   SELECT t.kind, t.hp, t.st, tt.pain_chance, tt.pain_fr, tt.death_fr, tt.death_sprite, tt.drop_type, t.x, t.y,
-         tt.pain_snd, tt.death_snd, tt.count_kill, t.thing_type
+         tt.pain_snd, tt.death_snd, tt.count_kill, t.thing_type,
+         tt.on_states, tt.hp, t.state, tt.spawn_state, tt.see_state, tt.pain_state, tt.death_state, tt.xdeath_state
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
    WHERE t.id = :tid
-    INTO k, hp, st, pain_chance, pain_fr, death_fr, death_sprite, drop_type, tx, ty, pain_snd, death_snd, count_kill, ttype;
+    INTO k, hp, st, pain_chance, pain_fr, death_fr, death_sprite, drop_type, tx, ty, pain_snd, death_snd, count_kill, ttype,
+         on_states, spawn_hp, state, spawn_state, see_state, pain_state, death_state, xdeath_state;
   IF (k IS NULL OR k NOT IN ('monster', 'barrel', 'keen', 'brain') OR st IN ('dying', 'dead')
       OR COALESCE(dmg, 0) <= 0) THEN EXIT;
   hp = hp - dmg;
+  -- ── on the frame tables (P_DamageMobj, P_KillMobj) ──
+  IF (on_states = 1 AND state IS NOT NULL) THEN
+  BEGIN
+    SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+    IF (hp <= 0) THEN
+    BEGIN
+      -- P_KillMobj: no longer shootable (its state's mode, 'dying', says so); solid until A_Fall
+      UPDATE things SET hp = :hp, momx = 0, momy = 0 WHERE id = :tid;
+      IF (count_kill = 1) THEN
+        UPDATE player p SET kills = kills + 1
+         WHERE p.id = COALESCE((SELECT pk.id FROM player pk WHERE pk.thing_id = :src),
+                               IIF((SELECT g.players FROM game g WHERE g.id = 1) = 1, 1, 0));
+      -- gibbed below minus its spawn health (if it has the frames), else its death; the
+      -- first frame 0–3 tics shorter (at least 1). The cry is A_Scream's, in those frames.
+      EXECUTE PROCEDURE set_state(tid, IIF(hp < -spawn_hp AND xdeath_state > 0, xdeath_state, death_state), tic)
+        RETURNING_VALUES alive;
+      UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3))
+       WHERE t.id = :tid AND t.state_tic IS NOT NULL;
+      IF (drop_type IS NOT NULL) THEN
+      BEGIN
+        EXECUTE PROCEDURE spawn_thing(drop_type, tx, ty, NULL, 0) RETURNING_VALUES dummy;
+        UPDATE things t SET flags = BIN_OR(t.flags, 65536) WHERE t.id = :dummy;
+      END
+      EXIT;
+    END
+    UPDATE things t SET hp = :hp WHERE t.id = :tid;
+    -- the pain chance: into its pain state, and it'll fight back (MF_JUSTHIT)
+    IF (pain_state > 0 AND p_rand256() < pain_chance) THEN
+    BEGIN
+      UPDATE things t SET just_hit = 1 WHERE t.id = :tid;
+      EXECUTE PROCEDURE set_state(tid, pain_state, tic) RETURNING_VALUES alive;
+    END
+    UPDATE things t SET reaction = 0 WHERE t.id = :tid;
+    -- whoever hurt it becomes its target (unless it's still bound to another, or the
+    -- source is an arch-vile), for BASETHRESHOLD; still in its spawn state, it wakes
+    IF (src IS NOT NULL AND src <> tid AND k = 'monster') THEN
+    BEGIN
+      SELECT s.kind, st2.atk_kind FROM things s JOIN thing_types st2 ON st2.thing_type = s.thing_type
+       WHERE s.id = :src INTO skind, satk;
+      SELECT t.threshold, tt3.atk_kind FROM things t JOIN thing_types tt3 ON tt3.thing_type = t.thing_type
+       WHERE t.id = :tid INTO thr, vatk;
+      IF ((thr = 0 OR vatk = 'vile') AND satk IS DISTINCT FROM 'vile' AND skind IN ('player', 'monster')) THEN
+      BEGIN
+        spid = NULL;
+        IF (skind = 'player') THEN SELECT p.id FROM player p WHERE p.thing_id = :src INTO spid;
+        UPDATE things t SET target_id = IIF(:skind = 'player', NULL, :src), tplayer = COALESCE(:spid, t.tplayer), threshold = 100
+         WHERE t.id = :tid;
+        IF ((SELECT t.state FROM things t WHERE t.id = :tid) = spawn_state AND see_state > 0) THEN
+          EXECUTE PROCEDURE set_state(tid, see_state, tic) RETURNING_VALUES alive;
+      END
+    END
+    EXIT;
+  END
   IF (hp <= 0) THEN
   BEGIN
     UPDATE things
@@ -1007,7 +1095,9 @@ BEGIN
   DO
   BEGIN
     IF (st = 'dead') THEN
-      UPDATE things SET sprite = 'POL5', frame = 'A', height = 0, solid = 0 WHERE id = :tid;   -- S_GIBS
+      UPDATE things t SET sprite = 'POL5', frame = 'A', height = 0, solid = 0, state_tic = NULL,   -- S_GIBS
+             state = IIF(t.state IS NULL, NULL, (SELECT s.id FROM states s WHERE s.name = 'S_GIBS'))
+       WHERE t.id = :tid;
     ELSE IF (st <> 'dying') THEN
     BEGIN
       crushed = 1;
@@ -2700,6 +2790,7 @@ DECLARE nplayers SMALLINT;
 DECLARE heard_pid SMALLINT;
 DECLARE alt SMALLINT;
 DECLARE hitp SMALLINT;
+DECLARE raised SMALLINT;
 BEGIN
   SELECT g.skill FROM game g WHERE g.id = 1 INTO skill;
   SELECT g.players FROM game g WHERE g.id = 1 INTO nplayers;
@@ -3325,6 +3416,13 @@ BEGIN
                  st_len = 5 * (SELECT CHAR_LENGTH(tt.death_fr) FROM thing_types tt WHERE tt.thing_type = t.thing_type),
                  st_tics = 5 * (SELECT CHAR_LENGTH(tt.death_fr) FROM thing_types tt WHERE tt.thing_type = t.thing_type)
            WHERE t.id = :corpse;
+          -- a corpse on the frame tables gets up through its raise state (A_VileChase)
+          IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :corpse AND t.state IS NOT NULL)) THEN
+          BEGIN
+            UPDATE things t SET target_id = NULL, just_hit = 0 WHERE t.id = :corpse;
+            EXECUTE PROCEDURE set_state(corpse, (SELECT tt.raise_state FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                                                  WHERE t.id = :corpse), tic) RETURNING_VALUES raised;
+          END
         END
         -- A_Chase with no live target: P_LookForPlayers finds nobody, back to its spawn state
         ELSE IF (pdead = 1) THEN
@@ -3522,7 +3620,13 @@ BEGIN
            hp = (SELECT tt.hp FROM thing_types tt WHERE tt.thing_type = t.thing_type),
            st = 'idle', st_tics = 0, st_len = 0, step = 0, solid = 1, sprite = NULL,
            frame = (SELECT SUBSTRING(tt.walk_fr FROM 1 FOR 1) FROM thing_types tt WHERE tt.thing_type = t.thing_type),
-           reaction = 18, target_id = NULL, threshold = 0, dead_tic = NULL
+           reaction = (SELECT IIF(tt.on_states = 1, 0, 18) FROM thing_types tt WHERE tt.thing_type = t.thing_type),
+           target_id = NULL, threshold = 0, dead_tic = NULL,
+           -- (on the frame tables: its spawn state, as a new P_SpawnMobj)
+           state = (SELECT IIF(tt.on_states = 1, tt.spawn_state, NULL) FROM thing_types tt WHERE tt.thing_type = t.thing_type),
+           state_tic = (SELECT IIF(tt.on_states = 1 AND s.tics >= 0, :tic + s.tics, NULL)
+                          FROM thing_types tt JOIN states s ON s.id = tt.spawn_state WHERE tt.thing_type = t.thing_type),
+           just_hit = 0
      WHERE t.id = :id;
   END
 END^
@@ -3710,6 +3814,393 @@ END^
 -- hands on to the next. Nothing is put on it yet; the phases after this move the
 -- monsters, then everything else, onto it.
 
+-- P_CheckSight for a monster on the tables: REJECT, then the line of sight from its eyes.
+CREATE OR ALTER FUNCTION mobj_sees (tid INTEGER, px DOUBLE PRECISION, py DOUBLE PRECISION, pz DOUBLE PRECISION, psec INTEGER)
+RETURNS SMALLINT
+AS
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE sec INTEGER;
+BEGIN
+  SELECT t.x, t.y, t.z, t.height, t.sector_id FROM things t WHERE t.id = :tid INTO x, y, z, hgt, sec;
+  IF (px IS NULL OR rejected(sec, psec) = 1) THEN RETURN 0;
+  RETURN check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41);
+END^
+
+-- actor->target, for a monster on the tables: the monster it's fighting (TARGET_ID)
+-- or else its player (TPLAYER). PX NULL: there is none; ALIVE 0: it's dead (no longer
+-- MF_SHOOTABLE). SHADOW: MF_SHADOW (a spectre, a partly invisible player).
+CREATE OR ALTER PROCEDURE chase_target (tid INTEGER)
+RETURNS (tgt INTEGER, tp SMALLINT, px DOUBLE PRECISION, py DOUBLE PRECISION, pz DOUBLE PRECISION,
+         psec INTEGER, prad DOUBLE PRECISION, alive SMALLINT, shadow SMALLINT)
+AS
+BEGIN
+  alive = 0;
+  shadow = 0;
+  SELECT t.target_id, t.tplayer FROM things t WHERE t.id = :tid INTO tgt, tp;
+  IF (tgt IS NOT NULL) THEN
+    SELECT o.x, o.y, o.z, o.sector_id, o.radius, IIF(o.st IN ('dying', 'dead'), 0, 1), COALESCE(ot.shadow, 0)
+      FROM things o JOIN thing_types ot ON ot.thing_type = o.thing_type
+     WHERE o.id = :tgt
+      INTO px, py, pz, psec, prad, alive, shadow;
+  ELSE
+    SELECT t.x, t.y, t.z, t.sector_id, t.radius, IIF(p.dead = 0, 1, 0), IIF(p.invis_tics > 0, 1, 0)
+      FROM player p JOIN things t ON t.id = p.thing_id
+     WHERE p.id = :tp
+      INTO px, py, pz, psec, prad, alive, shadow;
+END^
+
+-- A_FaceTarget: turn to the target (no longer in ambush); at a shadow, up to 45° astray
+CREATE OR ALTER PROCEDURE a_face_target (tid INTEGER)
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE ang DOUBLE PRECISION;
+BEGIN
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL) THEN EXIT;
+  SELECT ATAN2(:py - t.y, :px - t.x) FROM things t WHERE t.id = :tid INTO ang;
+  IF (shadow = 1) THEN ang = ang + (p_rand256() - p_rand256()) * PI() / 1024;
+  UPDATE things t SET angle = :ang, flags = BIN_AND(t.flags, BIN_NOT(8)) WHERE t.id = :tid;
+END^
+
+-- A_PosAttack, A_SPosAttack, A_CPosAttack: face the target, aim (P_AimLineAttack from
+-- the middle of the body plus 8), and fire N bullets down MISSILERANGE (2048), each
+-- spread up to 22.5°/8 and doing (P_Random()%5 + 1) × 3
+CREATE OR ALTER PROCEDURE a_bullets (tid INTEGER, n INTEGER, snd VARCHAR(8))
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE sz DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+DECLARE a DOUBLE PRECISION;
+DECLARE slope DOUBLE PRECISION;
+DECLARE dmg INTEGER;
+DECLARE i INTEGER = 0;
+DECLARE hit SMALLINT;
+BEGIN
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL) THEN EXIT;
+  EXECUTE PROCEDURE a_face_target(tid);
+  SELECT t.x, t.y, t.z + t.height / 2 + 8, t.angle FROM things t WHERE t.id = :tid INTO x, y, sz, ang;
+  EXECUTE PROCEDURE aim_slope(x, y, sz, ang, 2048, tid) RETURNING_VALUES slope;
+  EXECUTE PROCEDURE play_sound(snd, tid, x, y);
+  WHILE (i < n) DO
+  BEGIN
+    a = ang + (p_rand256() - p_rand256()) * PI() / 2048;
+    dmg = (MOD(p_rand256(), 5) + 1) * 3;
+    EXECUTE PROCEDURE hitscan(x, y, sz, a, 2048, dmg, tid, COALESCE(slope, 0)) RETURNING_VALUES hit;
+    i = i + 1;
+  END
+END^
+
+-- A_CPosRefire: keep firing, unless (40 times in 256 it doesn't ask) the target is
+-- dead or out of sight: then back to the chase
+CREATE OR ALTER PROCEDURE a_cpos_refire (tid INTEGER, tic INTEGER)
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE alive SMALLINT;
+BEGIN
+  EXECUTE PROCEDURE a_face_target(tid);
+  IF (p_rand256() < 40) THEN EXIT;
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL OR palive = 0 OR mobj_sees(tid, px, py, pz, psec) = 0) THEN
+    EXECUTE PROCEDURE set_state(tid, (SELECT tt.see_state FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                                       WHERE t.id = :tid), tic)
+      RETURNING_VALUES alive;
+END^
+
+-- A monster's sight and death cries: DOOM picks one of the zombies' three (or the
+-- imps' two) at random
+CREATE OR ALTER FUNCTION cry_variant (snd VARCHAR(8))
+RETURNS VARCHAR(8)
+AS
+BEGIN
+  IF (snd IN ('DSPOSIT1', 'DSPOSIT2', 'DSPOSIT3')) THEN RETURN 'DSPOSIT' || (1 + MOD(p_rand256(), 3));
+  IF (snd IN ('DSBGSIT1', 'DSBGSIT2')) THEN RETURN 'DSBGSIT' || (1 + MOD(p_rand256(), 2));
+  IF (snd IN ('DSPODTH1', 'DSPODTH2', 'DSPODTH3')) THEN RETURN 'DSPODTH' || (1 + MOD(p_rand256(), 3));
+  IF (snd IN ('DSBGDTH1', 'DSBGDTH2')) THEN RETURN 'DSBGDTH' || (1 + MOD(p_rand256(), 2));
+  RETURN snd;
+END^
+
+-- A_Look: the sector's soundtarget (the player whose gunfire reached it) wakes it – an
+-- ambusher only once it can see them – or it sees a player for itself
+-- (P_LookForPlayers, the 180° ahead); then the see sound and the see state
+CREATE OR ALTER PROCEDURE a_look (tid INTEGER, tic INTEGER)
+AS
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+DECLARE sec INTEGER;
+DECLARE flags INTEGER;
+DECLARE tp SMALLINT;
+DECLARE see_state INTEGER;
+DECLARE see_snd VARCHAR(8);
+DECLARE ttype INTEGER;
+DECLARE heard SMALLINT;
+DECLARE found SMALLINT = 0;
+DECLARE qx DOUBLE PRECISION;
+DECLARE qy DOUBLE PRECISION;
+DECLARE qz DOUBLE PRECISION;
+DECLARE qsec INTEGER;
+DECLARE alive SMALLINT;
+BEGIN
+  SELECT t.x, t.y, t.z, t.height, t.angle, t.sector_id, t.flags, t.tplayer, tt.see_state, tt.see_snd, t.thing_type
+    FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
+    INTO x, y, z, hgt, ang, sec, flags, tp, see_state, see_snd, ttype;
+  UPDATE things t SET threshold = 0 WHERE t.id = :tid;
+  heard = COALESCE((SELECT se.sound_heard FROM sectors se WHERE se.id = :sec), 0);
+  qx = NULL;
+  IF (heard > 0) THEN
+    SELECT t.x, t.y, t.z, t.sector_id FROM player p JOIN things t ON t.id = p.thing_id
+     WHERE p.id = :heard AND p.dead = 0 INTO qx, qy, qz, qsec;
+  IF (qx IS NOT NULL) THEN
+  BEGIN
+    UPDATE things t SET target_id = NULL, tplayer = :heard WHERE t.id = :tid;
+    tp = heard;
+    IF (BIN_AND(flags, 8) = 0) THEN found = heard;
+    ELSE IF (mobj_sees(tid, qx, qy, qz, qsec) = 1) THEN found = heard;
+  END
+  IF (found = 0) THEN
+    EXECUTE PROCEDURE look_for_player(x, y, z, hgt, ang, sec, tp, 0) RETURNING_VALUES found;
+  IF (found = 0) THEN EXIT;
+  UPDATE things t SET target_id = NULL, tplayer = :found WHERE t.id = :tid;
+  IF (see_snd IS NOT NULL) THEN
+  BEGIN
+    see_snd = cry_variant(see_snd);
+    -- the Spider Mastermind and the Cyberdemon are heard at full volume
+    IF (ttype IN (7, 16)) THEN EXECUTE PROCEDURE play_sound(see_snd, 0, NULL, NULL);
+    ELSE EXECUTE PROCEDURE play_sound(see_snd, tid, x, y);
+  END
+  EXECUTE PROCEDURE set_state(tid, see_state, tic) RETURNING_VALUES alive;
+END^
+
+-- A_Chase: a step of the hunt. The reaction time and the threshold count down; it
+-- turns 45° towards its heading; with no live target it looks all around, or goes
+-- back to its spawn state; after a missile attack it only picks a heading; in range,
+-- its melee or (P_CheckMissileRange) missile state; else a step along its heading
+-- (P_Move) while MOVECOUNT lasts, or a new one (P_NewChaseDir); and now and then its
+-- active sound.
+CREATE OR ALTER PROCEDURE a_chase (tid INTEGER, tic INTEGER)
+AS
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+DECLARE sec INTEGER;
+DECLARE reaction INTEGER;
+DECLARE threshold INTEGER;
+DECLARE movedir SMALLINT;
+DECLARE movecount INTEGER;
+DECLARE just_attacked SMALLINT;
+DECLARE just_hit SMALLINT;
+DECLARE momz DOUBLE PRECISION;
+DECLARE spd DOUBLE PRECISION;
+DECLARE fl SMALLINT;
+DECLARE melee_state INTEGER;
+DECLARE missile_state INTEGER;
+DECLARE spawn_state INTEGER;
+DECLARE atk_snd VARCHAR(8);
+DECLARE active_snd VARCHAR(8);
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE skill SMALLINT;
+DECLARE fast SMALLINT;
+DECLARE nplayers SMALLINT;
+DECLARE a45 DOUBLE PRECISION;
+DECLARE delta DOUBLE PRECISION;
+DECLARE found SMALLINT;
+DECLARE nst INTEGER;
+DECLARE snd VARCHAR(8);
+DECLARE dist DOUBLE PRECISION;
+DECLARE adx DOUBLE PRECISION;
+DECLARE ady DOUBLE PRECISION;
+DECLARE fire SMALLINT;
+DECLARE walk SMALLINT = 0;
+DECLARE moved SMALLINT;
+DECLARE bump SMALLINT;
+DECLARE tele SMALLINT;
+DECLARE nx DOUBLE PRECISION;
+DECLARE ny DOUBLE PRECISION;
+DECLARE nz DOUBLE PRECISION;
+DECLARE msec INTEGER;
+DECLARE alive SMALLINT;
+BEGIN
+  SELECT t.x, t.y, t.z, t.height, t.radius, t.angle, t.sector_id, t.reaction, t.threshold, t.movedir, t.movecount,
+         t.just_attacked, t.just_hit, t.momz, tt.speed, tt.floats, tt.melee_state, tt.missile_state, tt.spawn_state,
+         tt.atk_snd, tt.active_snd
+    FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
+    INTO x, y, z, hgt, rad, ang, sec, reaction, threshold, movedir, movecount,
+         just_attacked, just_hit, momz, spd, fl, melee_state, missile_state, spawn_state, atk_snd, active_snd;
+  SELECT g.skill, IIF(g.skill = 5 OR g.fast = 1, 1, 0), g.players FROM game g WHERE g.id = 1 INTO skill, fast, nplayers;
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (reaction > 0) THEN reaction = reaction - 1;
+  -- (the threshold lapses at once when its target is dead)
+  IF (threshold > 0) THEN threshold = IIF(px IS NULL OR palive = 0, 0, threshold - 1);
+  -- turn towards the heading, 45° at a time (angle &= 7<<29 first)
+  IF (movedir < 8) THEN
+  BEGIN
+    a45 = FLOOR(ang / (PI() / 4) + 1e-9) * (PI() / 4);
+    delta = a45 - movedir * (PI() / 4);
+    delta = delta - 2 * PI() * FLOOR((delta + PI()) / (2 * PI()));
+    IF (delta > 1e-9) THEN a45 = a45 - PI() / 4;
+    ELSE IF (delta < -1e-9) THEN a45 = a45 + PI() / 4;
+    ang = a45 - 2 * PI() * FLOOR(a45 / (2 * PI()) + 1e-12);
+  END
+  nst = NULL;
+  snd = NULL;
+  IF (px IS NULL OR palive = 0) THEN
+  BEGIN
+    -- no target: P_LookForPlayers all around, or back to its spawn state
+    EXECUTE PROCEDURE look_for_player(x, y, z, hgt, ang, sec, tp, 1) RETURNING_VALUES found;
+    IF (found > 0) THEN
+    BEGIN
+      tgt = NULL;
+      tp = found;
+    END
+    ELSE nst = spawn_state;
+  END
+  ELSE IF (just_attacked = 1) THEN
+  BEGIN
+    -- MF_JUSTATTACKED: this step only picks a heading (on Nightmare or -fast, not even that)
+    just_attacked = 0;
+    IF (fast = 0) THEN walk = 2;
+  END
+  ELSE
+  BEGIN
+    adx = ABS(px - x);
+    ady = ABS(py - y);
+    dist = adx + ady - MINVALUE(adx, ady) / 2;        -- P_AproxDistance
+    fire = 0;
+    -- P_CheckMeleeRange
+    IF (melee_state > 0 AND dist < 64 - 20 + prad) THEN
+      IF (mobj_sees(tid, px, py, pz, psec) = 1) THEN
+      BEGIN
+        snd = atk_snd;
+        nst = melee_state;
+        fire = 1;
+      END
+    -- a missile attack waits for MOVECOUNT to run out (not on Nightmare or -fast)
+    IF (fire = 0 AND missile_state > 0 AND (fast = 1 OR movecount = 0)) THEN
+    BEGIN
+      -- P_CheckMissileRange: in sight; hurt just now, it fires back at once; else not
+      -- while it reacts, and less likely the further off (with no melee, 128 further)
+      IF (mobj_sees(tid, px, py, pz, psec) = 1) THEN
+      BEGIN
+        IF (just_hit = 1) THEN
+        BEGIN
+          just_hit = 0;
+          fire = 1;
+        END
+        ELSE IF (reaction = 0) THEN
+        BEGIN
+          dist = MINVALUE(200, dist - 64 - IIF(melee_state > 0, 0, 128));
+          IF (p_rand256() >= dist) THEN fire = 1;
+        END
+      END
+      IF (fire = 1) THEN
+      BEGIN
+        nst = missile_state;
+        just_attacked = 1;
+      END
+    END
+    IF (fire = 0) THEN
+    BEGIN
+      found = 0;
+      -- in a netgame, a target out of sight (once the threshold is spent) may give way
+      -- to another player it can see
+      IF (nplayers > 1 AND threshold = 0) THEN
+        IF (mobj_sees(tid, px, py, pz, psec) = 0) THEN
+          EXECUTE PROCEDURE look_for_player(x, y, z, hgt, ang, sec, tp, 1) RETURNING_VALUES found;
+      IF (found > 0) THEN
+      BEGIN
+        tgt = NULL;
+        tp = found;
+      END
+      ELSE walk = 1;
+    END
+  END
+  IF (walk > 0) THEN
+  BEGIN
+    moved = 0;
+    IF (walk = 1) THEN
+    BEGIN
+      movecount = movecount - 1;
+      IF (movecount >= 0) THEN
+      BEGIN
+        EXECUTE PROCEDURE p_move(tid, x, y, z, rad, hgt, spd, fl, momz, movedir) RETURNING_VALUES moved, nx, ny, nz, msec, bump;
+        IF (bump = 1) THEN movedir = 8;
+      END
+    END
+    IF (moved = 0) THEN
+      EXECUTE PROCEDURE new_chase_dir(tid, x, y, z, rad, hgt, spd, fl, momz, movedir, px, py)
+        RETURNING_VALUES movedir, movecount, nx, ny, nz, msec, moved;
+    IF (moved = 1 AND (nx <> x OR ny <> y)) THEN
+    BEGIN
+      -- P_TryMove: the special lines the step crossed
+      EXECUTE PROCEDURE monster_cross(tid, x, y, nx, ny) RETURNING_VALUES tele;
+      IF (tele = 1) THEN
+        SELECT t.x, t.y, t.z, t.angle, t.sector_id FROM things t WHERE t.id = :tid INTO x, y, z, ang, sec;
+      ELSE
+      BEGIN
+        x = nx;
+        y = ny;
+        z = nz;
+        sec = msec;
+      END
+    END
+    ELSE IF (moved = 1) THEN z = nz;
+    -- last, the active sound, 3 times in 256
+    IF (walk = 1 AND active_snd IS NOT NULL) THEN
+      IF (p_rand256() < 3) THEN snd = active_snd;
+  END
+  -- (written back before the next state, whose action reads it)
+  UPDATE things t
+     SET x = :x, y = :y, z = :z, angle = :ang, sector_id = :sec, reaction = :reaction, threshold = :threshold,
+         movedir = :movedir, movecount = :movecount, just_attacked = :just_attacked, just_hit = :just_hit,
+         target_id = :tgt, tplayer = :tp
+   WHERE t.id = :tid;
+  IF (snd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(snd, tid, x, y);
+  IF (nst IS NOT NULL) THEN EXECUTE PROCEDURE set_state(tid, nst, tic) RETURNING_VALUES alive;
+END^
+
 -- The actions, by name (info.c's codepointers). Only those the first things on the
 -- table need are here; any other name does nothing until its phase brings it.
 CREATE OR ALTER PROCEDURE state_action (tid INTEGER, act VARCHAR(24), tic INTEGER)
@@ -3719,17 +4210,32 @@ DECLARE ttype INTEGER;
 DECLARE x DOUBLE PRECISION;
 DECLARE y DOUBLE PRECISION;
 BEGIN
-  IF (act = 'A_Fall') THEN
+  IF (act = 'A_Look') THEN EXECUTE PROCEDURE a_look(tid, tic);
+  ELSE IF (act = 'A_Chase') THEN EXECUTE PROCEDURE a_chase(tid, tic);
+  ELSE IF (act = 'A_FaceTarget') THEN EXECUTE PROCEDURE a_face_target(tid);
+  ELSE IF (act = 'A_PosAttack') THEN EXECUTE PROCEDURE a_bullets(tid, 1, 'DSPISTOL');
+  ELSE IF (act = 'A_SPosAttack') THEN EXECUTE PROCEDURE a_bullets(tid, 3, 'DSSHOTGN');
+  ELSE IF (act = 'A_CPosAttack') THEN EXECUTE PROCEDURE a_bullets(tid, 1, 'DSSHOTGN');
+  ELSE IF (act = 'A_CPosRefire') THEN EXECUTE PROCEDURE a_cpos_refire(tid, tic);
+  ELSE IF (act = 'A_Fall') THEN
     -- A_Fall: the corpse no longer blocks (MF_SOLID off)
     UPDATE things SET solid = 0 WHERE id = :tid;
-  ELSE IF (act = 'A_Scream') THEN
+  ELSE IF (act IN ('A_Scream', 'A_Pain', 'A_XScream')) THEN
   BEGIN
-    -- A_Scream: the death sound; the spider mastermind's and the cyberdemon's at full volume
-    SELECT tt.death_snd, t.thing_type, t.x, t.y FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+    -- A_Scream: the death sound (one of the zombies' three, the imps' two); the
+    -- spider mastermind's and the cyberdemon's at full volume. A_Pain: the pain
+    -- sound. A_XScream: the gibbing.
+    SELECT CASE :act WHEN 'A_Scream' THEN tt.death_snd WHEN 'A_Pain' THEN tt.pain_snd ELSE 'DSSLOP' END,
+           t.thing_type, t.x, t.y
+      FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
      WHERE t.id = :tid INTO snd, ttype, x, y;
-    IF (ttype IN (7, 16)) THEN EXECUTE PROCEDURE play_sound(snd, 0, NULL, NULL);
+    IF (act = 'A_Scream') THEN snd = cry_variant(snd);
+    IF (snd IS NULL) THEN EXIT;
+    IF (act = 'A_Scream' AND ttype IN (7, 16)) THEN EXECUTE PROCEDURE play_sound(snd, 0, NULL, NULL);
     ELSE EXECUTE PROCEDURE play_sound(snd, tid, x, y);
   END
+  ELSE IF (act = 'A_BossDeath') THEN
+    EXECUTE PROCEDURE boss_death((SELECT t.thing_type FROM things t WHERE t.id = :tid));
 END^
 
 -- P_SetMobjState: TID into state ST at TIC – its tics start, then its action is called.
@@ -3742,6 +4248,8 @@ DECLARE tics INTEGER;
 DECLARE act VARCHAR(24);
 DECLARE nxt INTEGER;
 DECLARE n INTEGER = 0;
+DECLARE md VARCHAR(8);
+DECLARE was VARCHAR(8);
 BEGIN
   alive = 1;
   WHILE (n < 100) DO   -- (a ring of 0-tic states would hang DOOM; here it stops)
@@ -3753,8 +4261,13 @@ BEGIN
       alive = 0;
       EXIT;
     END
-    SELECT s.tics, s.action, s.next_state FROM states s WHERE s.id = :st INTO tics, act, nxt;
-    UPDATE things SET state = :st, state_tic = IIF(:tics < 0, NULL, :tic + :tics) WHERE id = :tid;
+    SELECT s.tics, s.action, s.next_state, s.mode FROM states s WHERE s.id = :st INTO tics, act, nxt, md;
+    was = NULL;
+    SELECT t.st FROM things t WHERE t.id = :tid INTO was;
+    -- (ST, the old rules' word for it, follows: what can be shot, what's a corpse)
+    UPDATE things SET state = :st, state_tic = IIF(:tics < 0, NULL, :tic + :tics), st = COALESCE(:md, :was),
+                      dead_tic = IIF(:md = 'dead' AND :was IS DISTINCT FROM 'dead', :tic, dead_tic)
+     WHERE id = :tid;
     IF (act IS NOT NULL) THEN EXECUTE PROCEDURE state_action(tid, act, tic);
     IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.id = :tid)) THEN
     BEGIN
@@ -3775,7 +4288,41 @@ AS
 DECLARE tid INTEGER;
 DECLARE nxt INTEGER;
 DECLARE alive SMALLINT;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE momz DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
 BEGIN
+  -- P_ZMovement, for the walkers on the tables thrown into the air (an arch-vile's
+  -- blast): up, bumping the ceiling, down at 1 unit/tic², landing on the floor
+  FOR SELECT t.id, t.x, t.y, t.z, t.momz, t.radius, t.height FROM things t
+       WHERE t.momz <> 0 AND t.state IS NOT NULL ORDER BY t.id
+        INTO tid, x, y, z, momz, rad, hgt
+  DO
+  BEGIN
+    EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
+    z = z + momz;
+    IF (z + hgt > cz) THEN
+    BEGIN
+      IF (momz > 0) THEN momz = 0;
+      z = cz - hgt;
+    END
+    IF (z <= fz) THEN
+    BEGIN
+      z = fz;
+      IF (momz < 0) THEN momz = 0;
+    END
+    ELSE
+    BEGIN
+      momz = momz - 1;
+      IF (momz = 0) THEN momz = -1;   -- (zero momz means "standing")
+    END
+    UPDATE things t SET z = :z, momz = :momz WHERE t.id = :tid;
+  END
   FOR SELECT t.id FROM things t WHERE t.state_tic = :tic ORDER BY t.id INTO tid
   DO
   BEGIN
@@ -3784,6 +4331,42 @@ BEGIN
     SELECT s.next_state FROM things t JOIN states s ON s.id = t.state
      WHERE t.id = :tid AND t.state_tic = :tic INTO nxt;
     IF (nxt IS NOT NULL) THEN EXECUTE PROCEDURE set_state(tid, nxt, tic) RETURNING_VALUES alive;
+  END
+END^
+
+-- A save from before a type moved onto the tables: its things of that type take the
+-- state matching where they were (asleep: the spawn state; a corpse: the end of the
+-- death; else the see state), no action called. (restoreGame)
+CREATE OR ALTER PROCEDURE adopt_states
+AS
+DECLARE tid INTEGER;
+DECLARE st VARCHAR(8);
+DECLARE nst INTEGER;
+DECLARE tics INTEGER;
+DECLARE nxt INTEGER;
+DECLARE n INTEGER;
+DECLARE tic INTEGER;
+BEGIN
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  FOR SELECT t.id, t.st, CASE WHEN t.st = 'idle' THEN tt.spawn_state WHEN t.st IN ('dying', 'dead') THEN tt.death_state
+                              ELSE tt.see_state END
+        FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+       WHERE tt.on_states = 1 AND t.state IS NULL
+       ORDER BY t.id
+        INTO tid, st, nst
+  DO
+  BEGIN
+    SELECT s.tics, s.next_state FROM states s WHERE s.id = :nst INTO tics, nxt;
+    n = 0;
+    WHILE (st IN ('dying', 'dead') AND tics >= 0 AND nxt > 0 AND n < 64) DO
+    BEGIN
+      nst = nxt;
+      SELECT s.tics, s.next_state FROM states s WHERE s.id = :nst INTO tics, nxt;
+      n = n + 1;
+    END
+    UPDATE things t SET state = :nst, state_tic = IIF(:tics < 0, NULL, :tic + :tics),
+           st = IIF(:st = 'dying', 'dead', :st), solid = IIF(:st IN ('dying', 'dead'), 0, t.solid)
+     WHERE t.id = :tid;
   END
 END^
 
@@ -3996,6 +4579,9 @@ DECLARE lminy DOUBLE PRECISION;
 DECLARE lmaxy DOUBLE PRECISION;
 DECLARE cx INTEGER;
 DECLARE cy INTEGER;
+DECLARE stid INTEGER;
+DECLARE sstate INTEGER;
+DECLARE stics INTEGER;
 BEGIN
   MERGE INTO linedefs l
   USING (SELECT l2.id, a.x ax, a.y ay, b.x bx, b.y bby, fs.sector_id fsec, bs.sector_id bsec
@@ -4109,6 +4695,18 @@ BEGIN
      AND NOT (:dm > 0 AND tt.pickup = 'key')            -- (MF_NOTDMATCH: no keys in deathmatch)
      AND NOT (:nomon = 1 AND (tt.count_kill = 1 OR m.ttype = 3006))   -- (-nomonsters: P_SpawnMapThing skips MF_COUNTKILL and the lost soul)
    ORDER BY m.id;                                       -- (the same ids on every load)
+  -- the types on the frame tables: their spawn state; P_SpawnMapThing starts each
+  -- partway into it (1 + P_Random() % tics), and P_SpawnMobj gives them mobjinfo's
+  -- reaction time (8; on Nightmare none)
+  FOR SELECT t.id, tt.spawn_state, s.tics FROM things t
+        JOIN thing_types tt ON tt.thing_type = t.thing_type
+        JOIN states s ON s.id = tt.spawn_state
+       WHERE tt.on_states = 1 ORDER BY t.id
+        INTO stid, sstate, stics
+  DO
+    UPDATE things t SET state = :sstate, reaction = IIF(:skill = 5, 0, 8),
+           state_tic = IIF(:stics < 0, NULL, (SELECT g.tic FROM game g WHERE g.id = 1) + IIF(:stics > 0, 1 + MOD(p_rand256(), :stics), 0))
+     WHERE t.id = :stid;
   DELETE FROM respawn_queue;
   -- G_DoLoadLevel: the frags start over with the level
   DELETE FROM frags;

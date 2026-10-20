@@ -114,7 +114,7 @@ const res = await loadResources(db, wad, { dehacked: PATCH });
 const one = async (q) => (await db.query(q)).rows[0];
 const tic = (n = 1) => db.query(`SELECT * FROM doom_tic(${n}, 0, 0, 0, 0, 0, 0, 0)`);
 await loadMap(db, wad, res, 'E1M1', { skill: 3 });
-await db.exec("UPDATE things SET st = 'dead', solid = 0 WHERE kind = 'monster'");
+await db.exec("UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE kind = 'monster'");
 const start = await one('SELECT health, bullets, max_bullets FROM player');
 const tt = await one('SELECT hp, speed, see_snd FROM thing_types WHERE thing_type = 3004');
 assert(start.HEALTH === 150 && start.BULLETS === 25 && start.MAX_BULLETS === 300 && tt.HP === 55 && tt.SEE_SND === 'DSBGSIT1',

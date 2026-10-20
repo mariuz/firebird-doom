@@ -88,13 +88,13 @@ await createSchema(db, sql);
 const wad = new Wad(fs.readFileSync(path.join(root, 'public/wads/freedoom1.wad')));
 const res = await loadResources(db, wad);
 await loadMap(db, wad, res, 'E1M1', { skill: 3 });
-await db.exec("UPDATE things SET st = 'dead', solid = 0 WHERE kind = 'monster'");
+await db.exec("UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE kind = 'monster'");
 const one = async (q) => (await db.query(q)).rows[0];
 const tic = async (n = 1) => (await db.query(`SELECT * FROM doom_tic(${n}, 0, 0, 0, 0, 0, 0, 0)`)).rows[0];
 const p = await one("SELECT id, x, y, angle FROM things WHERE kind = 'player'");
 const imp = (await one(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN
     EXECUTE PROCEDURE spawn_thing(3001, ${p.X + 200}, ${p.Y}, NULL, 0) RETURNING_VALUES id; SUSPEND; END`)).ID;
-await db.exec(`UPDATE things SET st = 'dead', solid = 0 WHERE id = ${imp}`);   // (it only has to be there)
+await db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE id = ${imp}`);   // (it only has to be there)
 await db.exec(`UPDATE things SET angle = ${Math.PI / 2} WHERE id = ${p.ID}`);
 await db.exec(`EXECUTE PROCEDURE damage_player(5, ${imp})`);
 const h1 = await tic();
