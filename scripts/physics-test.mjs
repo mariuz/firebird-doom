@@ -360,6 +360,9 @@ if (sky) {
     // an imp's fireball hits a demon: the demon turns on the imp
     const imp = await placeMon(3001, 260);
     const demon = await placeMon(3002, 160);
+    // (the imp held where it stands: its standing state never ends, so it doesn't wake and
+    // wander off while the demon comes for it; hurt, it fights back as DOOM's would)
+    await db.exec(`UPDATE things SET state_tic = NULL WHERE id = ${imp}`);
     await fireball(imp, 200, 0);
     await tic(8);
     const d1 = await one(`SELECT hp, target_id, threshold, st FROM things WHERE id = ${demon}`);
@@ -376,7 +379,7 @@ if (sky) {
     assert((await one(`SELECT target_id t FROM things WHERE id = ${demon}`)).T === imp, 'while its threshold lasts, the player can\'t draw it off');
     // …and when the imp dies, back it comes
     await db.exec(`EXECUTE PROCEDURE damage_thing(${imp}, 100000)`);
-    await tic(8);
+    await tic(30);   // (a bite under way finishes first: S_SARG_ATK1–3, 24 tics, then A_Chase)
     assert((await one(`SELECT target_id t FROM things WHERE id = ${demon}`)).T === null, 'its target dead, the demon hunts the player again');
     await db.exec(`DELETE FROM things WHERE id IN (${imp}, ${demon}) OR thing_type IN (9000, 9011)`);
 

@@ -157,8 +157,11 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
   );
   // DOOM's state table (src/states.js)
   const modes = stateModes();
-  await insertRows(db, 'states', ['id', 'name', 'sprite', 'frame', 'bright', 'tics', 'action', 'next_state', 'misc1', 'misc2', 'mode'],
-    STATES.map((s, i) => [i, ...s, modes[i]]));
+  // (G_InitNew's -fast halves these: the demons' run, attack and pain states)
+  const fastFrom = STATE_ID.get('S_SARG_RUN1');
+  const fastTo = STATE_ID.get('S_SARG_PAIN2');
+  await insertRows(db, 'states', ['id', 'name', 'sprite', 'frame', 'bright', 'tics', 'action', 'next_state', 'misc1', 'misc2', 'mode', 'fast'],
+    STATES.map((s, i) => [i, ...s, modes[i], i >= fastFrom && i <= fastTo ? 1 : 0]));
   await db.exec(`SET TERM ^ ;
 EXECUTE BLOCK AS DECLARE i INTEGER = 0;
 BEGIN WHILE (i < 1280) DO BEGIN INSERT INTO screen_cols (x) VALUES (:i); i = i + 1; END END^

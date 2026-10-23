@@ -177,7 +177,10 @@ CREATE TABLE states (
   -- the old rules' word for where in its life a thing in this state is (idle, chase, attack,
   -- pain, dying, dead, raise), kept in THINGS.ST so the code that asks it (what can be
   -- shot, what's a corpse) works for both; worked out by the loader from mobjinfo's states
-  mode       VARCHAR(8)
+  mode       VARCHAR(8),
+  -- G_InitNew: with -fast (or on Nightmare) this state lasts half its tics (tics >>= 1):
+  -- the demons' run, attack and pain frames, S_SARG_RUN1 to S_SARG_PAIN2
+  fast       SMALLINT DEFAULT 0 NOT NULL
 );
 
 -- ── the map ─────────────────────────────────────────────────────────────

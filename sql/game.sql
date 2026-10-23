@@ -3949,6 +3949,7 @@ BEGIN
     EXECUTE PROCEDURE hurt_target(tgt, (MOD(p_rand256(), sides) + 1) * mult, tid, tp);
     EXIT;
   END
+  IF (mtype IS NULL) THEN EXIT;   -- (A_SargAttack: a bite or nothing)
   ang = ATAN2(py - y, px - x);
   IF (shadow = 1) THEN ang = ang + (p_rand256() - p_rand256()) * PI() / 2048;
   IF (msnd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(msnd, tid, x, y);
@@ -4262,6 +4263,7 @@ BEGIN
   ELSE IF (act = 'A_CPosAttack') THEN EXECUTE PROCEDURE a_bullets(tid, 1, 'DSSHOTGN');
   ELSE IF (act = 'A_CPosRefire') THEN EXECUTE PROCEDURE a_cpos_refire(tid, tic);
   ELSE IF (act = 'A_TroopAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 8, 3, 'DSCLAW');
+  ELSE IF (act = 'A_SargAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 10, 4, NULL);
   ELSE IF (act = 'A_Fall') THEN
     -- A_Fall: the corpse no longer blocks (MF_SOLID off)
     UPDATE things SET solid = 0 WHERE id = :tid;
@@ -4306,7 +4308,9 @@ BEGIN
       alive = 0;
       EXIT;
     END
-    SELECT s.tics, s.action, s.next_state, s.mode FROM states s WHERE s.id = :st INTO tics, act, nxt, md;
+    SELECT IIF(s.fast = 1 AND g.fast_states = 1, BIN_SHR(s.tics, 1), s.tics), s.action, s.next_state, s.mode
+      FROM states s CROSS JOIN (SELECT IIF(gm.skill = 5 OR gm.fast = 1, 1, 0) fast_states FROM game gm WHERE gm.id = 1) g
+     WHERE s.id = :st INTO tics, act, nxt, md;
     was = NULL;
     SELECT t.st FROM things t WHERE t.id = :tid INTO was;
     -- (ST, the old rules' word for it, follows: what can be shot, what's a corpse)

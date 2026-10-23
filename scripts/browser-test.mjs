@@ -235,7 +235,7 @@ try {
   await key('Escape');
   assert(f1 === 'HELP1' && f2 === 'save' && f3 === 'load' && f4 === 'sound:sfx', `F1 ${f1}, F2 ${f2}, F3 ${f3}, F4 ${f4}`);
   // (doom.message is the HUD row the next frame fetches: on a loaded machine wait for it)
-  const said = (text) => until((t) => window.doom.message === t, text, 10000).catch(() => {});
+  const said = (text) => until((t) => window.doom.message === t, text, 30000).catch(() => {});
   await key('F5');
   await said('Detail: low');
   const f5 = await doom(() => [document.getElementById('detail').value, window.doom.message].join(' / '));

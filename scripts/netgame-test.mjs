@@ -298,6 +298,9 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
     `no keys on the map (MF_NOTDMATCH, ${keysOnMap} left out), every card in each player's pocket (P_SpawnPlayer)`);
   const d2 = await thing(2);
   // P_GiveWeapon in a netgame: a placed weapon stays, and gives five clips
+  // (nothing else to pick up there: a deathmatch start may sit on a box of shells)
+  await db.exec(`DELETE FROM things t WHERE ABS(t.x - ${d2.X}) < 64 AND ABS(t.y - ${d2.Y}) < 64
+    AND t.thing_type IN (SELECT tt.thing_type FROM thing_types tt WHERE tt.pickup IS NOT NULL)`);
   const sg = await spawn(2001, d2.X, d2.Y);
   await db.exec('UPDATE player SET shells = 0, has_shotgun = 0 WHERE id = 2');
   await db.exec('DELETE FROM sound_events');
@@ -306,7 +309,7 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   const still = await one(`SELECT COUNT(*) n FROM things WHERE id = ${sg}`);
   const wsnd = await one("SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSWPNUP' AND listener = 2");   // (player 1 may stand on a weapon too)
   assert(got.HAS_SHOTGUN === 1 && got.SHELLS === 20 && got.PENDING_WEAPON === 3 && still.N === 1 && wsnd.N === 1,
-    `player 2 walks over a shotgun: has it, 20 shells (five clips), it stays on the map, the sound for player 2 alone`);
+    `player 2 walks over a shotgun: has it, 20 shells (five clips), it stays on the map, the sound for player 2 alone (${JSON.stringify(got)}, ${still.N}, ${wsnd.N})`);
   await db.exec('UPDATE player SET shells = 50 WHERE id = 2');
   await db.exec('DELETE FROM sound_events');
   await tic([IDLE, IDLE]);
@@ -412,23 +415,29 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   const reactions = await one(`SELECT MAX(IIF(tt.on_states = 1, NULL, t.reaction)) r, MIN(IIF(tt.on_states = 1, t.reaction, NULL)) s,
     MAX(IIF(tt.on_states = 1, t.reaction, NULL)) s2 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
     WHERE t.kind = 'monster' AND t.spawn_x IS NOT NULL`);
-  const spawnReaction = reactions.R === 2 && (reactions.S === null || (reactions.S === 8 && reactions.S2 === 8)) ? 2 : `${reactions.R}/${reactions.S}`;
+  const spawnReaction = (reactions.R === 2 || reactions.R === null) && (reactions.S === null || (reactions.S === 8 && reactions.S2 === 8)) ? 2 : `${reactions.R}/${reactions.S}`;
   const stepsAt = async (fast) => {
     await db.exec(`UPDATE game SET fast = ${fast} WHERE id = 1`);
     const demon = await spawn(3002, m0.X + 96, m0.Y);
+    // (the demon is on DOOM's frame tables: each run state's tics, as SET_STATE gives them;
+    // put back where it started each time, so it never gets close enough to bite)
     const steps = [];
     for (let i = 0; i < 6; i++) {
-      await db.exec(`UPDATE things SET st = 'chase', st_tics = 1, reaction = 9, hp = 1000 WHERE id = ${demon}`);
+      await db.exec(`UPDATE things SET reaction = 9, hp = 1000, x = ${m0.X + 96}, y = ${m0.Y}, sector_id = sector_at(${m0.X + 96}, ${m0.Y}) WHERE id = ${demon}`);
+      const st = await one(`EXECUTE BLOCK RETURNS (n INTEGER) AS DECLARE a SMALLINT; DECLARE t INTEGER; BEGIN
+        SELECT tic FROM game WHERE id = 1 INTO t;
+        EXECUTE PROCEDURE set_state(${demon}, (SELECT id FROM states WHERE name = 'S_SARG_RUN${1 + i}'), t) RETURNING_VALUES a;
+        SELECT state_tic - :t FROM things WHERE id = ${demon} INTO n; SUSPEND; END`);
+      steps.push(st.N);
       await tic([IDLE, IDLE]);
-      steps.push((await one(`SELECT st_tics FROM things WHERE id = ${demon}`)).ST_TICS);
     }
     await db.exec(`DELETE FROM things WHERE id = ${demon}`);
     return steps;
   };
   const quick = await stepsAt(1);
   const usual = await stepsAt(0);
-  assert(Math.abs(ball.V - 20) < 0.01 && quick.every((s) => s >= 1 && s <= 2) && usual.every((s) => s === 3) && spawnReaction === 2,
-    `-fast at skill 3: imp fireballs at ${ball.V.toFixed(0)}, demons step every 1–2 tics (${quick.join(' ')}; without it ${usual.join(' ')}), but the monsters keep their reaction time (P_SpawnMobj: Nightmare alone drops it)`);
+  assert(Math.abs(ball.V - 20) < 0.01 && quick.every((s) => s === 1) && usual.every((s) => s === 2) && spawnReaction === 2,
+    `-fast at skill 3: imp fireballs at ${ball.V.toFixed(0)}, demons step every tic (${quick.join(' ')}; without it, every 2: ${usual.join(' ')}), but the monsters keep their reaction time (P_SpawnMobj: Nightmare alone drops it)`);
 
   // -respawn: a corpse rises as on Nightmare (G_InitNew's respawnmonsters)
   await loadMap(db, wad, res, map, { skill: 3, players: 2, fast: 0, respawn: 1 });
