@@ -152,4 +152,5 @@ export const ON_STATES = new Set([
   3001,          // the imp
   3002, 58,      // the demon, the spectre
   3006,          // the lost soul
+  3005,          // the cacodemon
 ]);

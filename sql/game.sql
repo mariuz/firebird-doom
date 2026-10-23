@@ -4341,6 +4341,7 @@ BEGIN
   ELSE IF (act = 'A_TroopAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 8, 3, 'DSCLAW');
   ELSE IF (act = 'A_SargAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 10, 4, NULL);
   ELSE IF (act = 'A_SkullAttack') THEN EXECUTE PROCEDURE a_skull_attack(tid);
+  ELSE IF (act = 'A_HeadAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 6, 10, NULL);
   ELSE IF (act = 'A_Fall') THEN
     -- A_Fall: the corpse no longer blocks (MF_SOLID off)
     UPDATE things SET solid = 0 WHERE id = :tid;
@@ -4519,6 +4520,7 @@ DECLARE adx DOUBLE PRECISION;
 DECLARE ady DOUBLE PRECISION;
 DECLARE dist DOUBLE PRECISION;
 DECLARE delta DOUBLE PRECISION;
+DECLARE st VARCHAR(8);
 BEGIN
   -- P_MobjThinker's movement, for the things on the tables that move: first P_XYMovement
   -- for a charging lost soul (SKULLS_THINK), then P_ZMovement for those in the air
@@ -4528,16 +4530,17 @@ BEGIN
   -- tic towards its target's middle while it's alive and not charging or squeezing
   -- through (MF_INFLOAT); a charging skull bounces off floor and ceiling
   FOR SELECT t.id, t.x, t.y, t.z, t.momz, t.radius, t.height, tt.floats, t.flags,
-             IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type
+             IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type, t.st
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        WHERE t.state IS NOT NULL AND (t.momz <> 0 OR tt.floats = 1) ORDER BY t.id
-        INTO tid, x, y, z, momz, rad, hgt, floats, flags, living, ttype
+        INTO tid, x, y, z, momz, rad, hgt, floats, flags, living, ttype, st
   DO
   BEGIN
     EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
     z = z + momz;
     skullfly = IIF(BIN_AND(flags, 262144) <> 0, 1, 0);
-    IF (floats = 1 AND living = 1 AND skullfly = 0 AND BIN_AND(flags, 131072) = 0) THEN
+    -- (asleep it has no target yet: DOOM's A_Look gives it one)
+    IF (floats = 1 AND living = 1 AND skullfly = 0 AND BIN_AND(flags, 131072) = 0 AND st <> 'idle') THEN
     BEGIN
       EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
       IF (px IS NOT NULL) THEN
@@ -4616,6 +4619,11 @@ BEGIN
            st = IIF(:st = 'dying', 'dead', :st), solid = IIF(:st IN ('dying', 'dead'), 0, t.solid)
      WHERE t.id = :tid;
   END
+  -- saves from phase 2's first commits: a corpse whose last frame is also a decoration's spawn
+  -- state was given that state's 'idle'; it lies there 'dead' (dated now, for Nightmare)
+  UPDATE things t SET st = 'dead', dead_tic = COALESCE(t.dead_tic, :tic)
+   WHERE t.state IS NOT NULL AND t.st <> 'dead'
+     AND EXISTS (SELECT 1 FROM states s WHERE s.id = t.state AND s.mode = 'dead');
 END^
 
 CREATE OR ALTER PROCEDURE world_tic (tic INTEGER)

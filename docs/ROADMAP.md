@@ -35,7 +35,7 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
   phases*). Phases 0 and 1 are done (the table, GPL-2 in a file of its own; the machine in SQL);
   phase 2, the monsters family by family, is under way: the zombieman, shotgun guy and
-  chaingunner are on the table, the imp, the demon, the spectre and the lost soul; the cacodemon is next.
+  chaingunner are on the table, the imp, the demon, the spectre, the lost soul and the cacodemon; the barons are next.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -172,7 +172,11 @@ the shotgun guy and the chaingunner, then the imp (A_TroopAttack, `A_MELEE_MISSI
 A_BruisAttack will share), then the demon and the spectre (A_SargAttack; `states.fast` marks
 S_SARG_RUN1–S_SARG_PAIN2, whose tics `SET_STATE` halves with -fast or on Nightmare), then the lost soul (A_SkullAttack;
 `SKULLS_THINK` is P_XYMovement for MF_SKULLFLY, 262144 in `things.flags`; `STATES_THINK`'s
-P_ZMovement floats fliers and bounces a charging skull; `P_CheckMissileRange`'s per-type rules) (`thinginfo.js`'s `ON_STATES`; `thing_types.on_states`) spawn
+P_ZMovement floats fliers and bounces a charging skull; `P_CheckMissileRange`'s per-type rules),
+then the cacodemon (A_HeadAttack). The loader works a state's mode out from the death chains first:
+a corpse's last frame is also the spawn state of the map's dead-monster decorations, and was
+'idle' until the cacodemon's test found it (corpses that could be shot, and that the arch-vile and
+Nightmare passed over); `ADOPT_STATES` mends such corpses in a save (`thinginfo.js`'s `ON_STATES`; `thing_types.on_states`) spawn
 into their spawn state, partway in, with mobjinfo's reaction time, and run on A_Look, A_Chase,
 A_FaceTarget, A_PosAttack, A_SPosAttack, A_CPosAttack, A_CPosRefire, A_Pain, A_Scream (the random
 cries), A_XScream and A_Fall, each a procedure of its own; `DAMAGE_THING` sends them into their
@@ -180,7 +184,7 @@ pain, death and xdeath states (MF_JUSTHIT, the `&3` tic cut), and the arch-vile 
 their raise state. Each state carries a `mode` the loader works out from mobjinfo's chains (idle,
 chase, attack, pain, dying, dead, raise), copied into `things.st`, so the code that asks "can it be
 shot, is it a corpse" works for both kinds. `STATES_THINK` lets a stated walker tossed into the
-air fall (P_ZMovement). `ADOPT_STATES` moves an old save's zombies onto the table. Next: the cacodemon, the barons, the bosses and DOOM II's. The plan as
+air fall (P_ZMovement). `ADOPT_STATES` moves an old save's zombies onto the table. Next: the barons, the bosses and DOOM II's. The plan as
 it was: zombieman, sergeant and chaingunner first
 (A_Look, A_Chase, A_FaceTarget, A_PosAttack, A_SPosAttack, A_CPosAttack, A_CPosRefire, A_Pain,
 A_Scream, A_XScream, A_Fall), then the imp, the demons, the lost soul, the cacodemon, the barons,

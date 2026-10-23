@@ -12,13 +12,15 @@ const MOBJ_BY_ED = new Map(Object.values(MOBJINFO).filter((m) => m.ednum > 0).ma
 const STATE_ID = new Map(STATES.map((s, i) => [s[0], i]));
 /**
  * Each state's mode, the old rules' word for that stage of a thing's life (THINGS.ST):
- * every type's chains from its spawn, see, missile, melee, pain, raise, death and
- * xdeath states, each state taking the first chain to reach it; a death chain's
- * last state (tics -1) is the corpse, 'dead'.
+ * every type's chains from its death, xdeath, spawn, see, missile, melee, pain and
+ * raise states, each state taking the first chain to reach it; a death chain's
+ * last state (tics -1) is the corpse, 'dead'. (The death chains go first: a
+ * corpse's last frame is also the spawn state of the map's dead-monster
+ * decorations, S_POSS_DIE5 for a dead former human, and must stay 'dead'.)
  */
 export function stateModes() {
   const mode = new Array(STATES.length).fill(null);
-  const order = [[0, 'idle'], [1, 'chase'], [4, 'attack'], [3, 'melee'], [2, 'pain'], [7, 'raise'], [5, 'dying'], [6, 'dying']];
+  const order = [[5, 'dying'], [6, 'dying'], [0, 'idle'], [1, 'chase'], [4, 'attack'], [3, 'melee'], [2, 'pain'], [7, 'raise']];
   for (const [field, m] of order) {
     for (const mobj of Object.values(MOBJINFO)) {
       for (let s = mobj.states[field], n = 0; s > 0 && mode[s] === null && n < 64; s = STATES[s][6], n++) {

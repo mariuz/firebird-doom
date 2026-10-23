@@ -554,8 +554,9 @@ if (sky) {
       const hx = -s * rx, hy = -s * ry;
       const md = Math.abs(hx) > 0.5 ? (hx > 0 ? 0 : 4) : (hy > 0 ? 2 : 6);
       const cid = await spawn(3005, lx, ly);
-      await db.exec(`UPDATE things SET st = 'chase', st_tics = 1, reaction = 1000, movedir = ${md}, movecount = 20,
+      await db.exec(`UPDATE things SET reaction = 1000, movedir = ${md}, movecount = 20,
                        z = ${lowZ}, flags = 0, hp = 1000 WHERE id = ${cid}`);
+      await setState(cid, 'S_HEAD_RUN1');   // (on DOOM's frame tables: A_Chase every 3 tics)
       let top = lowZ;
       let moved = 0;
       for (let i = 0; i < 24; i++) {

@@ -84,14 +84,14 @@ await loadMap(db, wad, res, wad.mapNames()[0], { skill: 3 });
 // (phase 2: the map's zombiemen, shotgun guys and chaingunners in their spawn state, each
 // partway into it, 1 + P_Random() % 10 tics, with mobjinfo's reaction time)
 const onMap = await all(`SELECT t.thing_type, s.name, t.state_tic - g.tic left_tics, t.reaction, t.st FROM things t
-  JOIN states s ON s.id = t.state CROSS JOIN game g WHERE g.id = 1 AND t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006)`);
-const spawnName = { 3004: 'S_POSS_STND', 9: 'S_SPOS_STND', 65: 'S_CPOS_STND', 3001: 'S_TROO_STND', 3002: 'S_SARG_STND', 58: 'S_SARG_STND', 3006: 'S_SKULL_STND' };
+  JOIN states s ON s.id = t.state CROSS JOIN game g WHERE g.id = 1 AND t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006, 3005)`);
+const spawnName = { 3004: 'S_POSS_STND', 9: 'S_SPOS_STND', 65: 'S_CPOS_STND', 3001: 'S_TROO_STND', 3002: 'S_SARG_STND', 58: 'S_SARG_STND', 3006: 'S_SKULL_STND', 3005: 'S_HEAD_STND' };
 const offsets = new Set(onMap.map((r) => r.LEFT_TICS));
-const unstated = await one('SELECT COUNT(*) n FROM things t WHERE t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006) AND t.state IS NULL');
+const unstated = await one('SELECT COUNT(*) n FROM things t WHERE t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006, 3005) AND t.state IS NULL');
 assert(onMap.length > 0 && unstated.N === 0
   && onMap.every((r) => r.NAME.trim() === spawnName[r.THING_TYPE] && r.LEFT_TICS >= 1 && r.LEFT_TICS <= 10 && r.REACTION === 8 && r.ST.trim() === 'idle')
   && (onMap.length < 4 || offsets.size > 1),
-  `the map's ${onMap.length} zombiemen, shotgun guys, chaingunners, imps, demons and lost souls start in their spawn states, 1 to 10 tics in (${[...offsets].sort((a, b) => a - b).join(',')}), reaction time 8`);
+  `the map's ${onMap.length} zombiemen, shotgun guys, chaingunners, imps, demons, lost souls and cacodemons start in their spawn states, 1 to 10 tics in (${[...offsets].sort((a, b) => a - b).join(',')}), reaction time 8`);
 const ID = new Map(STATES.map((x, i) => [x[0], i]));
 const NAME = (i) => (i == null ? null : STATES[i][0]);
 const pl = await one("SELECT t.x, t.y, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1");
@@ -392,15 +392,66 @@ const popSnd = await sounds();
 assert(rises.join() === '4,8,12,12' && /S_SKULL_DIE1.*S_SKULL_DIE6 \d+:null$/.test(popped) && popSnd.includes('DSFIRXPL') && (await thing(skull)) === undefined,
   `it rises towards the player's middle, 4 a tic (${rises.join(', ')}); killed, ${popped.split(' ').slice(-2).join(' ')}: removed, with ${popSnd.join()}`);
 
+// the cacodemon: 5 + 5 + 5 tics, and A_HeadAttack bites within reach for (P_Random() % 6 + 1)
+// × 10, silently, else spits a fireball (DSFIRSHT); afloat, it rises towards the player's
+// middle, and killed it falls
+P = 3400;
+await atTic(P);
+const caco = await spawnAt(3005, 50, facing);   // (within 44 + the player's 16)
+await db.exec('DELETE FROM sound_events');
+const hpC = (await one('SELECT health FROM player WHERE id = 1')).HEALTH;
+await setState(caco, 'S_HEAD_ATK1', P);
+const headTrace = await trace(caco, P, P + 16);
+const biteSndC = await sounds();
+const bitC = hpC - (await one('SELECT health FROM player WHERE id = 1')).HEALTH;
+await db.exec(`UPDATE things SET x = ${pl.X + Math.cos(pl.ANGLE) * 200}, y = ${pl.Y + Math.sin(pl.ANGLE) * 200}, sector_id = sector_at(${pl.X + Math.cos(pl.ANGLE) * 200}, ${pl.Y + Math.sin(pl.ANGLE) * 200}) WHERE id = ${caco}`);
+await db.exec('DELETE FROM sound_events');
+const heads0 = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9001')).N;
+await setState(caco, 'S_HEAD_ATK3', P + 30);
+const spitSnd = await sounds();
+const heads = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9001')).N - heads0;
+await db.exec('DELETE FROM things WHERE thing_type = 9001');
+// (lifted 40 above the floor, then killed: it drops, 1 unit/tic² more each tic)
+await db.exec(`UPDATE things SET z = (SELECT floor_h FROM sectors WHERE id = sector_at(things.x, things.y)) + 40, momz = 0 WHERE id = ${caco}`);
+await atTic(P + 40);
+await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE damage_thing(${caco}, 10000, (SELECT thing_id FROM player WHERE id = 1)); END`);
+const zc = [];
+for (let t = P + 41; t <= P + 43; t++) { await think(t); zc.push((await one(`SELECT momz FROM things WHERE id = ${caco}`)).MOMZ); }
+await remove(caco);
+assert(headTrace.startsWith('0:S_HEAD_ATK1 5:S_HEAD_ATK2 10:S_HEAD_ATK3') && bitC >= 10 && bitC <= 60 && bitC % 10 === 0 && !biteSndC.includes('DSFIRSHT')
+  && heads === 1 && spitSnd.includes('DSFIRSHT') && zc.join() === '-1,-2,-3',
+  `the cacodemon: ${headTrace.split(' ').slice(0, 3).join(' ')}; a bite of ${bitC} up close, a fireball further off (${spitSnd.join()}); killed in the air it falls (momz ${zc.join(', ')})`);
+
+// every type on the tables lies down 'dead' at the end of its death (and its gibbing), even
+// where that last frame is also a decoration's spawn state (S_POSS_DIE5: a dead former human)
+const deadEnds = [];
+for (const t of await all('SELECT thing_type, death_state, xdeath_state FROM thing_types WHERE on_states = 1 ORDER BY thing_type')) {
+  for (const start of [t.DEATH_STATE, t.XDEATH_STATE]) {
+    let id = start;
+    for (let n = 0; id > 0 && n < 64; n++) {
+      const st = await one(`SELECT tics, next_state, mode FROM states WHERE id = ${id}`);
+      if (st.TICS === -1) { deadEnds.push(`${t.THING_TYPE}:${NAME(id)}:${st.MODE?.trim()}`); break; }
+      id = st.NEXT_STATE;
+    }
+  }
+}
+assert(deadEnds.length >= 8 && deadEnds.every((e) => e.endsWith(':dead')),
+  `every corpse on the tables is 'dead': ${deadEnds.filter((e) => !e.endsWith(':dead')).join(', ') || `${deadEnds.length} death and gibbing ends`}`);
+
 // an old save, from before these types were on the tables: ADOPT_STATES puts each where it was
 const olds = [await spawnAt(3004, 128, facing), await spawnAt(9, 160, facing), await spawnAt(65, 192, facing)];
 await db.exec(`UPDATE things SET state = NULL, state_tic = NULL, st = 'idle' WHERE id = ${olds[0]}`);
 await db.exec(`UPDATE things SET state = NULL, state_tic = NULL, st = 'chase' WHERE id = ${olds[1]}`);
 await db.exec(`UPDATE things SET state = NULL, state_tic = NULL, st = 'dead', solid = 0 WHERE id = ${olds[2]}`);
+// (and a corpse from phase 2's first saves, in S_POSS_DIE5 but labelled 'idle')
+const misread = await spawnAt(3004, 224, facing);
+await db.exec(`UPDATE things SET state = (SELECT id FROM states WHERE name = 'S_POSS_DIE5'), state_tic = NULL, st = 'idle', dead_tic = NULL WHERE id = ${misread}`);
 await db.query('EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE adopt_states; END');
 const adopted = await Promise.all(olds.map(async (id) => NAME((await thing(id)).STATE)));
-assert(adopted.join() === 'S_POSS_STND,S_SPOS_RUN1,S_CPOS_DIE7', `an old save's monsters join the tables: asleep, chasing and a corpse → ${adopted.join(', ')}`);
-for (const id of olds) await remove(id);
+const mended = await one(`SELECT st, dead_tic FROM things WHERE id = ${misread}`);
+assert(adopted.join() === 'S_POSS_STND,S_SPOS_RUN1,S_CPOS_DIE7' && mended.ST.trim() === 'dead' && mended.DEAD_TIC !== null,
+  `an old save's monsters join the tables: asleep, chasing and a corpse → ${adopted.join(', ')}; a corpse once labelled idle lies ${mended.ST.trim()}`);
+for (const id of [...olds, misread]) await remove(id);
 
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'states ok');
