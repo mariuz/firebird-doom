@@ -84,14 +84,14 @@ await loadMap(db, wad, res, wad.mapNames()[0], { skill: 3 });
 // (phase 2: the map's zombiemen, shotgun guys and chaingunners in their spawn state, each
 // partway into it, 1 + P_Random() % 10 tics, with mobjinfo's reaction time)
 const onMap = await all(`SELECT t.thing_type, s.name, t.state_tic - g.tic left_tics, t.reaction, t.st FROM things t
-  JOIN states s ON s.id = t.state CROSS JOIN game g WHERE g.id = 1 AND t.thing_type IN (3004, 9, 65, 3001, 3002, 58)`);
-const spawnName = { 3004: 'S_POSS_STND', 9: 'S_SPOS_STND', 65: 'S_CPOS_STND', 3001: 'S_TROO_STND', 3002: 'S_SARG_STND', 58: 'S_SARG_STND' };
+  JOIN states s ON s.id = t.state CROSS JOIN game g WHERE g.id = 1 AND t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006)`);
+const spawnName = { 3004: 'S_POSS_STND', 9: 'S_SPOS_STND', 65: 'S_CPOS_STND', 3001: 'S_TROO_STND', 3002: 'S_SARG_STND', 58: 'S_SARG_STND', 3006: 'S_SKULL_STND' };
 const offsets = new Set(onMap.map((r) => r.LEFT_TICS));
-const unstated = await one('SELECT COUNT(*) n FROM things t WHERE t.thing_type IN (3004, 9, 65, 3001, 3002, 58) AND t.state IS NULL');
+const unstated = await one('SELECT COUNT(*) n FROM things t WHERE t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006) AND t.state IS NULL');
 assert(onMap.length > 0 && unstated.N === 0
   && onMap.every((r) => r.NAME.trim() === spawnName[r.THING_TYPE] && r.LEFT_TICS >= 1 && r.LEFT_TICS <= 10 && r.REACTION === 8 && r.ST.trim() === 'idle')
   && (onMap.length < 4 || offsets.size > 1),
-  `the map's ${onMap.length} zombiemen, shotgun guys, chaingunners, imps and demons start in their spawn states, 1 to 10 tics in (${[...offsets].sort((a, b) => a - b).join(',')}), reaction time 8`);
+  `the map's ${onMap.length} zombiemen, shotgun guys, chaingunners, imps, demons and lost souls start in their spawn states, 1 to 10 tics in (${[...offsets].sort((a, b) => a - b).join(',')}), reaction time 8`);
 const ID = new Map(STATES.map((x, i) => [x[0], i]));
 const NAME = (i) => (i == null ? null : STATES[i][0]);
 const pl = await one("SELECT t.x, t.y, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1");
@@ -334,6 +334,63 @@ await remove(demon);
 assert(bite.startsWith('0:S_SARG_ATK1 8:S_SARG_ATK2 16:S_SARG_ATK3') && biteSnd.includes('DSSGTATK')
   && bitten >= 4 && bitten <= 40 && bitten % 4 === 0 && thrown === 0 && quick.startsWith('0:S_SARG_ATK1 4:S_SARG_ATK2 8:S_SARG_ATK3'),
   `the demon: ${bite.split(' ').slice(0, 3).join(' ')}, DSSGTATK, a bite of ${bitten}; nothing thrown from afar; with -fast ${quick.split(' ').slice(0, 3).join(' ')}`);
+
+// the lost soul: S_SKULL_ATK1 (10 tics, A_FaceTarget), then A_SkullAttack (DSSKLATK,
+// MF_SKULLFLY, 20 units a tic at the player's middle); flying on, it slams into the player
+// for (P_Random() % 8 + 1) × 3 and goes back to its spawn state (whose A_Look, seeing the
+// player, sends it straight on into the chase)
+P = 2900;
+await atTic(P);
+const flag = (id) => one(`SELECT BIN_AND(flags, 262144) f, momx, momy, momz, x, y, z, state FROM things WHERE id = ${id}`);
+const skull = await spawnAt(3006, 200, facing);
+await db.exec('DELETE FROM sound_events');
+const hpS = (await one('SELECT health FROM player WHERE id = 1')).HEALTH;
+await setState(skull, 'S_SKULL_ATK1', P);
+const charge = await trace(skull, P, P + 30);
+const slamSnd = await sounds();
+const slammed = hpS - (await one('SELECT health FROM player WHERE id = 1')).HEALTH;
+const landed = await flag(skull);
+assert(/^0:S_SKULL_ATK1 10:S_SKULL_ATK2 14:S_SKULL_ATK3 .*S_SKULL_(STND|RUN)/.test(charge) && slamSnd.includes('DSSKLATK')
+  && slammed >= 3 && slammed <= 24 && slammed % 3 === 0 && landed.F === 0 && landed.MOMX === 0 && landed.MOMY === 0,
+  `the lost soul: ${charge.split(' ').slice(0, 3).join(' ')} (A_SkullAttack, DSSKLATK) … ${charge.split(' ').at(-1)}: it slams into the player for ${slammed} and stops`);
+
+// flying away from the player it goes on until a wall stops it; shot in flight it stops
+// dead (no pain state while MF_SKULLFLY), and stands the tic after
+await db.exec(`UPDATE things SET flags = BIN_OR(flags, 262144), momx = ${Math.cos(pl.ANGLE) * 20}, momy = ${Math.sin(pl.ANGLE) * 20}, momz = 0,
+  x = ${pl.X + Math.cos(pl.ANGLE) * 64}, y = ${pl.Y + Math.sin(pl.ANGLE) * 64} WHERE id = ${skull}`);
+const fly0 = await flag(skull);
+let flightTics = 0;
+for (let t = P + 40; t < P + 240 && (await flag(skull)).F !== 0; t++) { await think(t); flightTics++; }
+const fly1 = await flag(skull);
+const travelled = Math.hypot(fly1.X - fly0.X, fly1.Y - fly0.Y);
+await db.exec(`UPDATE things SET flags = BIN_OR(flags, 262144), momx = 20, momy = 0, hp = 100 WHERE id = ${skull}`);
+await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE damage_thing(${skull}, 1, (SELECT thing_id FROM player WHERE id = 1)); END`);
+const hitInFlight = await flag(skull);
+await think(P + 300);
+const stoodAgain = await flag(skull);
+assert(flightTics > 1 && travelled >= 20 && fly1.F === 0 && /S_SKULL_(STND|RUN)/.test(NAME(fly1.STATE))
+  && hitInFlight.MOMX === 0 && hitInFlight.F !== 0 && !/PAIN/.test(NAME(hitInFlight.STATE)) && stoodAgain.F === 0 && /S_SKULL_(STND|RUN)/.test(NAME(stoodAgain.STATE)),
+  `flying on, it stops at a wall (${travelled.toFixed(0)} units in ${flightTics} tics) and stands; shot in flight it stops dead without pain (${NAME(hitInFlight.STATE)}), then stands`);
+
+// a floater drifts 4 units a tic towards its target's middle (P_ZMovement), while it's
+// closer than three times the height between them: here up 12, then 48 < 16 × 3 no more
+// (put down on the floor 48 units from the player, whose middle is 28 up)
+const lx = pl.X + Math.cos(pl.ANGLE) * 48;
+const ly = pl.Y + Math.sin(pl.ANGLE) * 48;
+await db.exec(`UPDATE things SET x = ${lx}, y = ${ly}, sector_id = sector_at(${lx}, ${ly}), momz = 0,
+  z = (SELECT floor_h FROM sectors WHERE id = sector_at(${lx}, ${ly})), flags = BIN_AND(flags, BIN_NOT(131072)) WHERE id = ${skull}`);
+const zStart = (await flag(skull)).Z;
+const rises = [];
+for (let t = P + 301; t <= P + 304; t++) { await think(t); rises.push((await flag(skull)).Z - zStart); }
+
+// killed: S_SKULL_DIE1…6, A_Scream's DSFIRXPL, and then S_NULL: it's gone (no corpse)
+await atTic(P + 304);
+await db.exec('DELETE FROM sound_events');
+await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE damage_thing(${skull}, 1000, (SELECT thing_id FROM player WHERE id = 1)); END`);
+const popped = await trace(skull, P + 304, P + 350);
+const popSnd = await sounds();
+assert(rises.join() === '4,8,12,12' && /S_SKULL_DIE1.*S_SKULL_DIE6 \d+:null$/.test(popped) && popSnd.includes('DSFIRXPL') && (await thing(skull)) === undefined,
+  `it rises towards the player's middle, 4 a tic (${rises.join(', ')}); killed, ${popped.split(' ').slice(-2).join(' ')}: removed, with ${popSnd.join()}`);
 
 // an old save, from before these types were on the tables: ADOPT_STATES puts each where it was
 const olds = [await spawnAt(3004, 128, facing), await spawnAt(9, 160, facing), await spawnAt(65, 192, facing)];

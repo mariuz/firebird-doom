@@ -70,6 +70,7 @@ let showMap = false;
 let face = new FaceWidget();         // the status bar face (ST_updateFaceWidget), its own state
 let lastFire = false;               // the attack button, as the face sees it (player->attackdown)
 let amView = null;                  // the automap's window: zoom, follow, grid, marks (AutomapView)
+let lastSaid = null;                // the last of those (doom.lastSaid: it may time out before a slow test looks)
 let amMsg = null;                   // the page's own messages ({ text, tics }: the automap's, F5/F8/F11's), shown like the game's but kept out of Firebird
 let finale = null;                  // text screens: DOOM II's (MAP06/11/20, the secret levels, MAP30) and DOOM I's E1M8
 let finaleKey = false;              // a key went down: F_CastResponder
@@ -1476,6 +1477,7 @@ function chatSay(text, forMe = false) {
 
 function pageSay(text, always = false) {
   amMsg = { text, tics: 4 * 35, always };
+  lastSaid = text;
 }
 
 /** F11 (and the setting): usegamma, the presenter's palettes through the gamma table, with its message */
@@ -1750,6 +1752,7 @@ async function boot() {
       mouse: { move: (dx, dy) => mouse.move(dx, dy, settings.mouse), button: (b, down) => mouse.button(b, down) },
       get debug() { return { running, paused, frames, wallsReused, loopAlive, levelSerial, shownState, menu: !!menu?.active, melt: !!melt, keys: [...keys], mouseTurn, showMap, amFollow: amView?.follow, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, error: net.ls.error } }; },
       get message() { return amMsg?.text ?? hud?.MSG ?? null; },
+      get lastSaid() { return lastSaid; },
       get files() { return { base: baseWad?.label, pwads: pwads.map((p) => p.name), deh: dehPatch?.name ?? null }; },
       addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await reloadWads(); },
       useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await reloadWads(); },

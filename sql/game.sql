@@ -443,6 +443,8 @@ DECLARE xdeath_state INTEGER;
 DECLARE tic INTEGER;
 DECLARE alive SMALLINT;
 DECLARE spid SMALLINT;
+DECLARE skullfly INTEGER;
+DECLARE painroll INTEGER;
 BEGIN
   SELECT t.kind, t.hp, t.st, tt.pain_chance, tt.pain_fr, tt.death_fr, tt.death_sprite, tt.drop_type, t.x, t.y,
          tt.pain_snd, tt.death_snd, tt.count_kill, t.thing_type,
@@ -458,10 +460,16 @@ BEGIN
   IF (on_states = 1 AND state IS NOT NULL) THEN
   BEGIN
     SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+    -- MF_SKULLFLY (262144 in THINGS.FLAGS): a charging lost soul hit in flight stops dead
+    -- (P_XYMovement then puts it back in its spawn state). (DOOM's thrust from the hit,
+    -- which this port gives no monster, would set it drifting again.)
+    skullfly = 0;
+    SELECT BIN_AND(t.flags, 262144) FROM things t WHERE t.id = :tid INTO skullfly;
+    IF (skullfly <> 0) THEN UPDATE things t SET momx = 0, momy = 0, momz = 0 WHERE t.id = :tid;
     IF (hp <= 0) THEN
     BEGIN
       -- P_KillMobj: no longer shootable (its state's mode, 'dying', says so); solid until A_Fall
-      UPDATE things SET hp = :hp, momx = 0, momy = 0 WHERE id = :tid;
+      UPDATE things t SET hp = :hp, momx = 0, momy = 0, flags = BIN_AND(t.flags, BIN_NOT(262144)) WHERE id = :tid;
       IF (count_kill = 1) THEN
         UPDATE player p SET kills = kills + 1
          WHERE p.id = COALESCE((SELECT pk.id FROM player pk WHERE pk.thing_id = :src),
@@ -481,7 +489,9 @@ BEGIN
     END
     UPDATE things t SET hp = :hp WHERE t.id = :tid;
     -- the pain chance: into its pain state, and it'll fight back (MF_JUSTHIT)
-    IF (pain_state > 0 AND p_rand256() < pain_chance) THEN
+    -- (P_Random() is drawn first, flying or not)
+    painroll = p_rand256();
+    IF (pain_state > 0 AND painroll < pain_chance AND skullfly = 0) THEN
     BEGIN
       UPDATE things t SET just_hit = 1 WHERE t.id = :tid;
       EXECUTE PROCEDURE set_state(tid, pain_state, tic) RETURNING_VALUES alive;
@@ -2352,10 +2362,18 @@ BEGIN
    WHERE t.id = :mid;
 END^
 
+-- (A_SkullAttack, declared here for A_PainShootSkull; its body comes with the frame tables)
+CREATE OR ALTER PROCEDURE a_skull_attack (tid INTEGER)
+AS
+BEGIN
+END^
+
 -- A_PainShootSkull: a lost soul from in front of a pain elemental, charging
--- at once – unless 20 are already about, or there is no room for it.
+-- at once – unless 20 are already about, or there is no room for it. It goes
+-- after the pain elemental's target (TGT, or the player TP).
 CREATE OR ALTER PROCEDURE pain_shoot_skull (
-  sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION, rad DOUBLE PRECISION, ang DOUBLE PRECISION)
+  sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION, rad DOUBLE PRECISION, ang DOUBLE PRECISION,
+  tgt INTEGER = NULL, tp SMALLINT = 1)
 AS
 DECLARE prestep DOUBLE PRECISION;
 DECLARE nx DOUBLE PRECISION;
@@ -2374,8 +2392,12 @@ BEGIN
   EXECUTE PROCEDURE check_position(-1, nx, ny, sz, 16, 56, 0) RETURNING_VALUES ok, fz, cz, dz, sec;
   IF (ok = 0 OR check_sight(sx, sy, sz + 32, nx, ny, sz + 32) = 0) THEN EXIT;
   EXECUTE PROCEDURE spawn_thing(3006, nx, ny, sz, ang) RETURNING_VALUES mid;
-  -- …and A_SkullAttack: it launches itself at once (next tic)
-  UPDATE things t SET st = 'attack', st_len = 10, st_tics = 1, reaction = 0 WHERE t.id = :mid;
+  -- newmobj->target = actor->target, and A_SkullAttack: it launches itself at once
+  UPDATE things t SET target_id = :tgt, tplayer = COALESCE(:tp, t.tplayer) WHERE t.id = :mid;
+  IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :mid AND t.state IS NOT NULL)) THEN
+    EXECUTE PROCEDURE a_skull_attack(mid);
+  ELSE
+    UPDATE things t SET st = 'attack', st_len = 10, st_tics = 1, reaction = 0 WHERE t.id = :mid;
 END^
 
 -- A monster's attack lands on its target: the player (TGT NULL) or a monster.
@@ -3204,9 +3226,9 @@ BEGIN
       -- A_PainDie (death frame L): three lost souls, at 90°, 180° and 270°
       IF (ttype = 71 AND st_len - st_tics = 20) THEN
       BEGIN
-        EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI() / 2);
-        EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI());
-        EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI() * 3 / 2);
+        EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI() / 2, tgt, tp);
+        EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI(), tgt, tp);
+        EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI() * 3 / 2, tgt, tp);
       END
       IF (st_tics <= 0) THEN
       BEGIN
@@ -3349,7 +3371,7 @@ BEGIN
             EXECUTE PROCEDURE hurt_target(tgt, dmg_lo + CAST(FLOOR(p_random() * (dmg_hi - dmg_lo + 1)) AS INTEGER), id, tp);
         END
         ELSE IF (atk_kind = 'missile' AND missile_type = 3006) THEN
-          EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang);
+          EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang, tgt, tp);
         ELSE IF (atk_kind = 'missile') THEN
           -- P_SpawnMissile: at a shadow (you, partially invisible; a spectre)
           -- the shot goes up to 22.5° astray
@@ -3956,6 +3978,46 @@ BEGIN
   EXECUTE PROCEDURE monster_missile(tid, mtype, x, y, z, rad, ang, px, py, pz);
 END^
 
+-- A_SkullAttack: MF_SKULLFLY, its attack sound, face the target and fly at its middle at
+-- SKULLSPEED (20), climbing or sinking to arrive there (P_MobjThinker's SKULLS_THINK
+-- flies it)
+CREATE OR ALTER PROCEDURE a_skull_attack (tid INTEGER)
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE phgt DOUBLE PRECISION;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+DECLARE snd VARCHAR(8);
+DECLARE adx DOUBLE PRECISION;
+DECLARE ady DOUBLE PRECISION;
+DECLARE n DOUBLE PRECISION;
+BEGIN
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL) THEN EXIT;
+  UPDATE things t SET flags = BIN_OR(t.flags, 262144) WHERE t.id = :tid;
+  SELECT t.x, t.y, tt.atk_snd FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid INTO x, y, snd;
+  IF (snd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(snd, tid, x, y);
+  EXECUTE PROCEDURE a_face_target(tid);
+  SELECT t.z, t.angle FROM things t WHERE t.id = :tid INTO z, ang;
+  IF (tgt IS NOT NULL) THEN SELECT o.height FROM things o WHERE o.id = :tgt INTO phgt;
+  ELSE SELECT o.height FROM player p JOIN things o ON o.id = p.thing_id WHERE p.id = :tp INTO phgt;
+  adx = ABS(px - x);
+  ady = ABS(py - y);
+  n = MAXVALUE(1, FLOOR((adx + ady - MINVALUE(adx, ady) / 2) / 20));
+  UPDATE things t SET momx = COS(:ang) * 20, momy = SIN(:ang) * 20, momz = (:pz + COALESCE(:phgt, 56) / 2 - :z) / :n
+   WHERE t.id = :tid;
+END^
+
 -- A_CPosRefire: keep firing, unless (40 times in 256 it doesn't ask) the target is
 -- dead or out of sight: then back to the chase
 CREATE OR ALTER PROCEDURE a_cpos_refire (tid INTEGER, tic INTEGER)
@@ -4077,6 +4139,8 @@ DECLARE spawn_state INTEGER;
 DECLARE atk_snd VARCHAR(8);
 DECLARE active_snd VARCHAR(8);
 DECLARE atk_kind VARCHAR(10);
+DECLARE ttype INTEGER;
+DECLARE cant SMALLINT;
 DECLARE tgt INTEGER;
 DECLARE tp SMALLINT;
 DECLARE px DOUBLE PRECISION;
@@ -4110,10 +4174,10 @@ DECLARE alive SMALLINT;
 BEGIN
   SELECT t.x, t.y, t.z, t.height, t.radius, t.angle, t.sector_id, t.reaction, t.threshold, t.movedir, t.movecount,
          t.just_attacked, t.just_hit, t.momz, tt.speed, tt.floats, tt.melee_state, tt.missile_state, tt.spawn_state,
-         tt.atk_snd, tt.active_snd, tt.atk_kind
+         tt.atk_snd, tt.active_snd, tt.atk_kind, t.thing_type
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
     INTO x, y, z, hgt, rad, ang, sec, reaction, threshold, movedir, movecount,
-         just_attacked, just_hit, momz, spd, fl, melee_state, missile_state, spawn_state, atk_snd, active_snd, atk_kind;
+         just_attacked, just_hit, momz, spd, fl, melee_state, missile_state, spawn_state, atk_snd, active_snd, atk_kind, ttype;
   SELECT g.skill, IIF(g.skill = 5 OR g.fast = 1, 1, 0), g.players FROM game g WHERE g.id = 1 INTO skill, fast, nplayers;
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (reaction > 0) THEN reaction = reaction - 1;
@@ -4176,8 +4240,20 @@ BEGIN
         END
         ELSE IF (reaction = 0) THEN
         BEGIN
-          dist = MINVALUE(200, dist - 64 - IIF(melee_state > 0, 0, 128));
-          IF (p_rand256() >= dist) THEN fire = 1;
+          dist = FLOOR(dist - 64 - IIF(melee_state > 0, 0, 128));
+          -- the arch-vile only within 14 × 64; the revenant not under 196, and keener;
+          -- the cyberdemon, the spider mastermind and the lost soul keener too, and the
+          -- cyberdemon keenest
+          cant = 0;
+          IF (ttype = 64 AND dist > 14 * 64) THEN cant = 1;
+          IF (ttype = 66) THEN
+            IF (dist < 196) THEN cant = 1;
+            ELSE dist = FLOOR(dist / 2);
+          IF (ttype IN (16, 7, 3006)) THEN dist = FLOOR(dist / 2);
+          dist = MINVALUE(200, dist);
+          IF (ttype = 16 AND dist > 160) THEN dist = 160;
+          IF (cant = 0) THEN
+            IF (p_rand256() >= dist) THEN fire = 1;
         END
       END
       IF (fire = 1) THEN
@@ -4264,6 +4340,7 @@ BEGIN
   ELSE IF (act = 'A_CPosRefire') THEN EXECUTE PROCEDURE a_cpos_refire(tid, tic);
   ELSE IF (act = 'A_TroopAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 8, 3, 'DSCLAW');
   ELSE IF (act = 'A_SargAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 10, 4, NULL);
+  ELSE IF (act = 'A_SkullAttack') THEN EXECUTE PROCEDURE a_skull_attack(tid);
   ELSE IF (act = 'A_Fall') THEN
     -- A_Fall: the corpse no longer blocks (MF_SOLID off)
     UPDATE things SET solid = 0 WHERE id = :tid;
@@ -4329,6 +4406,85 @@ BEGIN
   END
 END^
 
+-- P_XYMovement for a charging lost soul (MF_SKULLFLY): it flies on at its momentum. Its
+-- box touching a solid thing (PIT_CheckThing; DOOM asks no heights here) it slams into it
+-- for (P_Random() % 8 + 1) × 3, stops and goes back to its spawn state; a wall stops it
+-- (no momentum: back to its spawn state the tic after). A step it takes crosses lines as a
+-- monster's does.
+CREATE OR ALTER PROCEDURE skulls_think (tic INTEGER)
+AS
+DECLARE tid INTEGER;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE momx DOUBLE PRECISION;
+DECLARE momy DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION;
+DECLARE ny DOUBLE PRECISION;
+DECLARE hit INTEGER;
+DECLARE hitp SMALLINT;
+DECLARE dmg INTEGER;
+DECLARE ok SMALLINT;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
+DECLARE dz DOUBLE PRECISION;
+DECLARE nsec INTEGER;
+DECLARE tele SMALLINT;
+DECLARE alive SMALLINT;
+BEGIN
+  FOR SELECT t.id FROM things t
+       WHERE t.state IS NOT NULL AND BIN_AND(t.flags, 262144) <> 0 ORDER BY t.id
+        INTO tid
+  DO
+  BEGIN
+    x = NULL;
+    SELECT t.x, t.y, t.z, t.momx, t.momy, t.radius, t.height FROM things t
+     WHERE t.id = :tid AND BIN_AND(t.flags, 262144) <> 0 INTO x, y, z, momx, momy, rad, hgt;
+    IF (x IS NULL) THEN CONTINUE;
+    IF (momx = 0 AND momy = 0) THEN
+    BEGIN
+      -- it slammed into something: back to its spawn state
+      UPDATE things t SET flags = BIN_AND(t.flags, BIN_NOT(262144)), momz = 0 WHERE t.id = :tid;
+      EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                                         WHERE t.id = :tid), tic) RETURNING_VALUES alive;
+      CONTINUE;
+    END
+    nx = x + momx;
+    ny = y + momy;
+    hit = NULL;
+    SELECT FIRST 1 o.id FROM things o
+     WHERE o.x BETWEEN :nx - 160 AND :nx + 160 AND o.solid = 1 AND o.id <> :tid
+       AND ABS(o.x - :nx) < o.radius + :rad AND ABS(o.y - :ny) < o.radius + :rad
+     ORDER BY o.id
+      INTO hit;
+    IF (hit IS NOT NULL) THEN
+    BEGIN
+      dmg = (MOD(p_rand256(), 8) + 1) * 3;
+      hitp = NULL;
+      SELECT p.id FROM player p WHERE p.thing_id = :hit INTO hitp;
+      IF (hitp IS NOT NULL) THEN EXECUTE PROCEDURE damage_player(dmg, tid, hitp);
+      ELSE EXECUTE PROCEDURE damage_thing(hit, dmg, tid);
+      IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.st NOT IN ('dying', 'dead'))) THEN
+      BEGIN
+        UPDATE things t SET flags = BIN_AND(t.flags, BIN_NOT(262144)), momx = 0, momy = 0, momz = 0 WHERE t.id = :tid;
+        EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                                           WHERE t.id = :tid), tic) RETURNING_VALUES alive;
+      END
+      CONTINUE;
+    END
+    -- (a flier: no ledge stops it, only walls, steps and low ceilings)
+    EXECUTE PROCEDURE check_position(tid, nx, ny, z, rad, hgt, 0) RETURNING_VALUES ok, fz, cz, dz, nsec;
+    IF (ok = 1) THEN
+    BEGIN
+      EXECUTE PROCEDURE monster_cross(tid, x, y, nx, ny) RETURNING_VALUES tele;
+      IF (tele = 0) THEN UPDATE things t SET x = :nx, y = :ny, sector_id = :nsec WHERE t.id = :tid;
+    END
+    ELSE UPDATE things t SET momx = 0, momy = 0 WHERE t.id = :tid;
+  END
+END^
+
 -- P_MobjThinker's countdown, for the things on the table: each whose state ends this
 -- tic goes on to the next, in spawn order (P_RunThinkers). Only those are touched
 -- (the index on STATE_TIC), not every thing every tic.
@@ -4345,30 +4501,73 @@ DECLARE rad DOUBLE PRECISION;
 DECLARE hgt DOUBLE PRECISION;
 DECLARE fz DOUBLE PRECISION;
 DECLARE cz DOUBLE PRECISION;
+DECLARE floats SMALLINT;
+DECLARE flags INTEGER;
+DECLARE living SMALLINT;
+DECLARE ttype INTEGER;
+DECLARE skullfly SMALLINT;
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE adx DOUBLE PRECISION;
+DECLARE ady DOUBLE PRECISION;
+DECLARE dist DOUBLE PRECISION;
+DECLARE delta DOUBLE PRECISION;
 BEGIN
-  -- P_ZMovement, for the walkers on the tables thrown into the air (an arch-vile's
-  -- blast): up, bumping the ceiling, down at 1 unit/tic², landing on the floor
-  FOR SELECT t.id, t.x, t.y, t.z, t.momz, t.radius, t.height FROM things t
-       WHERE t.momz <> 0 AND t.state IS NOT NULL ORDER BY t.id
-        INTO tid, x, y, z, momz, rad, hgt
+  -- P_MobjThinker's movement, for the things on the tables that move: first P_XYMovement
+  -- for a charging lost soul (SKULLS_THINK), then P_ZMovement for those in the air
+  EXECUTE PROCEDURE skulls_think(tic);
+  -- P_ZMovement: a walker thrown up (an arch-vile's blast) rises, bumps the ceiling and
+  -- falls at 1 unit/tic² to the floor; a flier (MF_FLOAT, MF_NOGRAVITY) drifts 4 units a
+  -- tic towards its target's middle while it's alive and not charging or squeezing
+  -- through (MF_INFLOAT); a charging skull bounces off floor and ceiling
+  FOR SELECT t.id, t.x, t.y, t.z, t.momz, t.radius, t.height, tt.floats, t.flags,
+             IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type
+        FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+       WHERE t.state IS NOT NULL AND (t.momz <> 0 OR tt.floats = 1) ORDER BY t.id
+        INTO tid, x, y, z, momz, rad, hgt, floats, flags, living, ttype
   DO
   BEGIN
     EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
     z = z + momz;
+    skullfly = IIF(BIN_AND(flags, 262144) <> 0, 1, 0);
+    IF (floats = 1 AND living = 1 AND skullfly = 0 AND BIN_AND(flags, 131072) = 0) THEN
+    BEGIN
+      EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+      IF (px IS NOT NULL) THEN
+      BEGIN
+        adx = ABS(px - x);
+        ady = ABS(py - y);
+        dist = adx + ady - MINVALUE(adx, ady) / 2;
+        delta = pz + COALESCE((SELECT o.height FROM things o WHERE o.id = COALESCE(:tgt,
+                  (SELECT p.thing_id FROM player p WHERE p.id = :tp))), 56) / 2 - z;
+        IF (delta < 0 AND dist < -delta * 3) THEN z = z - 4;
+        ELSE IF (delta > 0 AND dist < delta * 3) THEN z = z + 4;
+      END
+    END
+    IF (z <= fz) THEN
+    BEGIN
+      IF (skullfly = 1) THEN momz = -momz;   -- (the lost soul bounces)
+      IF (momz < 0) THEN momz = 0;
+      z = fz;
+    END
+    ELSE IF (floats = 0 OR (living = 0 AND ttype <> 3006)) THEN
+    BEGIN
+      -- (MF_NOGRAVITY goes with death, but not for the lost soul)
+      momz = momz - 1;
+      IF (momz = 0) THEN momz = -1;   -- (zero momz means "standing")
+    END
     IF (z + hgt > cz) THEN
     BEGIN
       IF (momz > 0) THEN momz = 0;
       z = cz - hgt;
-    END
-    IF (z <= fz) THEN
-    BEGIN
-      z = fz;
-      IF (momz < 0) THEN momz = 0;
-    END
-    ELSE
-    BEGIN
-      momz = momz - 1;
-      IF (momz = 0) THEN momz = -1;   -- (zero momz means "standing")
+      IF (skullfly = 1) THEN momz = -momz;
     END
     UPDATE things t SET z = :z, momz = :momz WHERE t.id = :tid;
   END

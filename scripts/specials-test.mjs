@@ -304,8 +304,10 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
       await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
       if ((await one('SELECT COUNT(*) n FROM things WHERE thing_type = 3006')).N > before.size) break;
     }
-    const souls = (await db.query(`SELECT id, x, y FROM things WHERE thing_type = 3006`)).rows.filter((r) => !before.has(r.ID));
-    // (each soul charges as soon as it appears, so allow for its first step)
+    // (each soul charges the tic it appears, A_SkullAttack's first step taken, as a new thinker
+    // runs in the same pass in DOOM: where it appeared is one step back along its momentum)
+    const souls = (await db.query(`SELECT id, IIF(BIN_AND(flags, 262144) <> 0, x - momx, x) x, IIF(BIN_AND(flags, 262144) <> 0, y - momy, y) y
+      FROM things WHERE thing_type = 3006`)).rows.filter((r) => !before.has(r.ID));
     const bearings = souls.map((r) => Math.round(((Math.atan2(r.Y - s2.y, r.X - s2.x) - (dir + Math.PI)) * 180) / Math.PI + 720) % 360).sort((a, b) => a - b);
     const near = (b) => [90, 180, 270].some((w) => Math.abs(b - w) <= 12);
     const dists = souls.map((r) => Math.hypot(r.X - s2.x, r.Y - s2.y));

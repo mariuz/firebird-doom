@@ -1195,17 +1195,23 @@ That's changing, in phases ([docs/ROADMAP.md](docs/ROADMAP.md)). DOOM's state ta
 (a state's tics start, its action is called, a 0-tic state goes straight on, `S_NULL` removes the thing)
 and `STATES_THINK` moves on, each tic, only the things whose state ends then (an index on the tic it
 ends; about 5 µs a tic when none does). The monsters move onto it family by family, and the first
-families are there: the zombieman, the shotgun guy, the chaingunner, the imp, the demon and the spectre live entirely on DOOM's states.
+families are there: the zombieman, the shotgun guy, the chaingunner, the imp, the demon, the spectre and the lost soul live entirely on DOOM's states.
 They start partway into their spawn state (`P_SpawnMapThing`'s `1 + P_Random() % tics`) and look
 (`A_Look`: the gunfire heard in their sector, or the player seen in the 180° ahead), chase
 (`A_Chase`: the 45° turns, `P_Move` and `P_NewChaseDir`, `P_CheckMissileRange` with its
 reaction time, `MF_JUSTHIT` and `MF_JUSTATTACKED`), take aim and fire (`A_FaceTarget`,
 `A_PosAttack`'s one bullet, `A_SPosAttack`'s three pellets, the chaingunner's `A_CPosRefire`
-bursts, the imp's `A_TroopAttack`: a claw within reach, else a fireball; the demons' `A_SargAttack` bite), and feel pain, die and get gibbed (`P_DamageMobj`, `P_KillMobj`: the pain chance, the
+bursts, the imp's `A_TroopAttack`: a claw within reach, else a fireball; the demons' `A_SargAttack` bite; the lost soul's `A_SkullAttack` charge), and feel pain, die and get gibbed (`P_DamageMobj`, `P_KillMobj`: the pain chance, the
 death or xdeath state 0–3 tics short, the dropped weapon) at info.c's timings, with DOOM's three
 sight and death cries picked at random. Every action is a PSQL procedure under its own name
 (`A_LOOK`, `A_CHASE`, `A_BULLETS`, …). With `-fast` or on Nightmare the demons' run, attack and pain states last half their tics, as
-`G_InitNew` halves them: a demon steps every tic instead of every 2. An old save's monsters of
+`G_InitNew` halves them: a demon steps every tic instead of every 2. The lost soul flies as DOOM's does: `A_SkullAttack`
+sets `MF_SKULLFLY` and sends it at its target's middle at 20 units a tic; it flies on until its box
+touches something solid (a slam for 3–24, then back to its spawn state) or a wall stops it, bouncing
+off floors and ceilings; shot in flight it stops dead, without its pain state. Afloat, it drifts 4
+units a tic towards its target's height (`P_ZMovement`). (DOOM's thrust from a hit, which this port
+gives no monster, would set a shot skull drifting; here it stops.) A pain elemental's souls charge
+at its target the tic they appear. An old save's monsters of
 these types join the table where they were. (The imp's pain cry is DOOM's
 `DSPOPAIN` now, not the demons' `DSDMPAIN`.)
 The other monsters still run on the old rules until their families move. `npm run test:states`

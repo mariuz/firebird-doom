@@ -234,15 +234,16 @@ try {
   const f4 = await doom(() => [window.doom.menu.current.name, window.doom.menu.item.act].join(':'));
   await key('Escape');
   assert(f1 === 'HELP1' && f2 === 'save' && f3 === 'load' && f4 === 'sound:sfx', `F1 ${f1}, F2 ${f2}, F3 ${f3}, F4 ${f4}`);
-  // (doom.message is the HUD row the next frame fetches: on a loaded machine wait for it)
-  const said = (text) => until((t) => window.doom.message === t, text, 30000).catch(() => {});
+  // (F5, F8 and F11 say so for 4 seconds of game time; a frame on a loaded machine can catch up
+  // that much at once, so read what was said last rather than what's on screen)
+  const said = (text) => until((t) => window.doom.lastSaid === t, text, 30000).catch(() => {});
   await key('F5');
   await said('Detail: low');
-  const f5 = await doom(() => [document.getElementById('detail').value, window.doom.message].join(' / '));
+  const f5 = await doom(() => [document.getElementById('detail').value, window.doom.lastSaid].join(' / '));
   await key('F5');
   await key('F8');
   await said('Messages: off');
-  const f8 = await doom(() => window.doom.message);
+  const f8 = await doom(() => window.doom.lastSaid);
   await key('F8');
   assert(f5 === 'low / Detail: low' && f8 === 'Messages: off' && (await doom(() => document.getElementById('detail').value)) === 'high',
     `F5 toggles the detail (${f5}) and F8 the messages (${f8}), each saying so`);
@@ -255,10 +256,10 @@ try {
   assert(/End this game/.test(f7) && f10 && (await doom(() => window.doom.screen)) === 'level', 'F7 asks to end the game, F10 to quit; N keeps playing');
   await key('F11');
   await said('Gamma: level 1');
-  const g1 = await doom(() => [window.doom.gamma, window.doom.message].join(' / '));
+  const g1 = await doom(() => [window.doom.gamma, window.doom.lastSaid].join(' / '));
   for (let i = 0; i < 4; i++) await key('F11');
   await said('Gamma: off');
-  const g0 = await doom(() => [window.doom.gamma, window.doom.message].join(' / '));
+  const g0 = await doom(() => [window.doom.gamma, window.doom.lastSaid].join(' / '));
   assert(g1 === '1 / Gamma: level 1' && g0 === '0 / Gamma: off', `F11 steps the gamma (${g1}; four more: ${g0})`);
   }
 

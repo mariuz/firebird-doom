@@ -572,33 +572,38 @@ if (sky) {
     else console.log('(no clear straight step on this map; skipping the chase climb)');
     await db.exec(`DELETE FROM things WHERE id IN (${flier}, ${walker})`);
 
-    // a lost soul's charge: 10 tics facing you, then 20 units a tic until it hits
+    // a lost soul's charge: 10 tics facing you, then 20 units a tic until it hits. (It lives on
+    // DOOM's frame tables: S_SKULL_ATK1, then A_SkullAttack sets MF_SKULLFLY, 262144 in
+    // THINGS.FLAGS, read here as "charge")
     await db.exec('UPDATE player SET health = 1000, armor = 0');
     await db.exec(`DELETE FROM sound_events`);
     const soul = await placeMon(3006, 260, `, angle = ${dir + Math.PI}`);
-    await db.exec(`UPDATE things SET st = 'attack', st_len = 10, st_tics = 10, reaction = 0, flags = 0 WHERE id = ${soul}`);
+    await db.exec(`UPDATE things SET reaction = 0, flags = 0 WHERE id = ${soul}`);
+    await setState(soul, 'S_SKULL_ATK1');
+    const skullSt = `IIF(BIN_AND(flags, 262144) <> 0, 'charge', st) st`;
     const seen = [];
     let maxStep = 0;
     let prev = await one(`SELECT x, y FROM things WHERE id = ${soul}`);
     let hurt = 0;
     for (let i = 0; i < 30 && !hurt; i++) {
       await tic();
-      const s = await one(`SELECT st, x, y FROM things WHERE id = ${soul}`);
+      const s = await one(`SELECT ${skullSt}, x, y FROM things WHERE id = ${soul}`);
       if (seen.at(-1) !== s.ST) seen.push(s.ST);
       maxStep = Math.max(maxStep, Math.hypot(s.X - prev.X, s.Y - prev.Y));
       prev = s;
       hurt = 1000 - (await one('SELECT health FROM player')).HEALTH;
     }
-    const after = await one(`SELECT st, momx, momy, momz FROM things WHERE id = ${soul}`);
+    const after = await one(`SELECT ${skullSt}, momx, momy, momz FROM things WHERE id = ${soul}`);
     const scream = (await one(`SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSSKLATK'`)).N;
     assert(seen.join(' ').startsWith('attack charge') && maxStep > 19 && maxStep < 21,
       `a lost soul winds up, then charges (${seen.join(' → ')}, ${maxStep.toFixed(1)} units a tic)`);
     assert(hurt >= 3 && hurt <= 24 && after.ST !== 'charge' && after.MOMX === 0 && after.MOMY === 0 && scream > 0,
       `…slams into you for ${hurt} and stops (${after.ST})`);
     // hurt in mid-flight, it stops dead
-    await db.exec(`UPDATE things SET st = 'charge', momx = ${Math.cos(dir) * -20}, momy = ${Math.sin(dir) * -20}, momz = 0 WHERE id = ${soul}`);
+    await db.exec(`UPDATE things SET flags = BIN_OR(flags, 262144), momx = ${Math.cos(dir) * -20}, momy = ${Math.sin(dir) * -20}, momz = 0 WHERE id = ${soul}`);
     await db.exec(`EXECUTE PROCEDURE damage_thing(${soul}, 1, ${pl.ID})`);
-    const stopped = await one(`SELECT st, momx, momy FROM things WHERE id = ${soul}`);
+    await tic();   // (stopped dead, it gives up the charge the next tic: P_XYMovement)
+    const stopped = await one(`SELECT ${skullSt}, momx, momy FROM things WHERE id = ${soul}`);
     assert(stopped.ST !== 'charge' && stopped.MOMX === 0 && stopped.MOMY === 0, `a charging lost soul that gets shot stops (${stopped.ST})`);
     await db.exec(`DELETE FROM things WHERE id = ${soul}`);
 
