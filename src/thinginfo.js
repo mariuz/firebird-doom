@@ -58,11 +58,11 @@ export const THING_TYPES = [
   { type: 72, sprite: 'KEEN', kind: 'keen', radius: 16, height: 72, solid: 1, hang: 1, hp: 100, painChance: 256, walk: 'A', pain: 'M', death: 'BCDEFGHIJKL', painSnd: 'DSKEENPN', deathSnd: 'DSKEENDT' },
   // the Icon of Sin: the brain (shoot it to win), the shooter that spits cubes
   // at the target spots, and the cube that turns into a monster where it lands
-  { type: 88, sprite: 'BBRN', kind: 'brain', radius: 16, height: 16, solid: 1, hp: 250, painChance: 256, walk: 'A', pain: 'B', death: 'A', painSnd: 'DSBOSPN', deathSnd: 'DSBOSDTH' },
+  { type: 88, sprite: 'BBRN', kind: 'brain', radius: 16, height: 16, solid: 1, hp: 250, painChance: 255, walk: 'A', pain: 'B', death: 'A', painSnd: 'DSBOSPN', deathSnd: 'DSBOSDTH' },
   { type: 89, sprite: 'BOSF', kind: 'shooter', radius: 20, height: 32, walk: 'A' },
   { type: 87, sprite: 'BOSF', kind: 'marker', radius: 1, height: 1, walk: 'A' },
   { type: 9009, sprite: 'BOSF', kind: 'cube', radius: 6, height: 32, speed: 10, walk: 'ABCD', bright: 1 },
-  { type: 9013, sprite: 'MISL', kind: 'fx', radius: 1, height: 1, walk: 'BCD', bright: 1 },
+  { type: 9013, sprite: 'MISL', kind: 'missile', radius: 11, height: 8, speed: 20, dmgLo: 20, walk: 'BCD', bright: 1, deathSnd: 'DSBAREXP' },   // (A_BrainScream's rockets: MT_ROCKET)
   { type: 9014, sprite: 'FIRE', kind: 'fx', radius: 1, height: 1, walk: 'ABCDEFGH', bright: 1 },
   // teleport fog (MT_TFOG): a monster getting back up on Nightmare
   { type: 9016, sprite: 'TFOG', kind: 'fx', radius: 1, height: 1, walk: 'ABABCDEFGHIJ', bright: 1 },
@@ -160,4 +160,6 @@ export const ON_STATES = new Set([
   // phase 3: the projectiles – fireballs, rockets, plasma, the BFG's ball, the revenant's
   // homing missile, the mancubus's fireballs, the arachnotron's plasma
   9000, 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008,
+  // the boss brain, its spitter, the cubes it spits and the explosions of its death
+  88, 89, 9009, 9013,
 ]);

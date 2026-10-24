@@ -4797,6 +4797,147 @@ BEGIN
   UPDATE things t SET angle = :ang, momx = COS(:ang) * :spd, momy = SIN(:ang) * :spd, momz = :momz WHERE t.id = :tid;
 END^
 
+-- A_BrainSpit: on skills 1 and 2 only every other time; a cube (MT_SPAWNSHOT, DSBOSPIT) at the
+-- next of the spawn spots in turn (braintargeton), its reaction time the tics it'll take to get
+-- there, worked out from the y distance alone, as DOOM does: (dy / momy) / its state's 3 tics
+CREATE OR ALTER PROCEDURE a_brain_spit (tid INTEGER)
+AS
+DECLARE n INTEGER;
+DECLARE k INTEGER;
+DECLARE spot INTEGER;
+DECLARE sx DOUBLE PRECISION;
+DECLARE sy DOUBLE PRECISION;
+DECLARE sz DOUBLE PRECISION;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+DECLARE adx DOUBLE PRECISION;
+DECLARE ady DOUBLE PRECISION;
+DECLARE flight DOUBLE PRECISION;
+DECLARE mid INTEGER;
+DECLARE momy DOUBLE PRECISION;
+DECLARE tic INTEGER;
+BEGIN
+  UPDATE game g SET brain_easy = 1 - g.brain_easy WHERE g.id = 1;
+  IF (EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.skill <= 2 AND g.brain_easy = 0)) THEN EXIT;
+  n = (SELECT COUNT(*) FROM things t WHERE t.thing_type = 87);
+  IF (n = 0) THEN EXIT;
+  SELECT MOD(g.brain_on, :n), g.tic FROM game g WHERE g.id = 1 INTO k, tic;
+  UPDATE game g SET brain_on = MOD(:k + 1, :n) WHERE g.id = 1;
+  SELECT FIRST 1 SKIP (:k) t.id, t.x, t.y, t.z FROM things t WHERE t.thing_type = 87 ORDER BY t.id INTO spot, sx, sy, sz;
+  SELECT t.x, t.y, t.z FROM things t WHERE t.id = :tid INTO x, y, z;
+  -- P_SpawnMissile
+  ang = ATAN2(sy - y, sx - x);
+  EXECUTE PROCEDURE spawn_thing(9009, x, y, z + 32, ang) RETURNING_VALUES mid;
+  adx = ABS(sx - x);
+  ady = ABS(sy - y);
+  flight = MAXVALUE(1, FLOOR((adx + ady - MINVALUE(adx, ady) / 2) / 10));
+  momy = SIN(ang) * 10;
+  UPDATE things t SET momx = COS(:ang) * 10, momy = :momy, momz = (:sz - :z) / :flight, owner_id = :spot,
+         reaction = IIF(ABS(:momy) < 1e-9, 0, TRUNC(TRUNC((:sy - :y) / :momy) / 3)),
+         -- (P_CheckMissileSpawn: through walls, it's never stopped)
+         state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3)),
+         x = t.x + COS(:ang) * 5, y = t.y + :momy / 2, z = t.z + (:sz - :z) / :flight / 2
+   WHERE t.id = :mid;
+  EXECUTE PROCEDURE play_sound('DSBOSPIT', mid, x, y);
+  EXECUTE PROCEDURE play_sound('DSBOSPIT', NULL, NULL, NULL);
+END^
+
+-- A_SpawnFly: when the cube's reaction time runs out (if it was 0, it never does), at its spot
+-- the spawn fire (DSTELEPT) and a monster, picked by P_Random() as DOOM does; one that sees a
+-- player at once (P_LookForPlayers, all around) goes into its see state. On MAP30 it
+-- telefrags whatever stands there (P_TeleportMove). The cube is gone.
+CREATE OR ALTER PROCEDURE a_spawn_fly (tid INTEGER, tic INTEGER)
+AS
+DECLARE r INTEGER;
+DECLARE spot INTEGER;
+DECLARE sx DOUBLE PRECISION;
+DECLARE sy DOUBLE PRECISION;
+DECLARE sz DOUBLE PRECISION;
+DECLARE mid INTEGER;
+DECLARE ttype INTEGER;
+DECLARE found SMALLINT;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE sec INTEGER;
+DECLARE alive SMALLINT;
+DECLARE vid INTEGER;
+DECLARE pid SMALLINT;
+BEGIN
+  UPDATE things t SET reaction = t.reaction - 1 WHERE t.id = :tid;
+  IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.reaction <> 0)) THEN EXIT;
+  SELECT t.owner_id FROM things t WHERE t.id = :tid INTO spot;
+  sx = NULL;
+  SELECT t.x, t.y, t.z FROM things t WHERE t.id = :spot INTO sx, sy, sz;
+  IF (sx IS NOT NULL) THEN
+  BEGIN
+    EXECUTE PROCEDURE spawn_thing(9014, sx, sy, sz, 0) RETURNING_VALUES mid;
+    EXECUTE PROCEDURE play_sound('DSTELEPT', mid, sx, sy);
+    r = p_rand256();
+    ttype = CASE WHEN r < 50 THEN 3001 WHEN r < 90 THEN 3002 WHEN r < 120 THEN 58 WHEN r < 130 THEN 71
+                 WHEN r < 160 THEN 3005 WHEN r < 162 THEN 64 WHEN r < 172 THEN 66 WHEN r < 192 THEN 68
+                 WHEN r < 222 THEN 67 WHEN r < 246 THEN 69 ELSE 3003 END;
+    EXECUTE PROCEDURE spawn_thing(ttype, sx, sy, sz, 0) RETURNING_VALUES mid;
+    SELECT t.height, t.radius, t.sector_id FROM things t WHERE t.id = :mid INTO hgt, rad, sec;
+    EXECUTE PROCEDURE look_for_player(sx, sy, sz, hgt, 0, sec, 1, 1) RETURNING_VALUES found;
+    IF (found > 0) THEN
+    BEGIN
+      UPDATE things t SET tplayer = :found, target_id = NULL WHERE t.id = :mid;
+      EXECUTE PROCEDURE set_state(mid, (SELECT tt.see_state FROM thing_types tt WHERE tt.thing_type = :ttype), tic)
+        RETURNING_VALUES alive;
+    END
+    -- P_TeleportMove: on MAP30 the new monster telefrags what's in its way (PIT_StompThing)
+    IF (EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.map_name = 'MAP30')) THEN
+      FOR SELECT o.id FROM things o
+           WHERE o.id <> :mid AND o.x BETWEEN :sx - 160 AND :sx + 160
+             AND ABS(o.x - :sx) < o.radius + :rad AND ABS(o.y - :sy) < o.radius + :rad
+             AND (o.kind IN ('monster', 'barrel', 'keen', 'brain') AND o.st NOT IN ('dying', 'dead') OR o.kind = 'player')
+           ORDER BY o.id
+            INTO vid
+      DO
+      BEGIN
+        pid = NULL;
+        SELECT p.id FROM player p WHERE p.thing_id = :vid AND p.dead = 0 INTO pid;
+        IF (pid IS NOT NULL) THEN EXECUTE PROCEDURE damage_player(10000, mid, pid);
+        ELSE IF (NOT EXISTS (SELECT 1 FROM things o WHERE o.id = :vid AND o.kind = 'player')) THEN
+          EXECUTE PROCEDURE damage_thing(vid, 10000, mid);
+      END
+  END
+  DELETE FROM things t WHERE t.id = :tid;
+END^
+
+-- A_BrainScream: a row of rockets bursting along the wall 320 behind the brain, every 8 from
+-- 196 to its left to 320 to its right, each 128 + up to 510 up, rising up to 2 a tic, its first
+-- frame up to 7 tics short; and the death cry, heard everywhere. A_BrainExplode: each, as its
+-- third frame comes, another within 8 either side of it.
+CREATE OR ALTER PROCEDURE brain_rocket (x DOUBLE PRECISION, y DOUBLE PRECISION, tic INTEGER)
+AS
+DECLARE mid INTEGER;
+DECLARE z DOUBLE PRECISION;
+BEGIN
+  z = 128 + p_rand256() * 2;
+  EXECUTE PROCEDURE spawn_thing(9013, x, y, z, 0) RETURNING_VALUES mid;
+  UPDATE things t SET momz = p_rand256() / 128e0 WHERE t.id = :mid;
+  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 7)) WHERE t.id = :mid;
+END^
+
+CREATE OR ALTER PROCEDURE a_brain_scream (tid INTEGER, tic INTEGER)
+AS
+DECLARE bx DOUBLE PRECISION;
+DECLARE by2 DOUBLE PRECISION;
+DECLARE x DOUBLE PRECISION;
+BEGIN
+  SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO bx, by2;
+  x = bx - 196;
+  WHILE (x < bx + 320) DO
+  BEGIN
+    EXECUTE PROCEDURE brain_rocket(x, by2 - 320, tic);
+    x = x + 8;
+  END
+  EXECUTE PROCEDURE play_sound('DSBOSDTH', NULL, NULL, NULL);
+END^
+
 -- The actions, by name (info.c's codepointers). Only those the first things on the
 -- table need are here; any other name does nothing until its phase brings it.
 CREATE OR ALTER PROCEDURE state_action (tid INTEGER, act VARCHAR(24), tic INTEGER)
@@ -4831,6 +4972,30 @@ BEGIN
   ELSE IF (act = 'A_BFGSpray') THEN
     EXECUTE PROCEDURE bfg_spray((SELECT t.angle FROM things t WHERE t.id = :tid), (SELECT t.owner_id FROM things t WHERE t.id = :tid));
   ELSE IF (act = 'A_Tracer') THEN EXECUTE PROCEDURE a_tracer(tid, tic);
+  ELSE IF (act = 'A_BrainAwake') THEN
+  BEGIN
+    -- A_BrainAwake: the spots counted from the first, and its cry
+    UPDATE game g SET brain_on = 0 WHERE g.id = 1;
+    EXECUTE PROCEDURE play_sound('DSBOSSIT', NULL, NULL, NULL);
+  END
+  ELSE IF (act = 'A_BrainSpit') THEN EXECUTE PROCEDURE a_brain_spit(tid);
+  ELSE IF (act IN ('A_SpawnSound', 'A_SpawnFly')) THEN
+  BEGIN
+    IF (act = 'A_SpawnSound') THEN
+    BEGIN
+      SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO x, y;
+      EXECUTE PROCEDURE play_sound('DSBOSCUB', tid, x, y);
+    END
+    EXECUTE PROCEDURE a_spawn_fly(tid, tic);
+  END
+  ELSE IF (act = 'A_BrainPain') THEN EXECUTE PROCEDURE play_sound('DSBOSPN', NULL, NULL, NULL);
+  ELSE IF (act = 'A_BrainScream') THEN EXECUTE PROCEDURE a_brain_scream(tid, tic);
+  ELSE IF (act = 'A_BrainExplode') THEN
+  BEGIN
+    SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO x, y;
+    EXECUTE PROCEDURE brain_rocket(x + (p_rand256() - p_rand256()) / 32e0, y, tic);
+  END
+  ELSE IF (act = 'A_BrainDie') THEN UPDATE game g SET exit_kind = 1 WHERE g.id = 1;   -- (G_ExitLevel)
   ELSE IF (act = 'A_SkelFist') THEN EXECUTE PROCEDURE a_melee_missile(tid, 10, 6, 'DSSKEPCH', 1);
   ELSE IF (act = 'A_SkelMissile') THEN EXECUTE PROCEDURE a_skel_missile(tid);
   ELSE IF (act = 'A_VileChase') THEN EXECUTE PROCEDURE a_vile_chase(tid, tic);
@@ -5034,11 +5199,30 @@ DECLARE fz DOUBLE PRECISION;
 DECLARE cz DOUBLE PRECISION;
 BEGIN
   FOR SELECT t.id FROM things t
-       WHERE t.kind = 'missile' AND t.state IS NOT NULL AND t.st NOT IN ('dying', 'dead') AND t.id > :after_id
+       WHERE t.kind IN ('missile', 'cube') AND t.state IS NOT NULL AND t.st NOT IN ('dying', 'dead') AND t.id > :after_id
        ORDER BY t.id
         INTO tid
   DO
   BEGIN
+    -- a boss cube (MF_NOCLIP): straight through everything, kept between floor and ceiling
+    IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.kind = 'cube')) THEN
+    BEGIN
+      SELECT t.x + t.momx, t.y + t.momy, t.z + t.momz, t.momz, t.radius, t.height FROM things t WHERE t.id = :tid
+        INTO x, y, z, momz, rad, hgt;
+      EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
+      IF (z <= fz) THEN
+      BEGIN
+        z = fz;
+        IF (momz < 0) THEN momz = 0;
+      END
+      IF (z + hgt > cz) THEN
+      BEGIN
+        IF (momz > 0) THEN momz = 0;
+        z = cz - hgt;
+      END
+      UPDATE things t SET x = :x, y = :y, z = :z, momz = :momz, sector_id = sector_at(:x, :y) WHERE t.id = :tid;
+      CONTINUE;
+    END
     x = NULL;
     SELECT t.x, t.y, t.momx, t.momy FROM things t WHERE t.id = :tid AND t.st NOT IN ('dying', 'dead')
       INTO x, y, momx, momy;

@@ -1195,7 +1195,13 @@ That's changing, in phases ([docs/ROADMAP.md](docs/ROADMAP.md)). DOOM's state ta
 (a state's tics start, its action is called, a 0-tic state goes straight on, `S_NULL` removes the thing)
 and `STATES_THINK` moves on, each tic, only the things whose state ends then (an index on the tic it
 ends; about 5 µs a tic when none does). The monsters move onto it family by family, and the first
-families are there: the zombieman, the shotgun guy, the chaingunner, the imp, the demon, the spectre, the lost soul, the cacodemon, the Hell knight, the baron of Hell, the cyberdemon and the spider mastermind live entirely on DOOM's states: all of DOOM I's monsters, and all of DOOM II's but the boss brain: the SS guard, Commander Keen, the pain elemental, the mancubus, the arachnotron, the revenant and the arch-vile. So do the projectiles (phase 3): the imp's,
+families are there: the zombieman, the shotgun guy, the chaingunner, the imp, the demon, the spectre, the lost soul, the cacodemon, the Hell knight, the baron of Hell, the cyberdemon and the spider mastermind live entirely on DOOM's states: all of DOOM I's monsters, and all of DOOM II's: the SS guard, Commander Keen, the pain elemental, the mancubus, the arachnotron, the revenant, the arch-vile and the boss brain. The brain's spitter wakes as any monster does
+(`A_Look`), cries (`A_BrainAwake`) and 181 tics later spits its first cube (`A_BrainSpit`, every other time on
+skills 1 and 2) at each spawn spot in turn; the cube flies through walls, its reaction time worked out from
+the y distance alone, as DOOM does (`(dy / momy) / 3`: a spot due east or west gets a cube that never lands),
+and when that runs out `A_SpawnFly` makes the spawn fire and a monster, telefragging what's there on MAP30.
+Killed, the brain sets off a row of 65 rockets behind it (`A_BrainScream`), each setting off another
+(`A_BrainExplode`), and ends the level 120 tics later (`A_BrainDie`). So do the projectiles (phase 3): the imp's,
 cacodemon's and baron's fireballs, rockets, plasma, the BFG's ball, the revenant's homing missile, the
 mancubus's fireballs and the arachnotron's plasma fly in their spawn states' frames and burst through their
 death states, as `P_SpawnMissile` and `P_SpawnPlayerMissile` start them: from the shooter, the first frame

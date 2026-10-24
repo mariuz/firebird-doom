@@ -27,7 +27,9 @@ CREATE TABLE game (
   -- (monsters come back as on Nightmare), -fast (Nightmare's monster speed)
   nomonsters    SMALLINT DEFAULT 0 NOT NULL,
   respawn       SMALLINT DEFAULT 0 NOT NULL,
-  fast          SMALLINT DEFAULT 0 NOT NULL
+  fast          SMALLINT DEFAULT 0 NOT NULL,
+  brain_on    INTEGER DEFAULT 0 NOT NULL,        -- braintargeton: the boss brain's next spawn spot (A_BrainSpit)
+  brain_easy  SMALLINT DEFAULT 0 NOT NULL        -- A_BrainSpit's easy: on skills 1 and 2 it spits every other time
 );
 
 -- player->frags[]: who killed whom this level (a player's own row and column

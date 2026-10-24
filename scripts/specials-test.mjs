@@ -110,7 +110,12 @@ if (iconMap && wad.lump('BBRNA0')) {
   await loadMap(db, wad, res, iconMap);
   await godMode();
   const before = (await one(`SELECT COUNT(*) n FROM things WHERE kind = 'monster'`)).N;
-  await tics(140);
+  // (the spitter wakes as A_Look does when it sees or hears the player – here it's woken – and
+  // spits its first cube 181 tics later, A_BrainAwake's S_BRAINEYESEE)
+  await db.query(`EXECUTE BLOCK AS DECLARE a SMALLINT; DECLARE sid INTEGER; BEGIN
+      SELECT FIRST 1 id FROM things WHERE kind = 'shooter' ORDER BY id INTO sid;
+      EXECUTE PROCEDURE set_state(sid, (SELECT id FROM states WHERE name = 'S_BRAINEYESEE'), (SELECT tic FROM game WHERE id = 1)) RETURNING_VALUES a; END`);
+  await tics(190);
   const cubes = (await one(`SELECT COUNT(*) n FROM things WHERE kind = 'cube'`)).N;
   const spit = (await one(`SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSBOSPIT'`)).N;
   assert(cubes > 0 && spit > 0, `${iconMap}: the shooter spits a cube (${cubes} in flight)`);
@@ -122,7 +127,7 @@ if (iconMap && wad.lump('BBRNA0')) {
   await tics(60);
   const fx = (await one(`SELECT COUNT(*) n FROM things WHERE thing_type = 9013`)).N;
   assert(fx > 0, `${iconMap}: the brain dies in a storm of explosions (${fx} on screen)`);
-  await tics(60);
+  await tics(70);   // (A_BrainDie: S_BRAIN_DIE1's 100 tics, then 10 and 10)
   assert((await one('SELECT exit_kind FROM game')).EXIT_KIND === 1, `${iconMap}: killing the brain ends the game`);
 } else console.log('(no Icon of Sin in this WAD)');
 

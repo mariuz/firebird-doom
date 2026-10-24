@@ -35,7 +35,7 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
   phases*). Phases 0 and 1 are done (the table, GPL-2 in a file of its own; the machine in SQL);
   phase 2, the monsters family by family, is under way: the zombieman, shotgun guy and
-  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's but the boss brain; the boss brain, whose cubes are projectiles (phase 3), is last. Phase 3 is under way: the projectiles are on the table.
+  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's, the boss brain last (with phase 3's cubes): phase 2 is done. Phase 3 is under way: the projectiles and the brain's cubes are on the table.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -184,7 +184,7 @@ pain, death and xdeath states (MF_JUSTHIT, the `&3` tic cut), and the arch-vile 
 their raise state. Each state carries a `mode` the loader works out from mobjinfo's chains (idle,
 chase, attack, pain, dying, dead, raise), copied into `things.st`, so the code that asks "can it be
 shot, is it a corpse" works for both kinds. `STATES_THINK` lets a stated walker tossed into the
-air fall (P_ZMovement). `ADOPT_STATES` moves an old save's zombies onto the table. Next: the boss brain. The plan as
+air fall (P_ZMovement). `ADOPT_STATES` moves an old save's zombies onto the table. Phase 2 is done. The plan as
 it was: zombieman, sergeant and chaingunner first
 (A_Look, A_Chase, A_FaceTarget, A_PosAttack, A_SPosAttack, A_CPosAttack, A_CPosRefire, A_Pain,
 A_Scream, A_XScream, A_Fall), then the imp, the demons, the lost soul, the cacodemon, the barons,
@@ -200,8 +200,10 @@ deathstate (xdeath when gibbed), and the existing behaviour tests still pass.
 the move), `EXPLODE_MISSILE` (P_ExplodeMissile), `CHECK_MISSILE_SPAWN` (P_CheckMissileSpawn), `MISSILES_THINK`
 (P_XYMovement's half moves, P_ZMovement), A_Explode, A_BFGSpray and A_Tracer; a missile spawned in the state
 pass moves that tic. Two changes from the old rules: a missile bursts on a sky ceiling (DOOM's P_ZMovement)
-instead of vanishing, and starts at its shooter rather than a body's width ahead. Next: the boss brain's
-cubes, then puffs, blood and the rest. The plan as it was: Projectiles (and their explosions), the player's
+instead of vanishing, and starts at its shooter rather than a body's width ahead. Then the boss brain (88), its spitter (89), its cubes (9009, MF_NOCLIP: MISSILES_THINK flies them through walls)
+and its explosions (9013, MT_ROCKETs): A_BrainAwake, A_BrainSpit (braintargeton and easy in `game.brain_on`,
+`brain_easy`), A_SpawnSound, A_SpawnFly, A_BrainPain, A_BrainScream, A_BrainExplode, A_BrainDie. Next: puffs,
+blood and the rest. The plan as it was: Projectiles (and their explosions), the player's
 own sprite (S_PLAY…), puffs and blood, barrels, the decorations and items, the teleport fog, the
 arch-vile's fire and the boss brain's cubes and spawn fire. Then the renderer's own walking
 animation and the frame strings in `thinginfo.js` go.

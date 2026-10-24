@@ -603,6 +603,51 @@ assert(Math.abs(startOut - 5) < 0.01 && fb.STATE_TIC - P >= 1 && fb.STATE_TIC - 
   && Math.abs(Math.hypot(rk2.X - rk.X, rk2.Y - rk.Y) - 20) < 0.01 && /S_EXPLODE1/.test(rocketTrace) && impHurt > 20,
   `missiles: a fireball starts ${startOut.toFixed(0)} out, its first frame ${fb.STATE_TIC - P} tics, flies ${fb.V} a tic, hits the player for ${ballHit} and bursts (${ballTrace.split(' ').slice(-2).join(' ')}); a rocket goes 20 a tic and bursts on an imp (${impHurt} damage with the splash)`);
 
+// the boss brain: A_BrainSpit throws a cube (DSBOSPIT) at each spawn spot in turn, its reaction time
+// DOOM's (dy / momy) / 3; when that runs out, A_SpawnFly makes a monster there and the cube is gone.
+// Killed, the brain's A_BrainScream sets off 65 rockets along the wall behind it, and 120 tics later
+// A_BrainDie ends the level
+P = 4800;
+await atTic(P);
+const bbSpotAng = pl.ANGLE + 0.3;
+const bbSpotAt = async (d) => (await one(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN
+  EXECUTE PROCEDURE spawn_thing(87, ${pl.X + Math.cos(bbSpotAng) * d}, ${pl.Y + Math.sin(bbSpotAng) * d}, NULL, 0) RETURNING_VALUES id; SUSPEND; END`)).ID;
+const bbSpots = [await bbSpotAt(160), await bbSpotAt(320)];
+await db.exec(`UPDATE things SET thing_type = 0 WHERE thing_type = 87 AND id NOT IN (${bbSpots.join()})`);   // (only these two)
+const bbSpitter = await spawnAt(89, 1, 0);
+await db.exec('DELETE FROM sound_events');
+await db.exec('UPDATE game SET brain_on = 0 WHERE id = 1');
+const bbCubes0 = (await one('SELECT COALESCE(MAX(id), 0) m FROM things')).M;
+await setState(bbSpitter, 'S_BRAINEYE1', P);
+await setState(bbSpitter, 'S_BRAINEYE1', P + 1);
+const bbCubes = await all(`SELECT id, owner_id, reaction, momy, y FROM things WHERE thing_type = 9009 AND id > ${bbCubes0} ORDER BY id`);
+const bbSpitY = pl.Y + Math.sin(pl.ANGLE) * 1;
+const bbWantReact = (spot, cube) => Math.trunc(Math.trunc((spot.Y - bbSpitY) / cube.MOMY) / 3);
+const bbSpotRows = await all(`SELECT id, y FROM things WHERE id IN (${bbSpots.join()}) ORDER BY id`);
+const bbSpitSnd = await sounds();
+const bbMonsters0 = (await one("SELECT COUNT(*) n FROM things WHERE kind = 'monster'")).N;
+for (let t = P + 1; t <= P + 120 && (await one(`SELECT COUNT(*) n FROM things WHERE id = ${bbCubes[0].ID}`)).N; t++) await think(t);
+const bbLanded = (await one(`SELECT COUNT(*) n FROM things WHERE id = ${bbCubes[0].ID}`)).N === 0;
+const bbSpawned = (await one("SELECT COUNT(*) n FROM things WHERE kind = 'monster'")).N - bbMonsters0;
+await db.exec(`DELETE FROM things WHERE thing_type IN (9009, 9014) OR id IN (${bbSpitter}, ${bbSpots.join()}) OR (kind = 'monster' AND id > ${bbCubes0})`);
+await atTic(P + 200);
+const brainId = await spawnAt(88, 400, facing);
+await db.exec('DELETE FROM sound_events');
+const rockets9013 = (await one('SELECT COALESCE(MAX(id), 0) m FROM things')).M;
+await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE damage_thing(${brainId}, 1000, (SELECT thing_id FROM player WHERE id = 1)); END`);
+const bbRow = (await one(`SELECT COUNT(*) n FROM things WHERE thing_type = 9013 AND id > ${rockets9013}`)).N;
+const bbBrainCry = await sounds();
+await db.exec('UPDATE game SET exit_kind = 0 WHERE id = 1');
+const bbBrainTrace = await trace(brainId, P + 200, P + 330);
+const bbEnded = (await one('SELECT exit_kind FROM game WHERE id = 1')).EXIT_KIND;
+await db.exec('UPDATE game SET exit_kind = 0 WHERE id = 1');
+await db.exec(`DELETE FROM things WHERE thing_type = 9013 OR id = ${brainId}`);
+assert(bbCubes.length === 2 && bbCubes[0].OWNER_ID === bbSpotRows[0].ID && bbCubes[1].OWNER_ID === bbSpotRows[1].ID
+  && bbCubes.every((c, i) => c.REACTION === bbWantReact(bbSpotRows[i], c)) && bbSpitSnd.includes('DSBOSPIT')
+  && bbLanded && bbSpawned === 1
+  && bbRow === 65 && bbBrainCry.includes('DSBOSDTH') && /S_BRAIN_DIE4$/.test(bbBrainTrace) && bbEnded === 1,
+  `the boss brain: two cubes, one at each spot in turn (reaction ${bbCubes.map((c) => c.REACTION).join(', ')}); the first lands and makes a monster; dying, ${bbRow} rockets and ${bbBrainTrace.split(' ').at(-1)}, the level ends`);
+
 // every type on the tables lies down 'dead' at the end of its death (and its gibbing), even
 // where that last frame is also a decoration's spawn state (S_POSS_DIE5: a dead former human)
 const deadEnds = [];
