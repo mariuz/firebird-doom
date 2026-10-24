@@ -349,13 +349,17 @@ BEGIN
          IIF(tt.on_states = 1, tt.spawn_state, NULL),
          IIF(tt.on_states = 1, (SELECT IIF(s.tics < 0, NULL, g.tic + s.tics) FROM states s CROSS JOIN game g
                                  WHERE s.id = tt.spawn_state AND g.id = 1), NULL),
-         IIF(tt.on_states = 1, (SELECT IIF(g.skill = 5, 0, 8) FROM game g WHERE g.id = 1), 0)
+         IIF(tt.on_states = 1 AND tt.kind <> 'player', (SELECT IIF(g.skill = 5, 0, 8) FROM game g WHERE g.id = 1), 0)
     FROM thing_types tt WHERE tt.thing_type = :ttype;
 END^
 
 CREATE OR ALTER PROCEDURE damage_player (dmg INTEGER, src INTEGER = NULL, pid SMALLINT = 1)
 AS
 DECLARE god SMALLINT;
+DECLARE hp INTEGER;
+DECLARE tic INTEGER;
+DECLARE alive SMALLINT;
+DECLARE nst INTEGER;
 DECLARE killed INTEGER;
 DECLARE ptid INTEGER;
 DECLARE px DOUBLE PRECISION;
@@ -392,12 +396,41 @@ BEGIN
          health = health - (:dmg - :saved),
          damage_count = MINVALUE(damage_count + :dmg, 100)
    WHERE id = :pid;
-  -- the player's sprite: S_PLAY_PAIN (a player's painchance is 255), or
-  -- P_KillMobj's deathstate – xdeathstate below -spawnhealth (the counter in ST_TICS)
-  UPDATE things t
-     SET frame = (SELECT IIF(p.health > 0, 'G', IIF(p.health < -100, 'O', 'H')) FROM player p WHERE p.id = :pid),
-         st_tics = (SELECT IIF(p.health > 0, 4, 0) FROM player p WHERE p.id = :pid)
-   WHERE t.id = :ptid;
+  SELECT p.health FROM player p WHERE p.id = :pid INTO hp;
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  IF (hp <= 0) THEN
+  BEGIN
+    -- P_KillMobj: no longer solid (a player's corpse can be walked over), into the
+    -- xdeathstate below -spawnhealth, else the deathstate, its first frame 0–3 tics
+    -- shorter (at least 1). The body keeps the health it died with: A_PlayerScream
+    -- screams louder below -50. (The cry comes with the second frame: A_PlayerScream,
+    -- or A_XScream when gibbed.)
+    SELECT IIF(:hp < -100, tt.xdeath_state, tt.death_state) FROM thing_types tt WHERE tt.thing_type = 1 INTO nst;
+    UPDATE things t SET solid = 0, hp = :hp WHERE t.id = :ptid;
+    EXECUTE PROCEDURE set_state(ptid, nst, tic) RETURNING_VALUES alive;
+    UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3))
+     WHERE t.id = :ptid AND t.state_tic IS NOT NULL;
+  END
+  ELSE
+  BEGIN
+    UPDATE things t SET hp = :hp WHERE t.id = :ptid;
+    -- P_DamageMobj: a player's painchance is 255 (P_Random() < 255: all but one roll in 256),
+    -- and the pain ends a teleport's freeze (reactiontime = 0); A_Pain cries in S_PLAY_PAIN2
+    IF (p_rand256() < 255) THEN
+    BEGIN
+      UPDATE things t SET reaction = 0 WHERE t.id = :ptid;
+      EXECUTE PROCEDURE set_state(ptid, (SELECT tt.pain_state FROM thing_types tt WHERE tt.thing_type = 1), tic)
+        RETURNING_VALUES alive;
+    END
+    -- (then, as for a monster: hurt by someone else (not an arch-vile) while standing in its
+    -- spawn state, it goes to its see state – S_PLAY_RUN1)
+    ELSE IF (src IS NOT NULL AND src <> ptid
+             AND NOT EXISTS (SELECT 1 FROM things v WHERE v.id = :src AND v.thing_type = 64)
+             AND EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                          WHERE t.id = :ptid AND t.state = tt.spawn_state)) THEN
+      EXECUTE PROCEDURE set_state(ptid, (SELECT tt.see_state FROM thing_types tt WHERE tt.thing_type = 1), tic)
+        RETURNING_VALUES alive;
+  END
   UPDATE player SET dead = 1, health = 0, msg = 'You died. Press USE to ' || IIF((SELECT g.players FROM game g WHERE g.id = 1) > 1, 'respawn.', 'restart.'), msg_tics = 100000
    WHERE id = :pid AND health <= 0;
   killed = ROW_COUNT;
@@ -406,8 +439,6 @@ BEGIN
   IF (killed > 0) THEN
     UPDATE frags f SET f.n = f.n + 1
      WHERE f.victim = :pid AND f.killer = (SELECT p.id FROM player p WHERE p.thing_id = :src);
-  -- (from the player: for whoever's playing it, full volume in the middle)
-  EXECUTE PROCEDURE play_sound(IIF(killed > 0, 'DSPLDETH', 'DSPLPAIN'), ptid, px, py);
 END^
 
 -- P_DamageMobj. SRC is who did it (NULL: the world – crushers, slime).
@@ -1870,10 +1901,10 @@ BEGIN
   END
   IF (sx IS NULL) THEN EXIT;
   -- the old body: a corpse like any other
-  UPDATE things t SET kind = 'decor', solid = 0, st = 'dead', frame = IIF(t.frame BETWEEN 'O' AND 'W', 'W', 'N')
-   WHERE t.id = :old;
+  -- (its death states play on to the last: ST follows them, 'dying' then 'dead')
+  UPDATE things t SET kind = 'decor', solid = 0 WHERE t.id = :old;
   EXECUTE PROCEDURE spawn_thing(1, sx, sy, NULL, sa) RETURNING_VALUES nid;
-  UPDATE things t SET flags = 0, translation = :pid - 1, frame = 'A' WHERE t.id = :nid;
+  UPDATE things t SET flags = 0, translation = :pid - 1, hp = (SELECT r.init_health FROM rules r WHERE r.id = 1) WHERE t.id = :nid;
   EXECUTE PROCEDURE spawn_thing(9016, sx + 20 * COS(sa), sy + 20 * SIN(sa), NULL, 0) RETURNING_VALUES fog;
   EXECUTE PROCEDURE play_sound('DSTELEPT', fog, sx + 20 * COS(sa), sy + 20 * SIN(sa));
   UPDATE player p
@@ -1894,6 +1925,7 @@ CREATE OR ALTER PROCEDURE player_think (
   pid SMALLINT, fwd DOUBLE PRECISION, side DOUBLE PRECISION, turn DOUBLE PRECISION,
   fire SMALLINT, use_key SMALLINT, weapon_sel SMALLINT, run SMALLINT, tic INTEGER)
 AS
+DECLARE alive SMALLINT;
 DECLARE iron INTEGER;
 DECLARE tid INTEGER;
 DECLARE x DOUBLE PRECISION;
@@ -2028,6 +2060,15 @@ BEGIN
     UPDATE things SET reaction = :preact - 1 WHERE id = :tid;
   END
 
+  -- P_MovePlayer: standing (S_PLAY) and told to move, the body starts running (S_PLAY_RUN1).
+  -- (P_PlayerThink comes before the body's own thinker, which counts this tic off its
+  -- new state: set at TIC - 1 it ends when DOOM's does)
+  IF ((fwd <> 0 OR side <> 0)
+      AND EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                   WHERE t.id = :tid AND t.state = tt.spawn_state)) THEN
+    EXECUTE PROCEDURE set_state(tid, (SELECT tt.see_state FROM thing_types tt WHERE tt.thing_type = 1), tic - 1)
+      RETURNING_VALUES alive;
+
   -- P_MovePlayer: turn, thrust, friction
   ang = ang + turn;
   ang = ang - 2 * PI() * FLOOR(ang / (2 * PI()));
@@ -2080,6 +2121,12 @@ BEGIN
   momy = momy * 0.90625e0;
   IF (ABS(momx) < 0.05) THEN momx = 0;
   IF (ABS(momy) < 0.05) THEN momy = 0;
+  -- P_XYMovement: stopped with no move told, a running body stands (S_PLAY_RUN1–4 → S_PLAY)
+  IF (momx = 0 AND momy = 0 AND fwd = 0 AND side = 0
+      AND EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                   WHERE t.id = :tid AND t.state BETWEEN tt.see_state AND tt.see_state + 3)) THEN
+    EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1), tic - 1)
+      RETURNING_VALUES alive;
 
   -- P_CrossSpecialLine: walk-over triggers between the old and new position
   -- (not without clipping: no lines were checked, so none are crossed)
@@ -2311,7 +2358,15 @@ BEGIN
       cells = cells - (SELECT r.bfg_cells FROM rules r WHERE r.id = 1);
     END
     attack_tics = attack_len;
-    UPDATE things SET frame = 'F', st_tics = 18 WHERE id = :tid;
+    -- P_FireWeapon: the body shoots (S_PLAY_ATK1); the guns with a flash light it up
+    -- (S_PLAY_ATK2: A_FirePistol, A_FireShotgun(2), A_FireCGun, and A_GunFlash for the
+    -- rocket launcher and the BFG). (The weapons' own frames come with phase 4: until
+    -- then the flash comes with the shot.)
+    EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK1'), tic - 1)
+      RETURNING_VALUES alive;
+    IF (weapon IN (2, 3, 4, 5, 7, 9)) THEN
+      EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK2'), tic - 1)
+        RETURNING_VALUES alive;
     EXECUTE PROCEDURE play_sound(CASE weapon WHEN 1 THEN 'DSPUNCH' WHEN 3 THEN 'DSSHOTGN' WHEN 5 THEN 'DSRLAUNC'
                                              WHEN 6 THEN 'DSPLASMA' WHEN 7 THEN 'DSBFG'
                                              WHEN 8 THEN IIF(shot_hit = 1, 'DSSAWHIT', 'DSSAWFUL')
@@ -5139,6 +5194,14 @@ BEGIN
   END
   ELSE IF (act = 'A_BossDeath') THEN
     EXECUTE PROCEDURE boss_death((SELECT t.thing_type FROM things t WHERE t.id = :tid));
+  ELSE IF (act = 'A_PlayerScream') THEN
+  BEGIN
+    -- A_PlayerScream: the player's death cry; in DOOM II, below -50 health, the louder one
+    -- (from the player: for whoever's playing it, full volume in the middle)
+    SELECT t.x, t.y, TRIM(IIF(t.hp < -50 AND g.map_name STARTING WITH 'MAP', 'DSPDIEHI', 'DSPLDETH'))
+      FROM things t CROSS JOIN game g WHERE t.id = :tid AND g.id = 1 INTO x, y, snd;
+    EXECUTE PROCEDURE play_sound(snd, tid, x, y);
+  END
 END^
 
 -- P_SetMobjState: TID into state ST at TIC – its tics start, then its action is called.
@@ -5403,7 +5466,7 @@ BEGIN
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        -- (P_ZMovement runs while it moves up or down or is off the floor, z != floorz: off the floor
        -- with no momz is the top of a toss, marked 1048576 in THINGS.FLAGS for the tic it lasts)
-       WHERE t.state IS NOT NULL AND t.kind NOT IN ('missile', 'cube')
+       WHERE t.state IS NOT NULL AND t.kind NOT IN ('missile', 'cube', 'player')
          AND (t.momz <> 0 OR tt.floats = 1 OR BIN_AND(t.flags, 1048576) <> 0)
        ORDER BY t.id
         INTO tid, x, y, z, momz, rad, hgt, floats, flags, living, ttype, st, nograv
@@ -5481,9 +5544,15 @@ DECLARE n INTEGER;
 DECLARE tic INTEGER;
 BEGIN
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
-  FOR SELECT t.id, t.st, CASE WHEN t.st = 'idle' THEN tt.spawn_state WHEN t.st IN ('dying', 'dead') THEN tt.death_state
+  -- (a player's body never changed its ST then: dead is the player's own DEAD; a player's
+  -- corpse gibbed showed W, the end of the xdeath)
+  FOR SELECT t.id, q.st, CASE WHEN q.st = 'idle' THEN tt.spawn_state
+                              WHEN q.st IN ('dying', 'dead') AND t.thing_type = 1 AND t.frame BETWEEN 'O' AND 'W' THEN tt.xdeath_state
+                              WHEN q.st IN ('dying', 'dead') THEN tt.death_state
                               ELSE tt.see_state END
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+        CROSS JOIN LATERAL (SELECT IIF(EXISTS (SELECT 1 FROM player p WHERE p.thing_id = t.id AND p.dead = 1), 'dead',
+                                        IIF(t.kind = 'player', 'idle', t.st)) st FROM rdb$database) q
        WHERE tt.on_states = 1 AND t.state IS NULL
        ORDER BY t.id
         INTO tid, st, nst
@@ -5532,44 +5601,6 @@ BEGIN
          iron_tics = MAXVALUE(0, p.iron_tics - 1),
          infra_tics = MAXVALUE(0, p.infra_tics - 1),
          strength_tics = IIF(p.strength_tics > 0, p.strength_tics + 1, 0);
-END^
-
--- How another player looks (info.c's S_PLAY… states), one tic on: standing
--- (A), running (A B C D, 4 tics each, while it moves faster than STOPSPEED),
--- the shot (F for 6 tics, then E for 12), pain (G for 4), dying (H…N, 10
--- tics each) or gibbed (O…W, 5 each). ST_TICS counts the state's tics: down,
--- or up from the death. (Alone you never see yourself: DOOM_TIC skips this.)
-CREATE OR ALTER PROCEDURE player_anim (pid SMALLINT, tic INTEGER)
-AS
-DECLARE tid INTEGER;
-DECLARE fr CHAR(1);
-DECLARE n INTEGER;
-DECLARE is_dead SMALLINT;
-DECLARE moving SMALLINT;
-BEGIN
-  SELECT p.thing_id, p.dead, t.frame, COALESCE(t.st_tics, 0),
-         IIF(ABS(t.momx) > 0.0625e0 OR ABS(t.momy) > 0.0625e0, 1, 0)
-    FROM player p JOIN things t ON t.id = p.thing_id
-   WHERE p.id = :pid
-    INTO tid, is_dead, fr, n, moving;
-  IF (tid IS NULL) THEN EXIT;
-  IF (is_dead = 1) THEN
-  BEGIN
-    n = n + 1;
-    IF (fr BETWEEN 'O' AND 'W') THEN fr = SUBSTRING('OPQRSTUVW' FROM 1 + MINVALUE(8, n / 5) FOR 1);
-    ELSE fr = SUBSTRING('HIJKLMN' FROM 1 + MINVALUE(6, n / 10) FOR 1);
-  END
-  ELSE IF (fr IN ('E', 'F', 'G') AND n > 1) THEN
-  BEGIN
-    n = n - 1;
-    IF (fr <> 'G') THEN fr = IIF(n > 12, 'F', 'E');
-  END
-  ELSE
-  BEGIN
-    n = 0;
-    fr = IIF(moving = 1, SUBSTRING('ABCD' FROM 1 + MOD(tic / 4, 4) FOR 1), 'A');
-  END
-  UPDATE things SET frame = :fr, st_tics = :n WHERE id = :tid;
 END^
 
 -- A netgame's consistency check (every 35 tics each peer sends it to the
@@ -5664,7 +5695,6 @@ BEGIN
         INTO pid, c_fwd, c_side, c_turn, c_fire, c_use, c_weapon, c_run
   DO
   BEGIN
-    EXECUTE PROCEDURE player_anim(pid, tic);
     EXECUTE PROCEDURE player_think(pid, c_fwd, c_side, c_turn, c_fire, c_use, c_weapon, c_run, tic);
   END
   EXECUTE PROCEDURE world_tic(tic);
@@ -5871,8 +5901,9 @@ BEGIN
       py = py + 40 * (i - 1) * SIN(pa + PI() / 2);
     END
     tid = NEXT VALUE FOR thing_seq;
-    INSERT INTO things (id, thing_type, kind, x, y, angle, hp, radius, height, solid, st, frame, translation)
-    VALUES (:tid, 1, 'player', :px, :py, :pa, 100, 16, 56, 1, 'idle', 'A', :i - 1);
+    INSERT INTO things (id, thing_type, kind, x, y, angle, hp, radius, height, solid, st, frame, translation, state)
+    VALUES (:tid, 1, 'player', :px, :py, :pa, 100, 16, 56, 1, 'idle', 'A', :i - 1,
+            (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1));
     UPDATE player SET thing_id = :tid WHERE id = :i;
     i = i + 1;
   END

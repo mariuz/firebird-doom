@@ -205,9 +205,9 @@ await shoot(map, 'screenshot-e1m2.png');
   const c = Math.cos(me.ANGLE);
   const s = Math.sin(me.ANGLE);
   // side by side 130 units ahead, turned towards player 1 at different angles: one shooting, one running
-  for (const [pid, side, turn, frame] of [[2, -56, 0.5, 'A'], [3, 0, 0, 'F'], [4, 56, -0.7, 'B']]) {
+  for (const [pid, side, turn, frame] of [[2, -56, 0.5, 'S_PLAY'], [3, 0, 0, 'S_PLAY_ATK2'], [4, 56, -0.7, 'S_PLAY_RUN2']]) {
     await db.exec(`UPDATE things t SET x = ${me.X + c * 130 - s * side}, y = ${me.Y + s * 130 + c * side},
-      angle = ${me.ANGLE + Math.PI + turn}, frame = '${frame}', st_tics = 0
+      angle = ${me.ANGLE + Math.PI + turn}, state = (SELECT s.id FROM states s WHERE s.name = '${frame}'), state_tic = NULL
       WHERE t.id = (SELECT p.thing_id FROM player p WHERE p.id = ${pid})`);
   }
   await shoot(map, 'screenshot-coop.png');

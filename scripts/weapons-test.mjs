@@ -298,6 +298,8 @@ assert(gone.DEAD === 1 && gone.WEAPON_Y === 96, `dead, the weapon goes down out 
 
 // rockets hurt whoever is close, including you
 await db.exec(`UPDATE player SET health = 100, armor = 0, dead = 0`);
+// (and the body stood up again: dead, it lies in its death states, not solid and not to be hit)
+await db.exec(`UPDATE things SET st = 'idle', solid = 1, state = (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1), state_tic = NULL WHERE kind = 'player'`);
 const p = (await db.query(`SELECT t.x, t.y, t.z FROM things t WHERE t.kind = 'player'`)).rows[0];
 await db.exec(`EXECUTE PROCEDURE radius_attack(${p.X + 1}, ${p.Y}, ${p.Z}, 128, -1)`);   // (right beside you: 40 away can be inside a wall)
 const hp = (await db.query('SELECT health FROM player')).rows[0].HEALTH;

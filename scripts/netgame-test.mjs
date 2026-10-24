@@ -125,7 +125,7 @@ assert(dead.DEAD === 1 && back.DEAD === 0 && back.THING_ID !== dead.THING_ID && 
   const other = (await thing(2)).ID;
   await db.exec(`UPDATE things SET x = ${me.X + Math.cos(me.ANGLE) * 160}, y = ${me.Y + Math.sin(me.ANGLE) * 160},
     angle = ${me.ANGLE}, momx = 0, momy = 0 WHERE id = ${other}`);
-  const look = async () => one(`SELECT TRIM(t.frame) frame, t.translation, (SELECT FIRST 1 s.tr FROM frame_sprites s WHERE s.id = t.id) tr,
+  const look = async () => one(`SELECT TRIM(COALESCE((SELECT s.frame FROM states s WHERE s.id = t.state), t.frame)) frame, t.translation, (SELECT FIRST 1 s.tr FROM frame_sprites s WHERE s.id = t.id) tr,
     (SELECT FIRST 1 sf.sprite || sf.frame FROM frame_sprites s JOIN sprite_frames sf ON sf.lump = s.lump WHERE s.id = t.id) pic
     FROM things t WHERE t.id = ${other}`);
   await tic([IDLE, IDLE]);
@@ -148,7 +148,7 @@ assert(dead.DEAD === 1 && back.DEAD === 0 && back.THING_ID !== dead.THING_ID && 
   assert(shot === 'F' && after === 'E' && done === 'A', `a shot: ${shot} (the flash, S_PLAY_ATK2), then ${after} (S_PLAY_ATK1), then ${done}`);
   await db.exec('EXECUTE PROCEDURE damage_player(5, NULL, 2)');
   const pain = (await look()).FRAME;
-  for (let i = 0; i < 6; i++) await tic([IDLE, IDLE]);
+  for (let i = 0; i < 9; i++) await tic([IDLE, IDLE]);
   assert(pain === 'G' && (await look()).FRAME === 'A', `hurt: ${pain} (S_PLAY_PAIN), then A again`);
   await db.exec('UPDATE player SET armor = 0, health = 100 WHERE id = 2');
   await db.exec('EXECUTE PROCEDURE damage_player(110, NULL, 2)');
@@ -156,17 +156,17 @@ assert(dead.DEAD === 1 && back.DEAD === 0 && back.THING_ID !== dead.THING_ID && 
   for (let i = 0; i < 80; i++) await tic([IDLE, IDLE]);
   const dead2 = (await look()).FRAME;
   await tic([IDLE, [0, 0, 0, 0, 1, 0, 0]]);
-  const body = await one(`SELECT kind, TRIM(frame) frame, translation FROM things WHERE id = ${other}`);
-  const reborn = await one('SELECT TRIM(t.frame) frame, t.translation FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2');
+  const body = await one(`SELECT kind, TRIM(COALESCE((SELECT s.frame FROM states s WHERE s.id = things.state), things.frame)) frame, translation FROM things WHERE id = ${other}`);
+  const reborn = await one('SELECT TRIM(COALESCE((SELECT s.frame FROM states s WHERE s.id = t.state), t.frame)) frame, t.translation FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2');
   assert(dying === 'H' && dead2 === 'N' && body.KIND === 'decor' && body.FRAME === 'N' && body.TRANSLATION === 1
     && reborn.FRAME === 'A' && reborn.TRANSLATION === 1,
     `killed: ${dying}…${dead2} (S_PLAY_DIE1–7); the body stays, indigo, and player 2 comes back indigo`);
   await db.exec(`UPDATE things SET x = ${me.X + Math.cos(me.ANGLE) * 160}, y = ${me.Y + Math.sin(me.ANGLE) * 160} WHERE id = ${(await thing(2)).ID}`);
   await db.exec('UPDATE player SET armor = 0, health = 100 WHERE id = 2');
   await db.exec('EXECUTE PROCEDURE damage_player(250, NULL, 2)');
-  const gib = (await one(`SELECT TRIM(t.frame) frame FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2`)).FRAME;
+  const gib = (await one(`SELECT TRIM(COALESCE((SELECT s.frame FROM states s WHERE s.id = t.state), t.frame)) frame FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2`)).FRAME;
   for (let i = 0; i < 60; i++) await tic([IDLE, IDLE]);
-  const gibbed = (await one(`SELECT TRIM(t.frame) frame FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2`)).FRAME;
+  const gibbed = (await one(`SELECT TRIM(COALESCE((SELECT s.frame FROM states s WHERE s.id = t.state), t.frame)) frame FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2`)).FRAME;
   await tic([IDLE, [0, 0, 0, 0, 1, 0, 0]]);
   assert(gib === 'O' && gibbed === 'W', `below -100 health: ${gib}…${gibbed} (S_PLAY_XDIE1–9)`);
 }

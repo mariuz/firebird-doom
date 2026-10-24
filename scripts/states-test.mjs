@@ -738,6 +738,75 @@ assert(bonusTrace === '0:S_BON1 6:S_BON1A 12:S_BON1B 18:S_BON1C 24:S_BON1D 30:S_
   && hangers.N > 0 && hangers.NG === hangers.N,
   `items and decorations: a health bonus ${bonusTrace}; a dead former human lies in ${deadRow.NAME.trim()} (${deadRow.ST.trim()}); ${hangers.N} hanging types, none falls`);
 
+// phase 3, the player's body: S_PLAY standing; told to move, S_PLAY_RUN1–4 (4 tics each) until it
+// stops with nothing told (P_MovePlayer, P_XYMovement); a pistol shot S_PLAY_ATK1 then the flash's
+// S_PLAY_ATK2 (6 tics), back to ATK1 (12) and S_PLAY; hurt, S_PLAY_PAIN and A_Pain's DSPLPAIN in
+// PAIN2; killed, S_PLAY_DIE1…7 (A_PlayerScream in DIE2, no longer solid), or gibbed below -100
+// S_PLAY_XDIE1…9 (A_XScream)
+P = 5800;
+await atTic(P);
+const plMe = (await one('SELECT thing_id t FROM player WHERE id = 1')).T;
+const plState = async () => NAME((await thing(plMe)).STATE);
+const plThink = (t, fwd, fire = 0) => db.query(`EXECUTE BLOCK AS BEGIN UPDATE game SET tic = ${t} WHERE id = 1;
+  EXECUTE PROCEDURE player_think(1, ${fwd}, 0, 0, ${fire}, 0, 0, 0, ${t}); EXECUTE PROCEDURE states_think(${t}); END`);
+await db.exec(`UPDATE things SET momx = 0, momy = 0, reaction = 0 WHERE id = ${plMe}`);
+await setState(plMe, 'S_PLAY', P);
+const plSpawn = NAME((await one('SELECT spawn_state s FROM thing_types WHERE thing_type = 1')).S);
+const plRunSeen = [];
+for (let t = P + 1; t <= P + 60; t++) {
+  await plThink(t, t <= P + 10 ? 1 : 0);
+  const s = await plState();
+  if (s !== plRunSeen.at(-1)?.[1]) plRunSeen.push([t, s]);
+}
+const plRunTrace = plRunSeen.map(([t, s]) => `${t - P}:${s}`).join(' ');
+// (the shot: a pistol with bullets, the weapon up)
+P = 5900;
+await atTic(P);
+await db.exec(`UPDATE player SET weapon = 2, pending_weapon = 0, bullets = 50, attack_tics = 0, weapon_y = 0, weapon_down = 0 WHERE id = 1`);
+await db.exec(`UPDATE things SET momx = 0, momy = 0 WHERE id = ${plMe}`);
+await setState(plMe, 'S_PLAY', P);
+await plThink(P + 1, 0, 1);
+const plShotState = await plState();
+const plShotTrace = await trace(plMe, P + 1, P + 30);
+// (hurt, then killed, then gibbed: health set low each time)
+P = 6000;
+await atTic(P);
+await db.exec('DELETE FROM sound_events');
+await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE damage_player(4, NULL, 1); END`);
+const plPainTrace = await trace(plMe, P, P + 12);
+const plPainSnd = await sounds();
+const plDie = async (health, dmg, at) => {
+  await atTic(at);
+  await db.exec(`UPDATE player SET health = ${health}, dead = 0, invuln_tics = 0, god = 0, armor = 0, armor_type = 0 WHERE id = 1`);
+  await db.exec(`UPDATE things SET solid = 1 WHERE id = ${plMe}`);
+  await setState(plMe, 'S_PLAY', at);
+  await db.exec('DELETE FROM sound_events');
+  await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE damage_player(${dmg}, NULL, 1); END`);
+  const row = await one(`SELECT t.hp, t.solid, p.dead FROM things t JOIN player p ON p.thing_id = t.id WHERE p.id = 1`);
+  const tr = await trace(plMe, at, at + 80);
+  return { ...row, tr, snd: await sounds(), st: (await thing(plMe)).ST.trim() };
+};
+const plDeath = await plDie(10, 70, 6100);
+const plGibs = await plDie(10, 400, 6300);
+const plDoom2 = (await one('SELECT map_name m FROM game WHERE id = 1')).M.startsWith('MAP');
+const plCry = plDeath.HP < -50 && plDoom2 ? 'DSPDIEHI' : 'DSPLDETH';
+// (and an old save's body joins the tables where it was)
+await db.exec(`UPDATE player SET health = 10000, dead = 0, msg = NULL, msg_tics = 0 WHERE id = 1`);
+await db.exec(`UPDATE things SET state = NULL, state_tic = NULL, st = 'idle', solid = 1 WHERE id = ${plMe}`);
+await db.query('EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE adopt_states; END');
+const plAdopted = await plState();
+assert(plSpawn === 'S_PLAY' && /^1:S_PLAY_RUN1 4:S_PLAY_RUN2 8:S_PLAY_RUN3 12:S_PLAY_RUN4 16:S_PLAY_RUN1( \d+:S_PLAY_RUN[1-4])* \d+:S_PLAY$/.test(plRunTrace)
+  && plShotState === 'S_PLAY_ATK2' && plShotTrace === '0:S_PLAY_ATK2 5:S_PLAY_ATK1 17:S_PLAY'
+  && plPainTrace === '0:S_PLAY_PAIN 4:S_PLAY_PAIN2 8:S_PLAY' && plPainSnd.join() === 'DSPLPAIN'
+  && /^0:S_PLAY_DIE1 (7|8|9|10):S_PLAY_DIE2 .*S_PLAY_DIE7$/.test(plDeath.tr) && plDeath.SOLID === 0 && plDeath.DEAD === 1
+  && plDeath.snd.join() === plCry && plDeath.st === 'dead'
+  && /^0:S_PLAY_XDIE1 [2-5]:S_PLAY_XDIE2 .*S_PLAY_XDIE9$/.test(plGibs.tr) && plGibs.snd.join() === 'DSSLOP' && plGibs.st === 'dead'
+  && plAdopted === 'S_PLAY',
+  `the player's body: ${plSpawn}; moving ${plRunTrace.split(' ').slice(0, 5).join(' ')} … ${plRunTrace.split(' ').at(-1)}; a pistol shot ${plShotTrace}; `
+  + `hurt ${plPainTrace}, ${plPainSnd.join()}; killed (${plDeath.HP}) ${plDeath.tr.split(' ').slice(0, 2).join(' ')} … ${plDeath.tr.split(' ').at(-1)}, ${plDeath.snd.join()}, walked over; `
+  + `gibbed ${plGibs.tr.split(' ').at(-1)}, ${plGibs.snd.join()}; an old save's ${plAdopted}`);
+await db.exec(`UPDATE things SET solid = 1 WHERE id = ${plMe}`);
+
 // every type on the tables lies down 'dead' at the end of its death (and its gibbing), even
 // where that last frame is also a decoration's spawn state (S_POSS_DIE5: a dead former human)
 const deadEnds = [];

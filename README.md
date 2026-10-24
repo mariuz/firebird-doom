@@ -846,10 +846,14 @@ DEHACKED: Freedoom calls the players `g:`, `i:`, `b:` and `r:`. The line you're 
 the message line, with its cursor. Keys the line can't take, like the arrows, still reach the
 game, and Esc opens the menu, as they did in DOOM. `src/chat.js` holds it all.
 
-The others look as they did in DOOM. Each player's sprite goes through `info.c`'s `S_PLAY` states,
-moved on a tic at a time by `PLAYER_ANIM`: standing (A), running (A to D, 4 tics a frame), a shot
-(F, the muzzle flash, for 6 tics, then E for 12), pain (G), dying (H to N) or, below -100 health,
-gibbed (O to W). The body stays where they fell when they come back. Players 2, 3 and 4 wear
+The others look as they did in DOOM. Each player's body goes through `info.c`'s `S_PLAY` states on
+DOOM's frame tables, as a monster does: standing (`S_PLAY`); told to move, running (`S_PLAY_RUN1`
+to `RUN4`, 4 tics a frame, `P_MovePlayer`) until it stops with no move told (`P_XYMovement`); a shot
+(`S_PLAY_ATK1`, and `S_PLAY_ATK2`, the muzzle flash, for 6 tics with the guns that flash); pain
+(`S_PLAY_PAIN`, nearly every hit: a player's pain chance is 255, and the cry comes with its second
+frame, `A_Pain`); dying (`S_PLAY_DIE1` to `DIE7`, the cry in the second frame, `A_PlayerScream`:
+in DOOM II the louder one below -50 health) or, below -100 health, gibbed (`S_PLAY_XDIE1` to `XDIE9`).
+A dead player's body can be walked over. It stays where they fell when they come back. Players 2, 3 and 4 wear
 player 1's green in other colours (`R_InitTranslationTables`): palette entries 0x70–0x7F become
 0x60–0x6F (DOOM's "indigo", a grey), 0x40–0x4F (brown) and 0x20–0x2F (red). `THINGS.TRANSLATION`
 says which, `FRAME_SPRITES` passes it on, and the rasteriser looks each pixel up in the table
@@ -1222,8 +1226,9 @@ from rest at 2 units a tic, then 1 more each tic (`P_ZMovement`). Barrels too: h
 shooter becomes the barrel's target; burst, its `A_Explode` blast is credited to that target, or to no one
 if it went at one go (`P_KillMobj` sets none; a single-player game counts the kills anyway). And every item
 and decoration plays its own frames: a bonus's glow, a torch's flicker, a dead body lying still; the things
-that hang from the ceiling hang (`MF_NOGRAVITY`). Of the things a map places, only the player is still off
-the tables.
+that hang from the ceiling hang (`MF_NOGRAVITY`). Last, the player's own body: standing, running,
+shooting, in pain and dying in its `S_PLAY` states (see *Co-op* for how the others look). Every thing a map
+places is on the tables now; the weapons in your hands come next (phase 4).
 They start partway into their spawn state (`P_SpawnMapThing`'s `1 + P_Random() % tics`) and look
 (`A_Look`: the gunfire heard in their sector, or the player seen in the 180° ahead), chase
 (`A_Chase`: the 45° turns, `P_Move` and `P_NewChaseDir`, `P_CheckMissileRange` with its

@@ -35,7 +35,7 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
   phases*). Phases 0 and 1 are done (the table, GPL-2 in a file of its own; the machine in SQL);
   phase 2, the monsters family by family, is under way: the zombieman, shotgun guy and
-  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's, the boss brain last (with phase 3's cubes): phase 2 is done. Phase 3 is under way: the projectiles, the brain's cubes and the effects are on the table.
+  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's, the boss brain last (with phase 3's cubes): phase 2 is done. Phase 3 is done too: the projectiles, the brain's cubes, the effects, barrels, items and decorations and the player's body are on the table. Next is phase 4, the weapons.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -195,7 +195,7 @@ name; each family leaves its mode code behind when it moves. Test (a `states-tes
 its timings (the zombieman's 10 + 8 + 8 tics to fire), pain and death take its painstate and
 deathstate (xdeath when gibbed), and the existing behaviour tests still pass.
 
-**Phase 3: everything else that animates.** *Under way.* The projectiles are done (ON_STATES 9000–9008):
+**Phase 3: everything else that animates.** *Done.* The projectiles are done (ON_STATES 9000–9008):
 `MISSILE_CHECK` (PIT_CheckLine for a missile, with the ceilingline's sky), `MISSILE_TRY` (PIT_CheckThing and
 the move), `EXPLODE_MISSILE` (P_ExplodeMissile), `CHECK_MISSILE_SPAWN` (P_CheckMissileSpawn), `MISSILES_THINK`
 (P_XYMovement's half moves, P_ZMovement), A_Explode, A_BFGSpray and A_Tracer; a missile spawned in the state
@@ -210,7 +210,12 @@ decorations (all of them: `thinginfo.js` adds every 'item' and 'decor' type to O
 are MF_NOGRAVITY). Their frames cost about 1.2 ms a tic in `STATES_THINK` on a big map (MAP11: some 200 more
 things cycling); a bulk MERGE of the plain frame changes and a fast path in the loop measured no better.
 P_ZMovement's "off the floor" is now the top of a toss, marked MF_INAIR (1048576 in `things.flags`), not a
-per-tic look at every thing's floor. Next: the player's sprite. The plan as it was: Projectiles (and their explosions), the player's
+per-tic look at every thing's floor. Last, the player's body (type 1 in ON_STATES, MT_PLAYER's reaction time 0):
+P_MovePlayer's S_PLAY_RUN1, P_XYMovement's S_PLAY, P_FireWeapon's S_PLAY_ATK1 and the flash's S_PLAY_ATK2 (with the
+shot until phase 4 gives the weapons their frames), P_DamageMobj's S_PLAY_PAIN (painchance 255; the pain ends a
+teleport's freeze) and P_KillMobj's death or xdeath (not solid; A_PlayerScream, DSPDIEHI in DOOM II below -50).
+`PLAYER_ANIM` and `DAMAGE_PLAYER`'s immediate cries are gone; the body moves in `PLAYER_THINK`, so
+`STATES_THINK`'s P_ZMovement passes it by. The plan as it was: Projectiles (and their explosions), the player's
 own sprite (S_PLAY…), puffs and blood, barrels, the decorations and items, the teleport fog, the
 arch-vile's fire and the boss brain's cubes and spawn fire. Then the renderer's own walking
 animation and the frame strings in `thinginfo.js` go.

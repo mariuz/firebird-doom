@@ -12,7 +12,7 @@ const I = (type, sprite, pickup, amount, o = {}) => ({ type, sprite, kind: 'item
 
 export const THING_TYPES = [
   // player start + projectiles + effects (spawned by SQL, never by maps)
-  { type: 1, sprite: 'PLAY', kind: 'player', radius: 16, height: 56, solid: 1, hp: 100, walk: 'ABCD', pain: 'G', death: 'HIJKLMN' },
+  { type: 1, sprite: 'PLAY', kind: 'player', radius: 16, height: 56, solid: 1, hp: 100, walk: 'ABCD', pain: 'G', death: 'HIJKLMN', painSnd: 'DSPLPAIN', deathSnd: 'DSPLDETH' },
   { type: 9000, sprite: 'BAL1', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 3, dmgHi: 24, deathSnd: 'DSFIRXPL' },
   { type: 9001, sprite: 'BAL2', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL' },
   { type: 9002, sprite: 'BAL7', kind: 'missile', radius: 6, height: 16, speed: 15, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 8, dmgHi: 64, deathSnd: 'DSFIRXPL' },
@@ -170,6 +170,7 @@ export const ON_STATES = new Set([
   // the effects: puffs, blood, the BFG's hits, the spawn fire, the arch-vile's fire, the fogs, smoke
   9010, 9011, 9012, 9014, 9015, 9016, 9017, 9018,
   2035,          // the barrel
+  1,             // the player's body (MT_PLAYER: standing, running, shooting, pain, death)
 ]);
 // …and every item and decoration (their own frames: a bonus's glow, a torch's flicker)
 for (const t of THING_TYPES) if (t.kind === 'item' || t.kind === 'decor') ON_STATES.add(t.type);
