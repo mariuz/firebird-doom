@@ -67,6 +67,7 @@ export const THING_TYPES = [
   // teleport fog (MT_TFOG): a monster getting back up on Nightmare
   { type: 9016, sprite: 'TFOG', kind: 'fx', radius: 1, height: 1, walk: 'ABABCDEFGHIJ', bright: 1 },
   { type: 9017, sprite: 'IFOG', kind: 'fx', radius: 1, height: 1, walk: 'ABABCDE', bright: 1 },   // MT_IFOG: an item respawning
+  { type: 9018, sprite: 'PUFF', kind: 'fx', radius: 1, height: 1, walk: 'BCBCD' },   // MT_SMOKE: the revenant's missile's trail
   // shootable barrel – "dies" by exploding
   { type: 2035, sprite: 'BAR1', kind: 'barrel', radius: 10, height: 42, solid: 1, hp: 20, walk: 'AB', death: 'ABCDE', deathSprite: 'BEXP', bright: 0, deathSnd: 'DSBAREXP' },
 
@@ -118,6 +119,9 @@ const MASS = {
 };
 // MF_FLOAT | MF_NOGRAVITY: cacodemons, lost souls and pain elementals fly
 const FLOATERS = new Set([3005, 3006, 71]);
+// MF_NOGRAVITY: the fliers, Keen, the projectiles and the effects but blood (P_ZMovement)
+const NOGRAVITY = new Set([3005, 3006, 71, 72, 9000, 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008, 9009,
+  9010, 9012, 9013, 9014, 9015, 9016, 9017, 9018]);
 // MF_SHADOW: the spectre is a demon drawn as a shimmer of fuzz
 const SHADOWS = new Set([58]);
 // MF_COUNTITEM: what the intermission's item tally counts – the bonuses and
@@ -130,6 +134,7 @@ for (const t of THING_TYPES) {
   if (SHADOWS.has(t.type)) t.shadow = 1;
   if (MASS[t.type]) t.mass = MASS[t.type];
   if (FLOATERS.has(t.type)) t.floats = 1;
+  if (NOGRAVITY.has(t.type)) t.nogravity = 1;
 }
 
 // DOOM's mobj type (states.js's MOBJINFO) for the types a map doesn't place, which
@@ -139,7 +144,7 @@ export const MOBJ_TYPE = {
   1: 'MT_PLAYER', 9000: 'MT_TROOPSHOT', 9001: 'MT_HEADSHOT', 9002: 'MT_BRUISERSHOT', 9003: 'MT_ROCKET',
   9004: 'MT_PLASMA', 9005: 'MT_BFG', 9006: 'MT_TRACER', 9007: 'MT_FATSHOT', 9008: 'MT_ARACHPLAZ',
   9009: 'MT_SPAWNSHOT', 9010: 'MT_PUFF', 9011: 'MT_BLOOD', 9012: 'MT_EXTRABFG', 9013: 'MT_ROCKET',
-  9014: 'MT_SPAWNFIRE', 9015: 'MT_FIRE', 9016: 'MT_TFOG', 9017: 'MT_IFOG',
+  9014: 'MT_SPAWNFIRE', 9015: 'MT_FIRE', 9016: 'MT_TFOG', 9017: 'MT_IFOG', 9018: 'MT_SMOKE',
 };
 // …and where ours starts elsewhere than the type's spawnstate: A_BrainScream's
 // explosions are rockets set straight to S_BRAINEXPLODE1
@@ -162,4 +167,6 @@ export const ON_STATES = new Set([
   9000, 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008,
   // the boss brain, its spitter, the cubes it spits and the explosions of its death
   88, 89, 9009, 9013,
+  // the effects: puffs, blood, the BFG's hits, the spawn fire, the arch-vile's fire, the fogs, smoke
+  9010, 9011, 9012, 9014, 9015, 9016, 9017, 9018,
 ]);

@@ -1334,6 +1334,42 @@ END^
 -- distance). A two-sided line stops the shot only if the shot's height where
 -- it crosses falls outside the opening; a thing is hit only if the shot's
 -- height at its distance lies within its body.
+-- P_SpawnPuff: a bullet puff, a little up or down (the difference of two P_Random()s, ×1/64),
+-- rising a unit a tic, its first frame 0–3 tics short; a melee hit's has no spark (S_PUFF3)
+CREATE OR ALTER PROCEDURE spawn_puff (x DOUBLE PRECISION, y DOUBLE PRECISION, z DOUBLE PRECISION, melee SMALLINT = 0)
+RETURNS (mid INTEGER)
+AS
+DECLARE tic INTEGER;
+DECLARE alive SMALLINT;
+BEGIN
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  z = z + (p_rand256() - p_rand256()) / 64e0;
+  EXECUTE PROCEDURE spawn_thing(9010, x, y, z, 0) RETURNING_VALUES mid;
+  UPDATE things t SET momz = 1 WHERE t.id = :mid;
+  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3)) WHERE t.id = :mid;
+  IF (melee = 1) THEN
+    EXECUTE PROCEDURE set_state(mid, (SELECT s.id FROM states s WHERE s.name = 'S_PUFF3'), tic) RETURNING_VALUES alive;
+END^
+
+-- P_SpawnBlood: blood, a little up or down, thrown 2 up, its first frame 0–3 tics short; 9 to 12
+-- damage starts it at S_BLOOD2, less at S_BLOOD3
+CREATE OR ALTER PROCEDURE spawn_blood (x DOUBLE PRECISION, y DOUBLE PRECISION, z DOUBLE PRECISION, dmg INTEGER)
+RETURNS (mid INTEGER)
+AS
+DECLARE tic INTEGER;
+DECLARE alive SMALLINT;
+BEGIN
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  z = z + (p_rand256() - p_rand256()) / 64e0;
+  EXECUTE PROCEDURE spawn_thing(9011, x, y, z, 0) RETURNING_VALUES mid;
+  UPDATE things t SET momz = 2 WHERE t.id = :mid;
+  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3)) WHERE t.id = :mid;
+  IF (dmg <= 12 AND dmg >= 9) THEN
+    EXECUTE PROCEDURE set_state(mid, (SELECT s.id FROM states s WHERE s.name = 'S_BLOOD2'), tic) RETURNING_VALUES alive;
+  ELSE IF (dmg < 9) THEN
+    EXECUTE PROCEDURE set_state(mid, (SELECT s.id FROM states s WHERE s.name = 'S_BLOOD3'), tic) RETURNING_VALUES alive;
+END^
+
 CREATE OR ALTER PROCEDURE hitscan (
   sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION,
   ang DOUBLE PRECISION, rng DOUBLE PRECISION, dmg INTEGER, shooter INTEGER, slope DOUBLE PRECISION)
@@ -1389,14 +1425,19 @@ BEGIN
     IF (EXISTS (SELECT 1 FROM player p WHERE p.thing_id = :tgt)) THEN
       EXECUTE PROCEDURE damage_player(dmg, shooter, (SELECT p.id FROM player p WHERE p.thing_id = :tgt));
     ELSE EXECUTE PROCEDURE damage_thing(tgt, dmg, shooter);
-    EXECUTE PROCEDURE spawn_thing(9011, sx + ddx * tgt_s - COS(ang) * 8, sy + ddy * tgt_s - SIN(ang) * 8,
-                                  sz + slope * tgt_s * rng - 8, 0)
+    -- (MF_NOBLOOD: a barrel puffs; anything else bleeds)
+    IF (EXISTS (SELECT 1 FROM things b WHERE b.id = :tgt AND b.kind = 'barrel')) THEN
+      EXECUTE PROCEDURE spawn_puff(sx + ddx * tgt_s - COS(ang) * 8, sy + ddy * tgt_s - SIN(ang) * 8,
+                                   sz + slope * tgt_s * rng - 8, IIF(rng <= 64, 1, 0))
+        RETURNING_VALUES dummy;
+    ELSE EXECUTE PROCEDURE spawn_blood(sx + ddx * tgt_s - COS(ang) * 8, sy + ddy * tgt_s - SIN(ang) * 8,
+                                  sz + slope * tgt_s * rng - 8, dmg)
       RETURNING_VALUES dummy;
   END
   ELSE IF (wall_s < 1) THEN
   BEGIN
-    EXECUTE PROCEDURE spawn_thing(9010, sx + ddx * wall_s - COS(ang) * 4, sy + ddy * wall_s - SIN(ang) * 4,
-                                  sz + slope * wall_s * rng - 4, 0)
+    EXECUTE PROCEDURE spawn_puff(sx + ddx * wall_s - COS(ang) * 4, sy + ddy * wall_s - SIN(ang) * 4,
+                                 sz + slope * wall_s * rng - 4, IIF(rng <= 64, 1, 0))
       RETURNING_VALUES dummy;
     IF (wall_sp IN (24, 46, 47)) THEN EXECUTE PROCEDURE activate_line(wall_line, 'shoot');
   END
@@ -4320,8 +4361,36 @@ BEGIN
   UPDATE things m SET x = m.x + m.momx, y = m.y + m.momy WHERE m.id > :before AND m.thing_type = :mtype;
 END^
 
--- A_VileTarget: face the target and light the fire on it (MT_FIRE, its A_StartFire's DSFLAMST;
--- the flame, still on the old rules, dances in front of the target while the arch-vile attacks)
+-- A_Fire: the arch-vile's fire keeps 24 in front of its tracer (the arch-vile's target), at its
+-- feet, while the arch-vile (its target) can see it. (The boss brain's spawn fire has none.)
+CREATE OR ALTER PROCEDURE a_fire (tid INTEGER)
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE vile INTEGER;
+DECLARE an DOUBLE PRECISION;
+BEGIN
+  IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.thing_type = 9015)) THEN EXIT;
+  SELECT t.owner_id FROM things t WHERE t.id = :tid INTO vile;
+  IF (NOT EXISTS (SELECT 1 FROM things v WHERE v.id = :vile)) THEN EXIT;
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL) THEN EXIT;
+  IF (mobj_sees(vile, px, py, pz, psec) = 0) THEN EXIT;
+  IF (tgt IS NOT NULL) THEN SELECT o.angle FROM things o WHERE o.id = :tgt INTO an;
+  ELSE SELECT o.angle FROM player p JOIN things o ON o.id = p.thing_id WHERE p.id = :tp INTO an;
+  UPDATE things t SET x = :px + COS(:an) * 24, y = :py + SIN(:an) * 24, z = :pz,
+                      sector_id = sector_at(:px + COS(:an) * 24, :py + SIN(:an) * 24)
+   WHERE t.id = :tid;
+END^
+
+-- A_VileTarget: face the target and light the fire on it (MT_FIRE), dancing in front of it (A_Fire)
 CREATE OR ALTER PROCEDURE a_vile_target (tid INTEGER)
 AS
 DECLARE tgt INTEGER;
@@ -4342,8 +4411,10 @@ BEGIN
   IF (tgt IS NOT NULL) THEN SELECT o.angle FROM things o WHERE o.id = :tgt INTO gang;
   ELSE SELECT o.angle FROM player p JOIN things o ON o.id = p.thing_id WHERE p.id = :tp INTO gang;
   EXECUTE PROCEDURE spawn_thing(9015, px + COS(gang) * 24, py + SIN(gang) * 24, pz, 0) RETURNING_VALUES mid;
-  UPDATE things t SET owner_id = :tid, st = 'burn' WHERE t.id = :mid;
-  EXECUTE PROCEDURE play_sound('DSFLAMST', mid, px, py);
+  -- fog->target = actor, fog->tracer = actor->target; then A_Fire. (Spawned in S_FIRE1, it never
+  -- calls that state's A_StartFire, so DOOM's DSFLAMST is never heard: the crackle is)
+  UPDATE things t SET owner_id = :tid, target_id = :tgt, tplayer = :tp WHERE t.id = :mid;
+  EXECUTE PROCEDURE a_fire(mid);
 END^
 
 -- A_VileAttack: face the target; if it can still see it, DSBAREXP, 20 damage and a toss into
@@ -4748,8 +4819,8 @@ BEGIN
   EXECUTE PROCEDURE a_chase(tid, tic);
 END^
 
--- A_Tracer: every fourth tic, a puff where the revenant's missile is and a puff of smoke just
--- behind it (MT_SMOKE: a puff here); then, while its target lives, it turns towards it by at
+-- A_Tracer: every fourth tic, a puff where the revenant's missile is and smoke (MT_SMOKE) just
+-- behind it; then, while its target lives, it turns towards it by at
 -- most TRACEANGLE (16.875°), goes on at its speed that way, and climbs or sinks by 1/8 towards
 -- 40 above the target's feet
 CREATE OR ALTER PROCEDURE a_tracer (tid INTEGER, tic INTEGER)
@@ -4781,8 +4852,9 @@ BEGIN
   IF (MOD(tic, 4) <> 0) THEN EXIT;
   SELECT t.x, t.y, t.z, t.momx, t.momy, t.momz, t.angle, tt.speed FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
    WHERE t.id = :tid INTO x, y, z, momx, momy, momz, ang, spd;
-  EXECUTE PROCEDURE spawn_thing(9010, x, y, z, 0) RETURNING_VALUES mid;
-  EXECUTE PROCEDURE spawn_thing(9010, x - momx, y - momy, z, 0) RETURNING_VALUES mid;
+  EXECUTE PROCEDURE spawn_puff(x, y, z) RETURNING_VALUES mid;
+  EXECUTE PROCEDURE spawn_thing(9018, x - momx, y - momy, z, 0) RETURNING_VALUES mid;
+  UPDATE things t SET momz = 1, state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3)) WHERE t.id = :mid;
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL OR palive = 0) THEN EXIT;
   ta = 0.29452431127404e0;   -- TRACEANGLE, 0xc000000
@@ -4972,6 +5044,16 @@ BEGIN
   ELSE IF (act = 'A_BFGSpray') THEN
     EXECUTE PROCEDURE bfg_spray((SELECT t.angle FROM things t WHERE t.id = :tid), (SELECT t.owner_id FROM things t WHERE t.id = :tid));
   ELSE IF (act = 'A_Tracer') THEN EXECUTE PROCEDURE a_tracer(tid, tic);
+  ELSE IF (act IN ('A_Fire', 'A_StartFire', 'A_FireCrackle')) THEN
+  BEGIN
+    -- A_StartFire (DSFLAMST), A_FireCrackle (DSFLAME), then A_Fire
+    IF (act <> 'A_Fire') THEN
+    BEGIN
+      SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO x, y;
+      EXECUTE PROCEDURE play_sound(TRIM(IIF(act = 'A_StartFire', 'DSFLAMST', 'DSFLAME')), tid, x, y);
+    END
+    EXECUTE PROCEDURE a_fire(tid);
+  END
   ELSE IF (act = 'A_BrainAwake') THEN
   BEGIN
     -- A_BrainAwake: the spots counted from the first, and its cry
@@ -5301,6 +5383,7 @@ DECLARE dist DOUBLE PRECISION;
 DECLARE delta DOUBLE PRECISION;
 DECLARE st VARCHAR(8);
 DECLARE newest INTEGER;
+DECLARE nograv SMALLINT;
 BEGIN
   -- P_MobjThinker's movement, for the things on the tables that move: first P_XYMovement
   -- for a charging lost soul (SKULLS_THINK), then P_ZMovement for those in the air
@@ -5310,11 +5393,14 @@ BEGIN
   -- falls at 1 unit/tic² to the floor; a flier (MF_FLOAT, MF_NOGRAVITY) drifts 4 units a
   -- tic towards its target's middle while it's alive and not charging or squeezing
   -- through (MF_INFLOAT); a charging skull bounces off floor and ceiling
-  FOR SELECT t.id, t.x, t.y, t.z, t.momz, t.radius, t.height, tt.floats, t.flags,
-             IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type, t.st
+  FOR SELECT t.id, t.x, t.y, t.z, t.momz, t.radius, t.height, IIF(tt.floats = 1 AND t.kind = 'monster', 1, 0), t.flags,
+             IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type, t.st, tt.nogravity
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-       WHERE t.state IS NOT NULL AND (t.momz <> 0 OR tt.floats = 1) AND t.kind <> 'missile' ORDER BY t.id
-        INTO tid, x, y, z, momz, rad, hgt, floats, flags, living, ttype, st
+       -- (P_ZMovement runs while it moves up or down or is off the floor: z != floorz)
+       WHERE t.state IS NOT NULL AND t.kind NOT IN ('missile', 'cube')
+         AND (t.momz <> 0 OR tt.floats = 1 OR t.z > (SELECT se.floor_h FROM sectors se WHERE se.id = t.sector_id))
+       ORDER BY t.id
+        INTO tid, x, y, z, momz, rad, hgt, floats, flags, living, ttype, st, nograv
   DO
   BEGIN
     EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
@@ -5341,12 +5427,9 @@ BEGIN
       IF (momz < 0) THEN momz = 0;
       z = fz;
     END
-    ELSE IF (floats = 0 OR (living = 0 AND ttype <> 3006)) THEN
-    BEGIN
-      -- (MF_NOGRAVITY goes with death, but not for the lost soul)
-      momz = momz - 1;
-      IF (momz = 0) THEN momz = -1;   -- (zero momz means "standing")
-    END
+    ELSE IF (nograv = 0 OR (floats = 1 AND living = 0 AND ttype <> 3006)) THEN
+      -- (MF_NOGRAVITY goes with a flier's death, but not the lost soul's; from rest, 2 at once)
+      momz = IIF(momz = 0, -2, momz - 1);
     IF (z + hgt > cz) THEN
     BEGIN
       IF (momz > 0) THEN momz = 0;

@@ -35,7 +35,7 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
   phases*). Phases 0 and 1 are done (the table, GPL-2 in a file of its own; the machine in SQL);
   phase 2, the monsters family by family, is under way: the zombieman, shotgun guy and
-  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's, the boss brain last (with phase 3's cubes): phase 2 is done. Phase 3 is under way: the projectiles and the brain's cubes are on the table.
+  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's, the boss brain last (with phase 3's cubes): phase 2 is done. Phase 3 is under way: the projectiles, the brain's cubes and the effects are on the table.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -202,8 +202,11 @@ the move), `EXPLODE_MISSILE` (P_ExplodeMissile), `CHECK_MISSILE_SPAWN` (P_CheckM
 pass moves that tic. Two changes from the old rules: a missile bursts on a sky ceiling (DOOM's P_ZMovement)
 instead of vanishing, and starts at its shooter rather than a body's width ahead. Then the boss brain (88), its spitter (89), its cubes (9009, MF_NOCLIP: MISSILES_THINK flies them through walls)
 and its explosions (9013, MT_ROCKETs): A_BrainAwake, A_BrainSpit (braintargeton and easy in `game.brain_on`,
-`brain_easy`), A_SpawnSound, A_SpawnFly, A_BrainPain, A_BrainScream, A_BrainExplode, A_BrainDie. Next: puffs,
-blood and the rest. The plan as it was: Projectiles (and their explosions), the player's
+`brain_easy`), A_SpawnSound, A_SpawnFly, A_BrainPain, A_BrainScream, A_BrainExplode, A_BrainDie. Then the effects:
+puffs (`SPAWN_PUFF`), blood (`SPAWN_BLOOD`), MT_SMOKE (a new type, 9018), the fogs, the BFG's hits, the spawn
+fire and the arch-vile's fire (A_Fire, A_StartFire, A_FireCrackle), with `thing_types.nogravity` for
+MF_NOGRAVITY and P_ZMovement's 2-from-rest gravity. Next: barrels, then the decorations and items, then the
+player's sprite. The plan as it was: Projectiles (and their explosions), the player's
 own sprite (S_PLAY…), puffs and blood, barrels, the decorations and items, the teleport fog, the
 arch-vile's fire and the boss brain's cubes and spawn fire. Then the renderer's own walking
 animation and the frame strings in `thinginfo.js` go.

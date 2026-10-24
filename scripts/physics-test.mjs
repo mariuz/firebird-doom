@@ -174,8 +174,9 @@ if (t.seen) {
   const hp1 = (await one(`SELECT hp FROM things WHERE id = ${t.id}`)).HP;
   assert(hp1 < hp0, `pistol autoaims up at the raised imp (${hp0 - hp1} damage in 3 shots)`);
 
-  // …but not beyond DOOM's aiming window
-  await db.exec(`UPDATE things SET z = z + 400, hp = 10000 WHERE id = ${t.id}`);
+  // …but not beyond DOOM's aiming window. (The imp hangs 400 up, off DOOM's frame tables, where the
+  // old rules leave it be: on them it would fall, or wake and come down. This is about the aim.)
+  await db.exec(`UPDATE things SET z = z + 400, hp = 10000, state = NULL, state_tic = NULL WHERE id = ${t.id}`);
   for (let i = 0; i < 3; i++) await db.query('SELECT * FROM doom_tic(15, 0, 0, 0, 1, 0, 0, 0)');
   const hp2 = (await one(`SELECT hp FROM things WHERE id = ${t.id}`)).HP;
   assert(hp2 === 10000, 'pistol does not reach an imp far above the aiming window');

@@ -1212,7 +1212,13 @@ that takes (P_Random() % 8 + 1) × the missile's damage. A wall stops them, unle
 when they're simply gone; a floor or a ceiling, sky or not, bursts them (`P_ZMovement`). The rocket's
 `A_Explode` and the BFG's `A_BFGSpray` come in their death frames. `A_Tracer` steers the revenant's missile
 16.875° at a time on every fourth tic, so, as in DOOM, one whose frames change on odd tics never homes:
-about half of them.
+about half of them. The effects are on the tables too: a bullet puff (`P_SpawnPuff`) a little up or down,
+rising a unit a tic (a melee hit's without the spark), blood (`P_SpawnBlood`) thrown up and falling back,
+starting further on for a small hit, the revenant missile's smoke trail, the teleport and item fog, the
+BFG's hits, the boss brain's spawn fire, and the arch-vile's fire, which keeps in front of its victim
+while the arch-vile can see it (`A_Fire`) and crackles; spawned in its first frame, it never calls that
+frame's `A_StartFire`, so its start sound is never heard, as in DOOM. Things without `MF_NOGRAVITY` fall
+from rest at 2 units a tic, then 1 more each tic (`P_ZMovement`).
 They start partway into their spawn state (`P_SpawnMapThing`'s `1 + P_Random() % tics`) and look
 (`A_Look`: the gunfire heard in their sector, or the player seen in the 180° ahead), chase
 (`A_Chase`: the 45° turns, `P_Move` and `P_NewChaseDir`, `P_CheckMissileRange` with its

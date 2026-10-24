@@ -99,7 +99,8 @@ const spawn = async (type, dist = 96) => (await one(`EXECUTE BLOCK RETURNS (id I
   EXECUTE PROCEDURE spawn_thing(${type}, ${pl.X + Math.cos(pl.ANGLE) * dist}, ${pl.Y + Math.sin(pl.ANGLE) * dist}, NULL, 0) RETURNING_VALUES id; SUSPEND; END`)).ID;
 const setState = async (id, name, tic) => (await one(`EXECUTE BLOCK RETURNS (alive SMALLINT) AS BEGIN
   EXECUTE PROCEDURE set_state(${id}, ${ID.get(name)}, ${tic}) RETURNING_VALUES alive; SUSPEND; END`)).ALIVE;
-const think = (tic) => db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE states_think(${tic}); END`);
+// (the game's tic moves on with it, as in DOOM_TIC: what's spawned in it starts its state then)
+const think = (tic) => db.query(`EXECUTE BLOCK AS BEGIN UPDATE game SET tic = ${tic} WHERE id = 1; EXECUTE PROCEDURE states_think(${tic}); END`);
 const thing = (id) => one(`SELECT state, state_tic, solid, st, st_tics, frame FROM things WHERE id = ${id}`);
 /** run STATES_THINK from tic FROM to TO; [tic, state name] at each change */
 async function trace(id, from, to) {
@@ -203,12 +204,16 @@ await atTic(P);
 const gunner = await spawnAt(3004, 128, facing);
 await db.exec(`UPDATE things SET just_hit = 1, movecount = 0, reaction = 0 WHERE id = ${gunner}`);
 await db.exec('DELETE FROM sound_events');
-const fx0 = await fx();
 await setState(gunner, 'S_POSS_RUN1', P);
 const attack = await trace(gunner, P, P + 30);
 const shotSnd = await sounds();
 const afterShot = await one(`SELECT just_hit, just_attacked FROM things WHERE id = ${gunner}`);
-assert(attack.startsWith('0:S_POSS_ATK1 10:S_POSS_ATK2 18:S_POSS_ATK3 26:S_POSS_RUN1') && shotSnd.includes('DSPISTOL') && (await fx()) - fx0 === 1
+// (the puff or blood lives on its own frames now, gone by the trace's end: the shot is counted again,
+// right after it)
+const fxShot = await fx();
+await setState(gunner, 'S_POSS_ATK2', P + 40);
+const shotFx = (await fx()) - fxShot;
+assert(attack.startsWith('0:S_POSS_ATK1 10:S_POSS_ATK2 18:S_POSS_ATK3 26:S_POSS_RUN1') && shotSnd.includes('DSPISTOL') && shotFx === 1
   && afterShot.JUST_HIT === 0 && afterShot.JUST_ATTACKED === 0,
   `A_Chase → P_CheckMissileRange (MF_JUSTHIT) → the attack: ${attack}; A_PosAttack fires one bullet (${shotSnd.join()}); MF_JUSTATTACKED spent on the next step`);
 await remove(gunner);
@@ -221,7 +226,7 @@ await db.exec('DELETE FROM sound_events');
 const fx1 = await fx();
 await setState(sg, 'S_SPOS_ATK2', P);
 const sgSnd = await sounds();
-assert(sgSnd.join() === 'DSSHOTGN' && (await fx()) - fx1 === 3, `A_SPosAttack: the shotgun, three pellets (${(await fx()) - fx1} hits)`);
+assert(sgSnd.filter((x) => x === 'DSSHOTGN').length === 1 && (await fx()) - fx1 === 3, `A_SPosAttack: the shotgun, three pellets (${(await fx()) - fx1} hits)`);
 await remove(sg);
 
 // pain: hurt (pain chance 200 in 256) into S_POSS_PAIN, A_Pain's cry, and then the chase,
@@ -394,7 +399,7 @@ assert(rises.join() === '4,8,12,12' && /S_SKULL_DIE1.*S_SKULL_DIE6 \d+:null$/.te
 
 // the cacodemon: 5 + 5 + 5 tics, and A_HeadAttack bites within reach for (P_Random() % 6 + 1)
 // × 10, silently, else spits a fireball (DSFIRSHT); afloat, it rises towards the player's
-// middle, and killed it falls
+// middle, and killed it falls (P_ZMovement's gravity: 2 from rest, then 1 more a tic)
 P = 3400;
 await atTic(P);
 const caco = await spawnAt(3005, 50, facing);   // (within 44 + the player's 16)
@@ -419,7 +424,7 @@ const zc = [];
 for (let t = P + 41; t <= P + 43; t++) { await think(t); zc.push((await one(`SELECT momz FROM things WHERE id = ${caco}`)).MOMZ); }
 await remove(caco);
 assert(headTrace.startsWith('0:S_HEAD_ATK1 5:S_HEAD_ATK2 10:S_HEAD_ATK3') && bitC >= 10 && bitC <= 60 && bitC % 10 === 0 && !biteSndC.includes('DSFIRSHT')
-  && heads === 1 && spitSnd.includes('DSFIRSHT') && zc.join() === '-1,-2,-3',
+  && heads === 1 && spitSnd.includes('DSFIRSHT') && zc.join() === '-2,-3,-4',
   `the cacodemon: ${headTrace.split(' ').slice(0, 3).join(' ')}; a bite of ${bitC} up close, a fireball further off (${spitSnd.join()}); killed in the air it falls (momz ${zc.join(', ')})`);
 
 // the barons: A_BruisAttack claws within reach for (P_Random() % 8 + 1) × 10 with DSCLAW, else
@@ -467,7 +472,8 @@ await db.exec('DELETE FROM sound_events');
 const fxSp = await fx();
 await setState(spider, 'S_SPID_ATK1', P + 100);
 const spiderTrace = await trace(spider, P + 100, P + 130);
-const pellets = (await fx()) - fxSp;
+// (three pellets a shot: counted by the shots' sound, the puffs and blood living their own short lives)
+const pellets = 3 * (await sounds()).filter((x) => x === 'DSSHOTGN').length;
 await db.exec('DELETE FROM sound_events');
 await setState(spider, 'S_SPID_RUN1', P + 140);
 const metal = await sounds();
@@ -546,7 +552,7 @@ assert(ssTrace.startsWith('0:S_SSWV_ATK1 10:S_SSWV_ATK2 20:S_SSWV_ATK3 24:S_SSWV
 
 // the revenant: S_SKEL_MISS1 (0 tics), 10, then A_SkelMissile's homing missile (DSSKEATK), a
 // step ahead; A_SkelFist out of reach throws nothing. The arch-vile: A_VileStart's DSVILATK, the
-// flame lit 10 tics in (A_VileTarget, DSFLAMST), A_VileAttack 66 in, 20 more, then the chase
+// flame lit 10 tics in (A_VileTarget; its crackle, DSFLAME), A_VileAttack 66 in, 20 more, then the chase
 P = 4300;
 await atTic(P);
 const skel = await spawnAt(66, 300, facing);
@@ -560,6 +566,7 @@ await db.exec('DELETE FROM things WHERE thing_type = 9006');
 await setState(skel, 'S_SKEL_FIST4', P + 40);
 const fistThrown = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9006')).N;
 await remove(skel);
+await atTic(P + 100);
 const vile = await spawnAt(64, 300, facing);
 await db.exec('DELETE FROM sound_events');
 await setState(vile, 'S_VILE_ATK1', P + 100);
@@ -569,7 +576,7 @@ await db.exec("DELETE FROM things WHERE kind = 'flame'");
 await remove(vile);
 assert(skelTrace.startsWith('0:S_SKEL_MISS2 10:S_SKEL_MISS3 20:S_SKEL_MISS4') && tracer.N === tracers0 + 1 && tracer.D > 30 && skelSnd.includes('DSSKEATK') && fistThrown === 0
   && vileTrace.startsWith('0:S_VILE_ATK2 10:S_VILE_ATK3 18:S_VILE_ATK4') && /66:S_VILE_ATK10 74:S_VILE_ATK11 94:S_VILE_/.test(vileTrace)
-  && ['DSVILATK', 'DSFLAMST', 'DSBAREXP'].every((n) => vileSnd.includes(n)),
+  && ['DSVILATK', 'DSFLAME', 'DSBAREXP'].every((n) => vileSnd.includes(n)),
   `the revenant: ${skelTrace.split(' ').slice(0, 3).join(' ')}, a homing missile ${tracer.D.toFixed(0)} units out, no missile from A_SkelFist out of reach; the arch-vile: ${vileTrace.split(' ').slice(0, 3).join(' ')} … 66:ATK10 74:ATK11, ${vileSnd.filter((n) => /VIL|FLAM|BAREXP/.test(n)).join(', ')}`);
 
 // phase 3, the projectiles: an imp's fireball starts half a move out from the imp (P_CheckMissileSpawn),
@@ -647,6 +654,47 @@ assert(bbCubes.length === 2 && bbCubes[0].OWNER_ID === bbSpotRows[0].ID && bbCub
   && bbLanded && bbSpawned === 1
   && bbRow === 65 && bbBrainCry.includes('DSBOSDTH') && /S_BRAIN_DIE4$/.test(bbBrainTrace) && bbEnded === 1,
   `the boss brain: two cubes, one at each spot in turn (reaction ${bbCubes.map((c) => c.REACTION).join(', ')}); the first lands and makes a monster; dying, ${bbRow} rockets and ${bbBrainTrace.split(' ').at(-1)}, the level ends`);
+
+// phase 3, the effects: a fxPuff (P_SpawnPuff) rises a unit a tic through S_PUFF1–4 and is gone, a melee
+// hit's starting at S_PUFF3; fxBlood from 9–12 damage starts at S_BLOOD2, thrown 2 up and falling back;
+// teleport fxFog plays its 12 frames, 6 tics each; the arch-vile's fxFire keeps 24 in front of the player
+// and crackles (DSFLAME)
+P = 5100;
+await atTic(P);
+const fxEfx = async (sql) => (await one(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN ${sql} RETURNING_VALUES id; SUSPEND; END`)).ID;
+const fxPx0 = pl.X + Math.cos(pl.ANGLE) * 64, fxPy0 = pl.Y + Math.sin(pl.ANGLE) * 64;
+const fxFloorAt = (await one(`SELECT floor_h f FROM sectors WHERE id = sector_at(${fxPx0}, ${fxPy0})`)).F;
+const fxPuff = await fxEfx(`EXECUTE PROCEDURE spawn_puff(${fxPx0}, ${fxPy0}, ${fxFloorAt + 32})`);
+const fxPuffZ0 = (await one(`SELECT z FROM things WHERE id = ${fxPuff}`)).Z;
+await think(P + 1);
+const fxPuffZ1 = (await one(`SELECT z FROM things WHERE id = ${fxPuff}`)).Z;
+const fxPuffTrace = await trace(fxPuff, P + 1, P + 30);
+const fxMeleePuff = await fxEfx(`EXECUTE PROCEDURE spawn_puff(${fxPx0}, ${fxPy0}, ${fxFloorAt + 32}, 1)`);
+const fxMeleeState = NAME((await thing(fxMeleePuff)).STATE);
+await remove(fxMeleePuff);
+await atTic(P + 40);
+const fxBlood = await fxEfx(`EXECUTE PROCEDURE spawn_blood(${fxPx0}, ${fxPy0}, ${fxFloorAt + 32}, 10)`);
+const fxBloodState = NAME((await thing(fxBlood)).STATE);
+const fxBloodZ = [];
+for (let t = P + 41; t <= P + 46; t++) { await think(t); fxBloodZ.push(Math.round(((await one(`SELECT z FROM things WHERE id = ${fxBlood}`))?.Z ?? NaN) * 100) / 100); }
+await remove(fxBlood);
+await atTic(P + 50);
+const fxFog = await fxEfx(`EXECUTE PROCEDURE spawn_thing(9016, ${fxPx0}, ${fxPy0}, NULL, 0)`);
+const fxFogTrace = await trace(fxFog, P + 50, P + 130);
+await atTic(P + 200);
+const fxFirer = await spawnAt(64, 300, facing);
+await db.exec('DELETE FROM sound_events');
+await setState(fxFirer, 'S_VILE_ATK3', P + 200);   // (A_VileTarget: the fxFire)
+const fxFire = (await one(`SELECT id FROM things WHERE thing_type = 9015 ORDER BY id DESC ROWS 1`)).ID;
+const fxFireTrace = await trace(fxFire, P + 200, P + 270);
+const fxFireSnd = await sounds();
+const fxPlAng = (await one(`SELECT angle FROM things WHERE kind = 'player'`)).ANGLE;
+await remove(fxFirer);
+assert(Math.abs(fxPuffZ1 - fxPuffZ0 - 1) < 1e-9 && /^0:S_PUFF1 \d+:S_PUFF2 \d+:S_PUFF3 \d+:S_PUFF4 \d+:null$/.test(fxPuffTrace) && fxMeleeState === 'S_PUFF3'
+  && fxBloodState === 'S_BLOOD2' && fxBloodZ[0] > fxFloorAt + 32 && fxBloodZ.at(-1) < fxBloodZ[1]
+  && /S_TFOG10 \d+:null$/.test(fxFogTrace) && (fxFogTrace.split(' ').length === 13)
+  && /S_FIRE30 \d+:null$/.test(fxFireTrace) && fxFireSnd.includes('DSFLAME'),
+  `effects: a puff rises 1 a tic, ${fxPuffTrace.split(' ').length - 1} frames and gone; a melee puff starts at ${fxMeleeState}; blood (10 damage) at ${fxBloodState}, up and down (${fxBloodZ.map((z) => (z - fxFloorAt).toFixed(0)).join(', ')} above the floor); teleport fog ${fxFogTrace.split(' ').length - 1} frames; the arch-vile's fire 30 frames and crackles`);
 
 // every type on the tables lies down 'dead' at the end of its death (and its gibbing), even
 // where that last frame is also a decoration's spawn state (S_POSS_DIE5: a dead former human)

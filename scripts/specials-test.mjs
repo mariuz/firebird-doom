@@ -280,7 +280,8 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
     assert(flameTics > 50 && closeTics / flameTics > 0.75, `arch-vile's flame follows the player (${closeTics} of ${flameTics} tics within 30 units)`);
     assert(v0 - v1 >= 20, `arch-vile blast hurts (${v0 - v1} damage: 20 plus up to 70 splash)`);
     assert(rise > 20, `the blast throws the player into the air (${rise.toFixed(0)} units up)`);
-    assert(['DSVILATK', 'DSFLAMST', 'DSBAREXP'].every((n) => vsnd.includes(n)), `arch-vile sounds (${vsnd})`);
+    // (no DSFLAMST: the fire is spawned in S_FIRE1, whose A_StartFire DOOM never calls; it crackles)
+    assert(['DSVILATK', 'DSFLAME', 'DSBAREXP'].every((n) => vsnd.includes(n)), `arch-vile sounds (${vsnd})`);
     assert(orphanTics <= 2, `the flame goes out when the attack ends (outlived it by ${orphanTics} tics)`);
 
     // the arch-vile raises a corpse: heal frames, the corpse's death in reverse, full health.
