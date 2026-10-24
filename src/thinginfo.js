@@ -169,4 +169,5 @@ export const ON_STATES = new Set([
   88, 89, 9009, 9013,
   // the effects: puffs, blood, the BFG's hits, the spawn fire, the arch-vile's fire, the fogs, smoke
   9010, 9011, 9012, 9014, 9015, 9016, 9017, 9018,
+  2035,          // the barrel
 ]);

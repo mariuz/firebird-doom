@@ -1218,7 +1218,9 @@ starting further on for a small hit, the revenant missile's smoke trail, the tel
 BFG's hits, the boss brain's spawn fire, and the arch-vile's fire, which keeps in front of its victim
 while the arch-vile can see it (`A_Fire`) and crackles; spawned in its first frame, it never calls that
 frame's `A_StartFire`, so its start sound is never heard, as in DOOM. Things without `MF_NOGRAVITY` fall
-from rest at 2 units a tic, then 1 more each tic (`P_ZMovement`).
+from rest at 2 units a tic, then 1 more each tic (`P_ZMovement`). Barrels too: hurt without bursting, the
+shooter becomes the barrel's target; burst, its `A_Explode` blast is credited to that target, or to no one
+if it went at one go (`P_KillMobj` sets none; a single-player game counts the kills anyway).
 They start partway into their spawn state (`P_SpawnMapThing`'s `1 + P_Random() % tics`) and look
 (`A_Look`: the gunfire heard in their sector, or the player seen in the 180° ahead), chase
 (`A_Chase`: the 45° turns, `P_Move` and `P_NewChaseDir`, `P_CheckMissileRange` with its

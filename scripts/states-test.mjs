@@ -239,11 +239,15 @@ let tries = 0;
 while (NAME((await thing(hurt)).STATE) !== 'S_POSS_PAIN' && tries++ < 20) {
   await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE damage_thing(${hurt}, 1, (SELECT thing_id FROM player WHERE id = 1)); END`);
 }
+// (a hit that missed the pain chance woke it to a step of the chase, with a new MOVECOUNT a missile
+// attack would wait out, or into an attack whose MF_JUSTATTACKED skips one: both spent again here)
+await db.exec(`UPDATE things SET movecount = 0, just_attacked = 0 WHERE id = ${hurt}`);
 await db.exec('DELETE FROM sound_events');
 const hurtRow = await one(`SELECT just_hit, threshold, target_id, tplayer FROM things WHERE id = ${hurt}`);
 const pain = await trace(hurt, P, P + 10);
 const painSnd = await sounds();
-assert(hurtRow.JUST_HIT === 1 && hurtRow.THRESHOLD === 100 && hurtRow.TARGET_ID === null && hurtRow.TPLAYER === 1
+// (THRESHOLD: 100 from the first hit, less a chase step it may have taken since; DOOM sets it only from 0)
+assert(hurtRow.JUST_HIT === 1 && hurtRow.THRESHOLD >= 98 && hurtRow.THRESHOLD <= 100 && hurtRow.TARGET_ID === null && hurtRow.TPLAYER === 1
   && pain === '0:S_POSS_PAIN 3:S_POSS_PAIN2 6:S_POSS_ATK1' && painSnd.join() === 'DSPOPAIN',
   `P_DamageMobj: the pain state (MF_JUSTHIT, the player its target for 100 steps), A_Pain (${painSnd.join()}), then straight back at them: ${pain}`);
 await remove(hurt);
@@ -695,6 +699,26 @@ assert(Math.abs(fxPuffZ1 - fxPuffZ0 - 1) < 1e-9 && /^0:S_PUFF1 \d+:S_PUFF2 \d+:S
   && /S_TFOG10 \d+:null$/.test(fxFogTrace) && (fxFogTrace.split(' ').length === 13)
   && /S_FIRE30 \d+:null$/.test(fxFireTrace) && fxFireSnd.includes('DSFLAME'),
   `effects: a puff rises 1 a tic, ${fxPuffTrace.split(' ').length - 1} frames and gone; a melee puff starts at ${fxMeleeState}; blood (10 damage) at ${fxBloodState}, up and down (${fxBloodZ.map((z) => (z - fxFloorAt).toFixed(0)).join(', ')} above the floor); teleport fog ${fxFogTrace.split(' ').length - 1} frames; the arch-vile's fire 30 frames and crackles`);
+
+// the barrel: S_BAR1/2; hurt without bursting, the shooter becomes its target; killed, S_BEXP, A_Scream's
+// DSBAREXP, then A_Explode, 128 at the centre, credited to that target – and it's gone
+P = 5400;
+await atTic(P);
+const keg = await spawnAt(2035, 96, 0);
+const kegNear = await spawnAt(3001, 120, facing);
+await db.exec(`UPDATE things SET hp = 1000 WHERE id = ${kegNear}`);
+const keg0 = NAME((await thing(keg)).STATE);
+await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE damage_thing(${keg}, 5, (SELECT thing_id FROM player WHERE id = 1)); END`);
+const kegOwner = (await one(`SELECT owner_id FROM things WHERE id = ${keg}`)).OWNER_ID;
+await db.exec('DELETE FROM sound_events');
+await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE damage_thing(${keg}, 100, (SELECT thing_id FROM player WHERE id = 1)); END`);
+const kegTrace = await trace(keg, P, P + 40);
+const kegSnd = await sounds();
+const kegHurt = 1000 - (await one(`SELECT hp FROM things WHERE id = ${kegNear}`)).HP;
+await remove(kegNear);
+assert(/^S_BAR[12]$/.test(keg0) && kegOwner === (await one('SELECT thing_id t FROM player WHERE id = 1')).T
+  && /S_BEXP2.*S_BEXP4.*S_BEXP5 \d+:null$/.test(kegTrace) && kegSnd.includes('DSBAREXP') && kegHurt > 0 && (await thing(keg)) === undefined,
+  `the barrel: ${keg0}; hurt, the player is its target; burst: ${kegTrace.split(' ').slice(-4).join(' ')}, DSBAREXP, an imp beside it takes ${kegHurt}`);
 
 // every type on the tables lies down 'dead' at the end of its death (and its gibbing), even
 // where that last frame is also a decoration's spawn state (S_POSS_DIE5: a dead former human)

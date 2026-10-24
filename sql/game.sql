@@ -497,6 +497,11 @@ BEGIN
       EXECUTE PROCEDURE set_state(tid, pain_state, tic) RETURNING_VALUES alive;
     END
     UPDATE things t SET reaction = 0 WHERE t.id = :tid;
+    -- a barrel hurt but not burst: whoever did it becomes its target, credited with its blast
+    -- (A_Explode); burst at one go, it has none (P_KillMobj sets no target)
+    IF (k = 'barrel' AND src IS NOT NULL AND src <> tid
+        AND NOT EXISTS (SELECT 1 FROM things s JOIN thing_types st3 ON st3.thing_type = s.thing_type WHERE s.id = :src AND st3.atk_kind = 'vile')) THEN
+      UPDATE things t SET owner_id = :src WHERE t.id = :tid;
     -- whoever hurt it becomes its target (unless it's still bound to another, or the
     -- source is an arch-vile), for BASETHRESHOLD; still in its spawn state, it wakes
     IF (src IS NOT NULL AND src <> tid AND k = 'monster') THEN

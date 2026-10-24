@@ -308,9 +308,11 @@ if (sky) {
   const pl = await one(`SELECT t.x, t.y FROM things t WHERE t.kind = 'player'`);
   const barrel = await spawn(2035, pl.X + 1000, pl.Y + 1000);    // spawned first: thinks first
   const imp = await spawn(3001, pl.X + 1024, pl.Y + 1000);
-  await db.exec(`UPDATE things SET hp = 10, st = 'chase', st_tics = 3 WHERE id = ${imp}`);
-  await db.exec(`UPDATE things SET st = 'dying', st_len = 25, st_tics = 16 WHERE id = ${barrel}`);
-  await tic(4);
+  // (both on DOOM's frame tables: the imp chasing, the barrel bursting, A_Explode 5 tics on)
+  await db.exec(`UPDATE things SET hp = 10 WHERE id = ${imp}`);
+  await setState(imp, 'S_TROO_RUN1');
+  await setState(barrel, 'S_BEXP3');
+  await tic(7);
   const st = (await one(`SELECT st, hp FROM things WHERE id = ${imp}`));
   assert(['dying', 'dead'].includes(st.ST), `an imp killed by a barrel exploding earlier in the tic stays dead (${st.ST}, ${st.HP} hp)`);
 }
