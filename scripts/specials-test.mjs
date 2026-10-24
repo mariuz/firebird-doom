@@ -49,7 +49,9 @@ async function bossTest(map, ttype, expect) {
   }
   await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
       FOR SELECT id FROM things WHERE thing_type = ${ttype} INTO id DO EXECUTE PROCEDURE damage_thing(id, 100000); END`);
-  await tics(80);
+  // (A_BossDeath comes at the end of the death: the cyberdemon's 9 frames take 110 tics, the
+  // spider mastermind's 130; a floor it lowers would be down again by then for the others)
+  await tics(ttype === 16 ? 120 : ttype === 7 ? 140 : 80);
   const g = await one(`SELECT g.exit_kind, (SELECT COUNT(*) FROM movers) movers FROM game g`);
   if (expect === 'exit') assert(g.EXIT_KIND === 1, `${map}: killing all ${n} of type ${ttype} ends the level`);
   else assert(g.MOVERS > 0, `${map}: killing all ${n} of type ${ttype} moves the tagged sectors (${g.MOVERS})`);

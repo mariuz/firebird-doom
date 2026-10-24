@@ -154,4 +154,5 @@ export const ON_STATES = new Set([
   3006,          // the lost soul
   3005,          // the cacodemon
   3003, 69,      // the baron of Hell, the Hell knight
+  16, 7,         // the cyberdemon, the spider mastermind
 ]);

@@ -3965,7 +3965,8 @@ BEGIN
    WHERE t.id = :tid INTO x, y, z, rad, mtype, msnd;
   adx = ABS(px - x);
   ady = ABS(py - y);
-  IF (palive = 1 AND adx + ady - MINVALUE(adx, ady) / 2 < 64 - 20 + prad AND mobj_sees(tid, px, py, pz, psec) = 1) THEN
+  -- (SIDES NULL: A_CyberAttack, a missile and nothing else)
+  IF (sides IS NOT NULL AND palive = 1 AND adx + ady - MINVALUE(adx, ady) / 2 < 64 - 20 + prad AND mobj_sees(tid, px, py, pz, psec) = 1) THEN
   BEGIN
     IF (snd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(snd, tid, x, y);
     EXECUTE PROCEDURE hurt_target(tgt, (MOD(p_rand256(), sides) + 1) * mult, tid, tp);
@@ -4020,7 +4021,7 @@ END^
 
 -- A_CPosRefire: keep firing, unless (40 times in 256 it doesn't ask) the target is
 -- dead or out of sight: then back to the chase
-CREATE OR ALTER PROCEDURE a_cpos_refire (tid INTEGER, tic INTEGER)
+CREATE OR ALTER PROCEDURE a_cpos_refire (tid INTEGER, tic INTEGER, chance INTEGER = 40)
 AS
 DECLARE tgt INTEGER;
 DECLARE tp SMALLINT;
@@ -4034,7 +4035,7 @@ DECLARE shadow SMALLINT;
 DECLARE alive SMALLINT;
 BEGIN
   EXECUTE PROCEDURE a_face_target(tid);
-  IF (p_rand256() < 40) THEN EXIT;
+  IF (p_rand256() < chance) THEN EXIT;   -- (A_SpidRefire: 10)
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL OR palive = 0 OR mobj_sees(tid, px, py, pz, psec) = 0) THEN
     EXECUTE PROCEDURE set_state(tid, (SELECT tt.see_state FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
@@ -4103,7 +4104,7 @@ BEGIN
   BEGIN
     see_snd = cry_variant(see_snd);
     -- the Spider Mastermind and the Cyberdemon are heard at full volume
-    IF (ttype IN (7, 16)) THEN EXECUTE PROCEDURE play_sound(see_snd, 0, NULL, NULL);
+    IF (ttype IN (7, 16)) THEN EXECUTE PROCEDURE play_sound(see_snd, NULL, NULL, NULL);
     ELSE EXECUTE PROCEDURE play_sound(see_snd, tid, x, y);
   END
   EXECUTE PROCEDURE set_state(tid, see_state, tic) RETURNING_VALUES alive;
@@ -4343,6 +4344,15 @@ BEGIN
   ELSE IF (act = 'A_SkullAttack') THEN EXECUTE PROCEDURE a_skull_attack(tid);
   ELSE IF (act = 'A_HeadAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 6, 10, NULL);
   ELSE IF (act = 'A_BruisAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 8, 10, 'DSCLAW');
+  ELSE IF (act = 'A_CyberAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, NULL, NULL, NULL);
+  ELSE IF (act = 'A_SpidRefire') THEN EXECUTE PROCEDURE a_cpos_refire(tid, tic, 10);
+  ELSE IF (act IN ('A_Hoof', 'A_Metal')) THEN
+  BEGIN
+    -- A_Hoof, A_Metal: the cyberdemon's hoof, the bosses' metal footfall, then A_Chase
+    SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO x, y;
+    EXECUTE PROCEDURE play_sound(TRIM(IIF(act = 'A_Hoof', 'DSHOOF', 'DSMETAL')), tid, x, y);
+    EXECUTE PROCEDURE a_chase(tid, tic);
+  END
   ELSE IF (act = 'A_Fall') THEN
     -- A_Fall: the corpse no longer blocks (MF_SOLID off)
     UPDATE things SET solid = 0 WHERE id = :tid;
@@ -4357,7 +4367,7 @@ BEGIN
      WHERE t.id = :tid INTO snd, ttype, x, y;
     IF (act = 'A_Scream') THEN snd = cry_variant(snd);
     IF (snd IS NULL) THEN EXIT;
-    IF (act = 'A_Scream' AND ttype IN (7, 16)) THEN EXECUTE PROCEDURE play_sound(snd, 0, NULL, NULL);
+    IF (act = 'A_Scream' AND ttype IN (7, 16)) THEN EXECUTE PROCEDURE play_sound(snd, NULL, NULL, NULL);
     ELSE EXECUTE PROCEDURE play_sound(snd, tid, x, y);
   END
   ELSE IF (act = 'A_BossDeath') THEN

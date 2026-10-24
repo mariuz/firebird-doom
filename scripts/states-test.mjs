@@ -84,14 +84,14 @@ await loadMap(db, wad, res, wad.mapNames()[0], { skill: 3 });
 // (phase 2: the map's zombiemen, shotgun guys and chaingunners in their spawn state, each
 // partway into it, 1 + P_Random() % 10 tics, with mobjinfo's reaction time)
 const onMap = await all(`SELECT t.thing_type, s.name, t.state_tic - g.tic left_tics, t.reaction, t.st FROM things t
-  JOIN states s ON s.id = t.state CROSS JOIN game g WHERE g.id = 1 AND t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006, 3005, 3003, 69)`);
-const spawnName = { 3004: 'S_POSS_STND', 9: 'S_SPOS_STND', 65: 'S_CPOS_STND', 3001: 'S_TROO_STND', 3002: 'S_SARG_STND', 58: 'S_SARG_STND', 3006: 'S_SKULL_STND', 3005: 'S_HEAD_STND', 3003: 'S_BOSS_STND', 69: 'S_BOS2_STND' };
+  JOIN states s ON s.id = t.state CROSS JOIN game g WHERE g.id = 1 AND t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006, 3005, 3003, 69, 16, 7)`);
+const spawnName = { 3004: 'S_POSS_STND', 9: 'S_SPOS_STND', 65: 'S_CPOS_STND', 3001: 'S_TROO_STND', 3002: 'S_SARG_STND', 58: 'S_SARG_STND', 3006: 'S_SKULL_STND', 3005: 'S_HEAD_STND', 3003: 'S_BOSS_STND', 69: 'S_BOS2_STND', 16: 'S_CYBER_STND', 7: 'S_SPID_STND' };
 const offsets = new Set(onMap.map((r) => r.LEFT_TICS));
-const unstated = await one('SELECT COUNT(*) n FROM things t WHERE t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006, 3005, 3003, 69) AND t.state IS NULL');
+const unstated = await one('SELECT COUNT(*) n FROM things t WHERE t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006, 3005, 3003, 69, 16, 7) AND t.state IS NULL');
 assert(onMap.length > 0 && unstated.N === 0
   && onMap.every((r) => r.NAME.trim() === spawnName[r.THING_TYPE] && r.LEFT_TICS >= 1 && r.LEFT_TICS <= 10 && r.REACTION === 8 && r.ST.trim() === 'idle')
   && (onMap.length < 4 || offsets.size > 1),
-  `the map's ${onMap.length} zombiemen, shotgun guys, chaingunners, imps, demons, lost souls, cacodemons and barons start in their spawn states, 1 to 10 tics in (${[...offsets].sort((a, b) => a - b).join(',')}), reaction time 8`);
+  `the map's ${onMap.length} zombiemen, shotgun guys, chaingunners, imps, demons, lost souls, cacodemons, barons and bosses start in their spawn states, 1 to 10 tics in (${[...offsets].sort((a, b) => a - b).join(',')}), reaction time 8`);
 const ID = new Map(STATES.map((x, i) => [x[0], i]));
 const NAME = (i) => (i == null ? null : STATES[i][0]);
 const pl = await one("SELECT t.x, t.y, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1");
@@ -447,6 +447,35 @@ await remove(knight);
 assert(baronTrace.startsWith('0:S_BOSS_ATK1 8:S_BOSS_ATK2 16:S_BOSS_ATK3') && clawB.includes('DSCLAW') && clawedB >= 10 && clawedB <= 80 && clawedB % 10 === 0
   && green === 1 && kntSnd.includes('DSKNTSIT'),
   `the barons: ${baronTrace.split(' ').slice(0, 3).join(' ')}, a claw of ${clawedB}; the knight throws ${green} fireball from afar and cries ${kntSnd.join()}`);
+
+// the cyberdemon: A_CyberAttack three times (a rocket each, DSRLAUNC), 6 + 12 × 5 tics, then
+// S_CYBER_RUN1's A_Hoof (DSHOOF, and A_Chase). The spider mastermind: 20 tics to aim, then
+// A_SPosAttack's three pellets every 4 tics, A_SpidRefire between; S_SPID_RUN1's A_Metal
+P = 3600;
+await atTic(P);
+const cyber = await spawnAt(16, 320, facing);
+await db.exec('DELETE FROM sound_events');
+const rockets0 = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9003')).N;
+await setState(cyber, 'S_CYBER_ATK1', P);
+const cyberTrace = await trace(cyber, P, P + 66);
+const rockets = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9003')).N - rockets0;
+const cyberSnd = await sounds();
+await db.exec('DELETE FROM things WHERE thing_type = 9003');
+await remove(cyber);
+const spider = await spawnAt(7, 320, facing);
+await db.exec('DELETE FROM sound_events');
+const fxSp = await fx();
+await setState(spider, 'S_SPID_ATK1', P + 100);
+const spiderTrace = await trace(spider, P + 100, P + 130);
+const pellets = (await fx()) - fxSp;
+await db.exec('DELETE FROM sound_events');
+await setState(spider, 'S_SPID_RUN1', P + 140);
+const metal = await sounds();
+await remove(spider);
+assert(cyberTrace.startsWith('0:S_CYBER_ATK1 6:S_CYBER_ATK2 18:S_CYBER_ATK3 30:S_CYBER_ATK4 42:S_CYBER_ATK5 54:S_CYBER_ATK6 66:S_CYBER_')
+  && rockets === 3 && cyberSnd.filter((x) => x === 'DSRLAUNC').length === 3 && cyberSnd.includes('DSHOOF')
+  && spiderTrace.startsWith('0:S_SPID_ATK1 20:S_SPID_ATK2 24:S_SPID_ATK3 28:S_SPID_ATK4') && pellets >= 9 && metal.includes('DSMETAL'),
+  `the cyberdemon: ${rockets} rockets at ${cyberTrace.split(' ').slice(1, 6).map((x) => x.split(':')[0]).join(', ')} tics, then its hoof; the spider mastermind: ${spiderTrace.split(' ').slice(0, 4).join(' ')}…, ${pellets} pellets, A_Metal`);
 
 // every type on the tables lies down 'dead' at the end of its death (and its gibbing), even
 // where that last frame is also a decoration's spawn state (S_POSS_DIE5: a dead former human)
