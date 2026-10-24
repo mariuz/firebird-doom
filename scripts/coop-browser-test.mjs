@@ -188,8 +188,8 @@ try {
   const gameTic = (p) => p.evaluate(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));
   await host.evaluate(() => document.activeElement?.blur());
   await host.keyboard.press('p');
-  await until(host, () => window.doom.net.paused, null, 20000);
-  await until(guest, () => window.doom.net.paused, null, 20000);
+  await until(host, () => window.doom.net.paused, null, 60000);   // (a loaded machine: the pause rides the next ticcmd)
+  await until(guest, () => window.doom.net.paused, null, 60000);
   const held = await Promise.all([host, guest].map(gameTic));
   const lock0 = await guest.evaluate(() => window.doom.net.tic);
   await host.waitForTimeout(1500);

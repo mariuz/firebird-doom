@@ -1220,7 +1220,10 @@ while the arch-vile can see it (`A_Fire`) and crackles; spawned in its first fra
 frame's `A_StartFire`, so its start sound is never heard, as in DOOM. Things without `MF_NOGRAVITY` fall
 from rest at 2 units a tic, then 1 more each tic (`P_ZMovement`). Barrels too: hurt without bursting, the
 shooter becomes the barrel's target; burst, its `A_Explode` blast is credited to that target, or to no one
-if it went at one go (`P_KillMobj` sets none; a single-player game counts the kills anyway).
+if it went at one go (`P_KillMobj` sets none; a single-player game counts the kills anyway). And every item
+and decoration plays its own frames: a bonus's glow, a torch's flicker, a dead body lying still; the things
+that hang from the ceiling hang (`MF_NOGRAVITY`). Of the things a map places, only the player is still off
+the tables.
 They start partway into their spawn state (`P_SpawnMapThing`'s `1 + P_Random() % tics`) and look
 (`A_Look`: the gunfire heard in their sector, or the player seen in the 180° ahead), chase
 (`A_Chase`: the 45° turns, `P_Move` and `P_NewChaseDir`, `P_CheckMissileRange` with its

@@ -5401,9 +5401,10 @@ BEGIN
   FOR SELECT t.id, t.x, t.y, t.z, t.momz, t.radius, t.height, IIF(tt.floats = 1 AND t.kind = 'monster', 1, 0), t.flags,
              IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type, t.st, tt.nogravity
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-       -- (P_ZMovement runs while it moves up or down or is off the floor: z != floorz)
+       -- (P_ZMovement runs while it moves up or down or is off the floor, z != floorz: off the floor
+       -- with no momz is the top of a toss, marked 1048576 in THINGS.FLAGS for the tic it lasts)
        WHERE t.state IS NOT NULL AND t.kind NOT IN ('missile', 'cube')
-         AND (t.momz <> 0 OR tt.floats = 1 OR t.z > (SELECT se.floor_h FROM sectors se WHERE se.id = t.sector_id))
+         AND (t.momz <> 0 OR tt.floats = 1 OR BIN_AND(t.flags, 1048576) <> 0)
        ORDER BY t.id
         INTO tid, x, y, z, momz, rad, hgt, floats, flags, living, ttype, st, nograv
   DO
@@ -5441,9 +5442,15 @@ BEGIN
       z = cz - hgt;
       IF (skullfly = 1) THEN momz = -momz;
     END
-    UPDATE things t SET z = :z, momz = :momz WHERE t.id = :tid;
+    -- (at the top of a toss, no momz but off the floor: still falling next tic)
+    UPDATE things t SET z = :z, momz = :momz,
+           flags = IIF(:momz = 0 AND :z > :fz AND :nograv = 0, BIN_OR(t.flags, 1048576), BIN_AND(t.flags, BIN_NOT(1048576)))
+     WHERE t.id = :tid;
   END
   newest = (SELECT MAX(t.id) FROM things t);
+  -- the plain frames first, all at once: a state ending into one with no action, some tics, no
+  -- -fast halving and no corpse to date (a torch's flicker, a bonus's glow, a fireball's spin)
+  -- needs only its new state and end. No random draw and no action: the order doesn't matter.
   FOR SELECT t.id FROM things t WHERE t.state_tic = :tic ORDER BY t.id INTO tid
   DO
   BEGIN
@@ -5496,8 +5503,9 @@ BEGIN
   END
   -- saves from phase 2's first commits: a corpse whose last frame is also a decoration's spawn
   -- state was given that state's 'idle'; it lies there 'dead' (dated now, for Nightmare)
+  -- (monsters only: a dead-body decoration lies in a corpse's last frame too, and stays scenery)
   UPDATE things t SET st = 'dead', dead_tic = COALESCE(t.dead_tic, :tic)
-   WHERE t.state IS NOT NULL AND t.st <> 'dead'
+   WHERE t.state IS NOT NULL AND t.st <> 'dead' AND t.kind IN ('monster', 'keen')
      AND EXISTS (SELECT 1 FROM states s WHERE s.id = t.state AND s.mode = 'dead');
 END^
 

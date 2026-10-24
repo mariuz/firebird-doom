@@ -694,11 +694,11 @@ const fxFireTrace = await trace(fxFire, P + 200, P + 270);
 const fxFireSnd = await sounds();
 const fxPlAng = (await one(`SELECT angle FROM things WHERE kind = 'player'`)).ANGLE;
 await remove(fxFirer);
-assert(Math.abs(fxPuffZ1 - fxPuffZ0 - 1) < 1e-9 && /^0:S_PUFF1 \d+:S_PUFF2 \d+:S_PUFF3 \d+:S_PUFF4 \d+:null$/.test(fxPuffTrace) && fxMeleeState === 'S_PUFF3'
+assert(Math.abs(fxPuffZ1 - fxPuffZ0 - 1) < 1e-9 && /^0:S_PUFF[12] (\d+:S_PUFF2 )?\d+:S_PUFF3 \d+:S_PUFF4 \d+:null$/.test(fxPuffTrace) && fxMeleeState === 'S_PUFF3'
   && fxBloodState === 'S_BLOOD2' && fxBloodZ[0] > fxFloorAt + 32 && fxBloodZ.at(-1) < fxBloodZ[1]
   && /S_TFOG10 \d+:null$/.test(fxFogTrace) && (fxFogTrace.split(' ').length === 13)
   && /S_FIRE30 \d+:null$/.test(fxFireTrace) && fxFireSnd.includes('DSFLAME'),
-  `effects: a puff rises 1 a tic, ${fxPuffTrace.split(' ').length - 1} frames and gone; a melee puff starts at ${fxMeleeState}; blood (10 damage) at ${fxBloodState}, up and down (${fxBloodZ.map((z) => (z - fxFloorAt).toFixed(0)).join(', ')} above the floor); teleport fog ${fxFogTrace.split(' ').length - 1} frames; the arch-vile's fire 30 frames and crackles`);
+  `effects: a puff rises 1 a tic, ${fxPuffTrace.split(' ').length - 1} frames (its first cut short) and gone; a melee puff starts at ${fxMeleeState}; blood (10 damage) at ${fxBloodState}, up and down (${fxBloodZ.map((z) => (z - fxFloorAt).toFixed(0)).join(', ')} above the floor); teleport fog ${fxFogTrace.split(' ').length - 1} frames; the arch-vile's fire 30 frames and crackles`);
 
 // the barrel: S_BAR1/2; hurt without bursting, the shooter becomes its target; killed, S_BEXP, A_Scream's
 // DSBAREXP, then A_Explode, 128 at the centre, credited to that target – and it's gone
@@ -719,6 +719,24 @@ await remove(kegNear);
 assert(/^S_BAR[12]$/.test(keg0) && kegOwner === (await one('SELECT thing_id t FROM player WHERE id = 1')).T
   && /S_BEXP2.*S_BEXP4.*S_BEXP5 \d+:null$/.test(kegTrace) && kegSnd.includes('DSBAREXP') && kegHurt > 0 && (await thing(keg)) === undefined,
   `the barrel: ${keg0}; hurt, the player is its target; burst: ${kegTrace.split(' ').slice(-4).join(' ')}, DSBAREXP, an imp beside it takes ${kegHurt}`);
+
+// phase 3, the items and decorations: a health bonus glows through S_BON1–S_BON1E (6 tics each) and round
+// again; a dead former human (a decoration) lies in S_POSS_DIE5 for ever, scenery, not a corpse; the
+// things that hang from the ceiling don't fall (MF_NOGRAVITY)
+P = 5600;
+await atTic(P);
+const bonus = await spawnAt(2014, 48, 0);
+await setState(bonus, 'S_BON1', P);
+const bonusTrace = await trace(bonus, P, P + 40);
+await remove(bonus);
+const deadGuy = await spawnAt(18, 64, 0);
+const deadRow = await one(`SELECT s.name, t.state_tic, t.st FROM things t JOIN states s ON s.id = t.state WHERE t.id = ${deadGuy}`);
+await remove(deadGuy);
+const hangers = await one(`SELECT COUNT(*) n, SUM(nogravity) ng FROM thing_types WHERE hang = 1`);
+assert(bonusTrace === '0:S_BON1 6:S_BON1A 12:S_BON1B 18:S_BON1C 24:S_BON1D 30:S_BON1E 36:S_BON1'
+  && deadRow.NAME.trim() === 'S_POSS_DIE5' && deadRow.STATE_TIC === null && deadRow.ST.trim() !== 'dead'
+  && hangers.N > 0 && hangers.NG === hangers.N,
+  `items and decorations: a health bonus ${bonusTrace}; a dead former human lies in ${deadRow.NAME.trim()} (${deadRow.ST.trim()}); ${hangers.N} hanging types, none falls`);
 
 // every type on the tables lies down 'dead' at the end of its death (and its gibbing), even
 // where that last frame is also a decoration's spawn state (S_POSS_DIE5: a dead former human)

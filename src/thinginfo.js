@@ -134,7 +134,7 @@ for (const t of THING_TYPES) {
   if (SHADOWS.has(t.type)) t.shadow = 1;
   if (MASS[t.type]) t.mass = MASS[t.type];
   if (FLOATERS.has(t.type)) t.floats = 1;
-  if (NOGRAVITY.has(t.type)) t.nogravity = 1;
+  if (NOGRAVITY.has(t.type) || t.hang) t.nogravity = 1;   // (MF_SPAWNCEILING things hang: MF_NOGRAVITY)
 }
 
 // DOOM's mobj type (states.js's MOBJINFO) for the types a map doesn't place, which
@@ -171,3 +171,5 @@ export const ON_STATES = new Set([
   9010, 9011, 9012, 9014, 9015, 9016, 9017, 9018,
   2035,          // the barrel
 ]);
+// …and every item and decoration (their own frames: a bonus's glow, a torch's flicker)
+for (const t of THING_TYPES) if (t.kind === 'item' || t.kind === 'decor') ON_STATES.add(t.type);

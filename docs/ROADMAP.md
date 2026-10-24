@@ -205,8 +205,12 @@ and its explosions (9013, MT_ROCKETs): A_BrainAwake, A_BrainSpit (braintargeton 
 `brain_easy`), A_SpawnSound, A_SpawnFly, A_BrainPain, A_BrainScream, A_BrainExplode, A_BrainDie. Then the effects:
 puffs (`SPAWN_PUFF`), blood (`SPAWN_BLOOD`), MT_SMOKE (a new type, 9018), the fogs, the BFG's hits, the spawn
 fire and the arch-vile's fire (A_Fire, A_StartFire, A_FireCrackle), with `thing_types.nogravity` for
-MF_NOGRAVITY and P_ZMovement's 2-from-rest gravity. Then barrels (S_BAR, S_BEXP; the target a non-lethal hit sets credited with A_Explode). Next: the decorations
-and items, then the player's sprite. The plan as it was: Projectiles (and their explosions), the player's
+MF_NOGRAVITY and P_ZMovement's 2-from-rest gravity. Then barrels (S_BAR, S_BEXP; the target a non-lethal hit sets credited with A_Explode). Then the items and
+decorations (all of them: `thinginfo.js` adds every 'item' and 'decor' type to ON_STATES; the hanging ones
+are MF_NOGRAVITY). Their frames cost about 1.2 ms a tic in `STATES_THINK` on a big map (MAP11: some 200 more
+things cycling); a bulk MERGE of the plain frame changes and a fast path in the loop measured no better.
+P_ZMovement's "off the floor" is now the top of a toss, marked MF_INAIR (1048576 in `things.flags`), not a
+per-tic look at every thing's floor. Next: the player's sprite. The plan as it was: Projectiles (and their explosions), the player's
 own sprite (S_PLAY…), puffs and blood, barrels, the decorations and items, the teleport fog, the
 arch-vile's fire and the boss brain's cubes and spawn fire. Then the renderer's own walking
 animation and the frame strings in `thinginfo.js` go.
