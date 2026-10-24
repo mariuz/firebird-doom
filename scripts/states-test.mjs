@@ -477,6 +477,64 @@ assert(cyberTrace.startsWith('0:S_CYBER_ATK1 6:S_CYBER_ATK2 18:S_CYBER_ATK3 30:S
   && spiderTrace.startsWith('0:S_SPID_ATK1 20:S_SPID_ATK2 24:S_SPID_ATK3 28:S_SPID_ATK4') && pellets >= 9 && metal.includes('DSMETAL'),
   `the cyberdemon: ${rockets} rockets at ${cyberTrace.split(' ').slice(1, 6).map((x) => x.split(':')[0]).join(', ')} tics, then its hoof; the spider mastermind: ${spiderTrace.split(' ').slice(0, 4).join(' ')}…, ${pellets} pellets, A_Metal`);
 
+// DOOM II's first five. The SS guard: 10 + 10 to aim, A_CPosAttack, 6, A_CPosAttack, then
+// A_CPosRefire back to its second aim. The mancubus: A_FatRaise (DSMANATK, 20 tics), then
+// deathSouls volleys of two fireballs, the first aimed at the player and the second 11.25° left of
+// it. The arachnotron: plasma (DSPLASMA) every 5 tics through A_SpidRefire, and A_BabyMetal.
+// The pain elemental: A_PainAttack spits a charging lost soul; dying, three where there's room. Keen: hanging,
+// dying through A_KeenDie to lie dead
+P = 3800;
+await atTic(P);
+const ss = await spawnAt(84, 200, facing);
+await setState(ss, 'S_SSWV_ATK1', P);
+const ssTrace = await trace(ss, P, P + 40);
+await remove(ss);
+const fat = await spawnAt(67, 300, facing);
+await db.exec('DELETE FROM sound_events');
+const fat0 = (await one('SELECT COALESCE(MAX(id), 0) m FROM things')).M;
+await setState(fat, 'S_FATT_ATK1', P + 100);
+const fatTrace = await trace(fat, P + 100, P + 180);
+const fatSnd = await sounds();
+const fatBalls = await all(`SELECT ATAN2(momy, momx) a FROM things WHERE thing_type = 9007 AND id > ${fat0} ORDER BY id`);
+const aimAt = Math.atan2(pl.Y - (pl.Y + Math.sin(pl.ANGLE) * 300), pl.X - (pl.X + Math.cos(pl.ANGLE) * 300));
+const turnDeg = (a) => Math.round((((a - aimAt) * 180) / Math.PI + 540) % 360 - 180);
+const fatSpreads = fatBalls.map((r) => turnDeg(r.A));
+await db.exec('DELETE FROM things WHERE thing_type = 9007');
+await remove(fat);
+const bspi = await spawnAt(68, 300, facing);
+await db.exec('DELETE FROM sound_events');
+const plasma0 = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9008')).N;
+await setState(bspi, 'S_BSPI_ATK1', P + 200);
+const bspiTrace = await trace(bspi, P + 200, P + 232);
+const plasma = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9008')).N - plasma0;
+await setState(bspi, 'S_BSPI_RUN1', P + 240);
+const bspiSnd = await sounds();
+await db.exec('DELETE FROM things WHERE thing_type = 9008');
+await remove(bspi);
+const pe = await spawnAt(71, 200, facing);
+const souls0 = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 3006')).N;
+await setState(pe, 'S_PAIN_ATK4', P + 300);
+const spatSoul = await one(`SELECT COUNT(*) n, MAX(BIN_AND(flags, 262144)) f FROM things WHERE thing_type = 3006`);
+await db.exec(`DELETE FROM things WHERE thing_type = 3006 AND id > ${pe}`);
+await setState(pe, 'S_PAIN_DIE5', P + 310);
+const deathSouls = (await one(`SELECT COUNT(*) n FROM things WHERE thing_type = 3006 AND id > ${pe}`)).N;
+await db.exec(`DELETE FROM things WHERE thing_type = 3006 AND id > ${pe}`);
+await remove(pe);
+await atTic(P + 400);
+const keen = await spawnAt(72, 160, facing);
+const keen0 = await thing(keen);
+await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE damage_thing(${keen}, 1000, (SELECT thing_id FROM player WHERE id = 1)); END`);
+const keenTrace = await trace(keen, P + 400, P + 480);
+const keenEnd = await one(`SELECT st, solid FROM things WHERE id = ${keen}`);
+await remove(keen);
+assert(ssTrace.startsWith('0:S_SSWV_ATK1 10:S_SSWV_ATK2 20:S_SSWV_ATK3 24:S_SSWV_ATK4 30:S_SSWV_ATK5 34:S_SSWV_ATK6 35:S_SSWV_ATK2')
+  && fatTrace.startsWith('0:S_FATT_ATK1 20:S_FATT_ATK2 30:S_FATT_ATK3') && /80:S_FATT_RUN1/.test(fatTrace) && fatSnd.includes('DSMANATK')
+  && fatSpreads.join() === '0,11,0,-22,-6,6'
+  && bspiTrace.startsWith('0:S_BSPI_ATK1 20:S_BSPI_ATK2 24:S_BSPI_ATK3 28:S_BSPI_ATK4 29:S_BSPI_ATK2') && plasma >= 2 && bspiSnd.includes('DSPLASMA') && bspiSnd.includes('DSBSPWLK')
+  && spatSoul.N === souls0 + 1 && spatSoul.F !== 0 && deathSouls >= 2
+  && NAME(keen0.STATE) === 'S_KEENSTND' && keen0.STATE_TIC === null && /S_COMMKEEN11 \d+:S_COMMKEEN12$/.test(keenTrace) && keenEnd.ST.trim() === 'dead' && keenEnd.SOLID === 0,
+  `DOOM II's: the SS guard ${ssTrace.split(' ').slice(0, 7).map((x) => x.split(':')[0]).join('/')}; the mancubus's six fireballs at ${fatSpreads.join('°, ')}°; the arachnotron's ${plasma} plasma balls; the pain elemental spits a charging soul, and ${deathSouls} dying (three where there's room); Keen ${keenTrace.split(' ').at(-1)}, dead`);
+
 // every type on the tables lies down 'dead' at the end of its death (and its gibbing), even
 // where that last frame is also a decoration's spawn state (S_POSS_DIE5: a dead former human)
 const deadEnds = [];

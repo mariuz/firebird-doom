@@ -1195,13 +1195,13 @@ That's changing, in phases ([docs/ROADMAP.md](docs/ROADMAP.md)). DOOM's state ta
 (a state's tics start, its action is called, a 0-tic state goes straight on, `S_NULL` removes the thing)
 and `STATES_THINK` moves on, each tic, only the things whose state ends then (an index on the tic it
 ends; about 5 µs a tic when none does). The monsters move onto it family by family, and the first
-families are there: the zombieman, the shotgun guy, the chaingunner, the imp, the demon, the spectre, the lost soul, the cacodemon, the Hell knight, the baron of Hell, the cyberdemon and the spider mastermind live entirely on DOOM's states: all of DOOM I's monsters.
+families are there: the zombieman, the shotgun guy, the chaingunner, the imp, the demon, the spectre, the lost soul, the cacodemon, the Hell knight, the baron of Hell, the cyberdemon and the spider mastermind live entirely on DOOM's states: all of DOOM I's monsters, and DOOM II's SS guard, Commander Keen, pain elemental, mancubus and arachnotron.
 They start partway into their spawn state (`P_SpawnMapThing`'s `1 + P_Random() % tics`) and look
 (`A_Look`: the gunfire heard in their sector, or the player seen in the 180° ahead), chase
 (`A_Chase`: the 45° turns, `P_Move` and `P_NewChaseDir`, `P_CheckMissileRange` with its
 reaction time, `MF_JUSTHIT` and `MF_JUSTATTACKED`), take aim and fire (`A_FaceTarget`,
 `A_PosAttack`'s one bullet, `A_SPosAttack`'s three pellets, the chaingunner's `A_CPosRefire`
-bursts, the imp's `A_TroopAttack`: a claw within reach, else a fireball; the demons' `A_SargAttack` bite; the lost soul's `A_SkullAttack` charge; the cacodemon's `A_HeadAttack`, a bite within reach, else a fireball; the barons' `A_BruisAttack`, a claw or a green fireball, and the baron's `A_BossDeath` that opens E1M8; the cyberdemon's three `A_CyberAttack` rockets and its `A_Hoof` and `A_Metal` steps; the spider mastermind's pellets and `A_SpidRefire`), and feel pain, die and get gibbed (`P_DamageMobj`, `P_KillMobj`: the pain chance, the
+bursts, the imp's `A_TroopAttack`: a claw within reach, else a fireball; the demons' `A_SargAttack` bite; the lost soul's `A_SkullAttack` charge; the cacodemon's `A_HeadAttack`, a bite within reach, else a fireball; the barons' `A_BruisAttack`, a claw or a green fireball, and the baron's `A_BossDeath` that opens E1M8; the cyberdemon's three `A_CyberAttack` rockets and its `A_Hoof` and `A_Metal` steps; the spider mastermind's pellets and `A_SpidRefire`; the mancubus's `A_FatRaise` and three `A_FatAttack` volleys, each of two fireballs aimed as DOOM aims them; the arachnotron's plasma and `A_BabyMetal`; the pain elemental's `A_PainAttack` and `A_PainDie` souls; Keen's `A_KeenDie`), and feel pain, die and get gibbed (`P_DamageMobj`, `P_KillMobj`: the pain chance, the
 death or xdeath state 0–3 tics short, the dropped weapon) at info.c's timings, with DOOM's three
 sight and death cries picked at random. Every action is a PSQL procedure under its own name
 (`A_LOOK`, `A_CHASE`, `A_BULLETS`, …). With `-fast` or on Nightmare the demons' run, attack and pain states last half their tics, as

@@ -4019,6 +4019,92 @@ BEGIN
    WHERE t.id = :tid;
 END^
 
+-- A_FatAttack1/2/3: the mancubus faces its target and turns by TURN × FATSPREAD (11.25°),
+-- then throws two fireballs, each aimed at the target (P_SpawnMissile) and then turned by
+-- its own offset: 0 and +1 spreads, 0 and −2, then −½ and +½
+CREATE OR ALTER PROCEDURE a_fat_attack (tid INTEGER, turn DOUBLE PRECISION, off1 DOUBLE PRECISION, off2 DOUBLE PRECISION)
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE mtype INTEGER;
+DECLARE aim DOUBLE PRECISION;
+DECLARE fs DOUBLE PRECISION;
+DECLARE i INTEGER = 0;
+DECLARE off DOUBLE PRECISION;
+BEGIN
+  fs = PI() / 16;   -- FATSPREAD, ANG90/8
+  EXECUTE PROCEDURE a_face_target(tid);
+  UPDATE things t SET angle = t.angle + :turn * :fs WHERE t.id = :tid;
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL) THEN EXIT;
+  SELECT t.x, t.y, t.z, t.radius, tt.missile_type FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+   WHERE t.id = :tid INTO x, y, z, rad, mtype;
+  WHILE (i < 2) DO
+  BEGIN
+    off = IIF(i = 0, off1, off2);
+    aim = ATAN2(py - y, px - x);
+    IF (shadow = 1) THEN aim = aim + (p_rand256() - p_rand256()) * PI() / 2048;
+    EXECUTE PROCEDURE play_sound('DSFIRSHT', tid, x, y);
+    EXECUTE PROCEDURE monster_missile(tid, mtype, x, y, z, rad, aim + off * fs, px, py, pz);
+    i = i + 1;
+  END
+END^
+
+-- A_PainAttack: face the target and spit a lost soul at it (A_PainShootSkull)
+CREATE OR ALTER PROCEDURE a_pain_attack (tid INTEGER)
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+BEGIN
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL) THEN EXIT;
+  EXECUTE PROCEDURE a_face_target(tid);
+  SELECT t.x, t.y, t.z, t.radius, t.angle FROM things t WHERE t.id = :tid INTO x, y, z, rad, ang;
+  EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang, tgt, tp);
+END^
+
+-- A_PainDie: A_Fall, and three lost souls, at 90°, 180° and 270° from its facing
+CREATE OR ALTER PROCEDURE a_pain_die (tid INTEGER)
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+BEGIN
+  UPDATE things SET solid = 0 WHERE id = :tid;
+  SELECT t.x, t.y, t.z, t.radius, t.angle, t.target_id, t.tplayer FROM things t WHERE t.id = :tid
+    INTO x, y, z, rad, ang, tgt, tp;
+  EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI() / 2, tgt, tp);
+  EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI(), tgt, tp);
+  EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI() * 3 / 2, tgt, tp);
+END^
+
 -- A_CPosRefire: keep firing, unless (40 times in 256 it doesn't ask) the target is
 -- dead or out of sight: then back to the chase
 CREATE OR ALTER PROCEDURE a_cpos_refire (tid INTEGER, tic INTEGER, chance INTEGER = 40)
@@ -4346,11 +4432,30 @@ BEGIN
   ELSE IF (act = 'A_BruisAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 8, 10, 'DSCLAW');
   ELSE IF (act = 'A_CyberAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, NULL, NULL, NULL);
   ELSE IF (act = 'A_SpidRefire') THEN EXECUTE PROCEDURE a_cpos_refire(tid, tic, 10);
-  ELSE IF (act IN ('A_Hoof', 'A_Metal')) THEN
+  ELSE IF (act = 'A_BspiAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, NULL, NULL, NULL);
+  ELSE IF (act = 'A_FatRaise') THEN
   BEGIN
-    -- A_Hoof, A_Metal: the cyberdemon's hoof, the bosses' metal footfall, then A_Chase
+    EXECUTE PROCEDURE a_face_target(tid);
     SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO x, y;
-    EXECUTE PROCEDURE play_sound(TRIM(IIF(act = 'A_Hoof', 'DSHOOF', 'DSMETAL')), tid, x, y);
+    EXECUTE PROCEDURE play_sound('DSMANATK', tid, x, y);
+  END
+  ELSE IF (act = 'A_FatAttack1') THEN EXECUTE PROCEDURE a_fat_attack(tid, 1, 0, 1);
+  ELSE IF (act = 'A_FatAttack2') THEN EXECUTE PROCEDURE a_fat_attack(tid, -1, 0, -2);
+  ELSE IF (act = 'A_FatAttack3') THEN EXECUTE PROCEDURE a_fat_attack(tid, 0, -0.5e0, 0.5e0);
+  ELSE IF (act = 'A_PainAttack') THEN EXECUTE PROCEDURE a_pain_attack(tid);
+  ELSE IF (act = 'A_PainDie') THEN EXECUTE PROCEDURE a_pain_die(tid);
+  ELSE IF (act = 'A_KeenDie') THEN
+  BEGIN
+    -- A_KeenDie: A_Fall, and with the last Commander Keen dead the tag-666 doors open
+    UPDATE things SET solid = 0 WHERE id = :tid;
+    EXECUTE PROCEDURE keen_die;
+  END
+  ELSE IF (act IN ('A_Hoof', 'A_Metal', 'A_BabyMetal')) THEN
+  BEGIN
+    -- A_Hoof, A_Metal, A_BabyMetal: the cyberdemon's hoof, the bosses' metal footfall, the
+    -- arachnotron's whirr, then A_Chase
+    SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO x, y;
+    EXECUTE PROCEDURE play_sound(TRIM(CASE act WHEN 'A_Hoof' THEN 'DSHOOF' WHEN 'A_Metal' THEN 'DSMETAL' ELSE 'DSBSPWLK' END), tid, x, y);
     EXECUTE PROCEDURE a_chase(tid, tic);
   END
   ELSE IF (act = 'A_Fall') THEN
@@ -4423,7 +4528,7 @@ END^
 -- for (P_Random() % 8 + 1) × 3, stops and goes back to its spawn state; a wall stops it
 -- (no momentum: back to its spawn state the tic after). A step it takes crosses lines as a
 -- monster's does.
-CREATE OR ALTER PROCEDURE skulls_think (tic INTEGER)
+CREATE OR ALTER PROCEDURE skulls_think (tic INTEGER, after_id INTEGER = 0)
 AS
 DECLARE tid INTEGER;
 DECLARE x DOUBLE PRECISION;
@@ -4447,7 +4552,7 @@ DECLARE tele SMALLINT;
 DECLARE alive SMALLINT;
 BEGIN
   FOR SELECT t.id FROM things t
-       WHERE t.state IS NOT NULL AND BIN_AND(t.flags, 262144) <> 0 ORDER BY t.id
+       WHERE t.state IS NOT NULL AND BIN_AND(t.flags, 262144) <> 0 AND t.id > :after_id ORDER BY t.id
         INTO tid
   DO
   BEGIN
@@ -4532,6 +4637,7 @@ DECLARE ady DOUBLE PRECISION;
 DECLARE dist DOUBLE PRECISION;
 DECLARE delta DOUBLE PRECISION;
 DECLARE st VARCHAR(8);
+DECLARE newest INTEGER;
 BEGIN
   -- P_MobjThinker's movement, for the things on the tables that move: first P_XYMovement
   -- for a charging lost soul (SKULLS_THINK), then P_ZMovement for those in the air
@@ -4585,6 +4691,7 @@ BEGIN
     END
     UPDATE things t SET z = :z, momz = :momz WHERE t.id = :tid;
   END
+  newest = (SELECT MAX(t.id) FROM things t);
   FOR SELECT t.id FROM things t WHERE t.state_tic = :tic ORDER BY t.id INTO tid
   DO
   BEGIN
@@ -4594,6 +4701,9 @@ BEGIN
      WHERE t.id = :tid AND t.state_tic = :tic INTO nxt;
     IF (nxt IS NOT NULL) THEN EXECUTE PROCEDURE set_state(tid, nxt, tic) RETURNING_VALUES alive;
   END
+  -- a lost soul spat in this pass (A_PainAttack, A_PainDie) flies its first step this same tic,
+  -- as a new thinker runs in the pass that made it in DOOM
+  EXECUTE PROCEDURE skulls_think(tic, COALESCE(newest, 0));
 END^
 
 -- A save from before a type moved onto the tables: its things of that type take the

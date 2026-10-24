@@ -35,7 +35,7 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
   phases*). Phases 0 and 1 are done (the table, GPL-2 in a file of its own; the machine in SQL);
   phase 2, the monsters family by family, is under way: the zombieman, shotgun guy and
-  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's); DOOM II's are next.
+  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's SS guard, Keen, pain elemental, mancubus and arachnotron; the revenant, the arch-vile and the boss brain are next.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -176,7 +176,7 @@ P_ZMovement floats fliers and bounces a charging skull; `P_CheckMissileRange`'s 
 then the cacodemon (A_HeadAttack). The loader works a state's mode out from the death chains first:
 a corpse's last frame is also the spawn state of the map's dead-monster decorations, and was
 'idle' until the cacodemon's test found it (corpses that could be shot, and that the arch-vile and
-Nightmare passed over); `ADOPT_STATES` mends such corpses in a save; then the barons (A_BruisAttack; the baron's A_BossDeath in S_BOSS_DIE7), then the cyberdemon and the spider mastermind (A_CyberAttack, A_Hoof, A_Metal, A_SpidRefire; their A_BossDeath at the end of 110 and 130 tics of dying) (`thinginfo.js`'s `ON_STATES`; `thing_types.on_states`) spawn
+Nightmare passed over); `ADOPT_STATES` mends such corpses in a save; then the barons (A_BruisAttack; the baron's A_BossDeath in S_BOSS_DIE7), then the cyberdemon and the spider mastermind (A_CyberAttack, A_Hoof, A_Metal, A_SpidRefire; their A_BossDeath at the end of 110 and 130 tics of dying), then the SS guard, Keen (A_KeenDie), the pain elemental (A_PainAttack, A_PainDie; souls spat in the state pass fly their first step that tic, as a new thinker does), the mancubus (A_FatRaise, A_FatAttack1–3) and the arachnotron (A_BspiAttack, A_BabyMetal) (`thinginfo.js`'s `ON_STATES`; `thing_types.on_states`) spawn
 into their spawn state, partway in, with mobjinfo's reaction time, and run on A_Look, A_Chase,
 A_FaceTarget, A_PosAttack, A_SPosAttack, A_CPosAttack, A_CPosRefire, A_Pain, A_Scream (the random
 cries), A_XScream and A_Fall, each a procedure of its own; `DAMAGE_THING` sends them into their
@@ -184,7 +184,7 @@ pain, death and xdeath states (MF_JUSTHIT, the `&3` tic cut), and the arch-vile 
 their raise state. Each state carries a `mode` the loader works out from mobjinfo's chains (idle,
 chase, attack, pain, dying, dead, raise), copied into `things.st`, so the code that asks "can it be
 shot, is it a corpse" works for both kinds. `STATES_THINK` lets a stated walker tossed into the
-air fall (P_ZMovement). `ADOPT_STATES` moves an old save's zombies onto the table. Next: DOOM II's. The plan as
+air fall (P_ZMovement). `ADOPT_STATES` moves an old save's zombies onto the table. Next: the revenant, the arch-vile and the boss brain. The plan as
 it was: zombieman, sergeant and chaingunner first
 (A_Look, A_Chase, A_FaceTarget, A_PosAttack, A_SPosAttack, A_CPosAttack, A_CPosRefire, A_Pain,
 A_Scream, A_XScream, A_Fall), then the imp, the demons, the lost soul, the cacodemon, the barons,

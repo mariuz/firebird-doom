@@ -193,7 +193,10 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
   if (s2) {
     await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
         EXECUTE PROCEDURE spawn_thing(67, ${s2.x}, ${s2.y}, ${s2.z}, 0) RETURNING_VALUES id;
-        UPDATE things SET st = 'attack', st_len = 80, st_tics = 80, reaction = 0 WHERE id = :id;
+        UPDATE things SET reaction = 0 WHERE id = :id;
+        -- (on DOOM's frame tables: straight into its attack, S_FATT_ATK1)
+        EXECUTE PROCEDURE set_state(id, (SELECT s.id FROM states s WHERE s.name = 'S_FATT_ATK1'), (SELECT g.tic FROM game g WHERE g.id = 1))
+          RETURNING_VALUES id;
       END`);
     const aim = Math.atan2(p.Y - s2.y, p.X - s2.x);
     const seen = new Map();
@@ -203,7 +206,7 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
         if (!seen.has(m.ID)) seen.set(m.ID, Math.round((norm(m.ANGLE - aim) * 180) / Math.PI * 10) / 10);
       }
     }
-    const offsets = [...seen.values()].sort((a, b) => a - b);
+    const offsets = [...seen.values()].slice(0, 6).sort((a, b) => a - b);   // (the attack's six; it may start another)
     const want = [-22.5, -5.6, 0, 0, 5.6, 11.3];
     assert(offsets.length === 6 && offsets.every((o, i) => Math.abs(o - want[i]) < 0.3),
       `mancubus fires 3 volleys of 2 (offsets ${offsets.join(', ')}°; DOOM: ${want.join(', ')}°)`);
@@ -302,7 +305,8 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
       END`)).rows[0].ID;
     const before = new Set((await db.query('SELECT id FROM things WHERE thing_type = 3006')).rows.map((r) => r.ID));
     await db.exec(`EXECUTE PROCEDURE damage_thing(${pe}, 10000)`);
-    for (let i = 0; i < 22; i++) {
+    // (A_PainDie comes in S_PAIN_DIE5, 32 tics into its death)
+    for (let i = 0; i < 40; i++) {
       await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
       if ((await one('SELECT COUNT(*) n FROM things WHERE thing_type = 3006')).N > before.size) break;
     }
