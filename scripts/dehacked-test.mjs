@@ -142,8 +142,10 @@ await db.exec(`EXECUTE PROCEDURE cheat('iddqd')`);
 await db.exec(`EXECUTE PROCEDURE cheat('idkfa')`);
 const kfa = await one('SELECT armor, armor_type FROM player');
 assert(god.HEALTH === 175 && kfa.ARMOR === 100 && kfa.ARMOR_TYPE === 1, `IDDQD heals to 175; IDKFA gives 100 armour of class 1`);
-await db.exec('UPDATE player SET has_bfg = 1, cells = 35, weapon = 7, weapon_y = 0, weapon_down = 0, pending_weapon = 0, attack_tics = 0');
+await db.exec('UPDATE player SET has_bfg = 1, cells = 35, weapon = 7');
+await db.exec('UPDATE player p SET pending_weapon = 0, psp_sy = 32, psp_tics = 1, flash_state = NULL, psp_state = (SELECT wi.ready_state FROM weapon_info wi WHERE wi.weapon = p.weapon)');   // (the BFG up and ready)
 await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 1, 0, 0, 0)');
+await db.query('SELECT * FROM doom_tic(30, 0, 0, 0, 0, 0, 0, 0)');   // (A_BFGsound 20 tics, A_GunFlash 10, then A_FireBFG)
 const bfg = await one('SELECT cells FROM player');
 assert(bfg.CELLS === 5, `the BFG takes 30 cells a shot (35 → ${bfg.CELLS})`);
 

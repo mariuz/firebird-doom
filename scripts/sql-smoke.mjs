@@ -66,7 +66,7 @@ const moved = Math.hypot(s.PX - start.x, s.PY - start.y);
 assert(moved > 20, `player walked forward (${moved.toFixed(1)} units)`);
 
 t0 = t();
-s = await tic([4, 0, 0, 0, 1, 1, 0, 0]);
+s = await tic([6, 0, 0, 0, 1, 1, 0, 0]);   // (S_PISTOL1's 4 tics, then A_FirePistol)
 console.log(`fire+use       ${(t() - t0).toFixed(0)} ms; bullets ${s.BULLETS}`);
 assert(s.BULLETS < 50, 'pistol consumed a bullet');
 const fired = (await db.query("SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSPISTOL'")).rows[0].N;

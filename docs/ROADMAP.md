@@ -35,7 +35,7 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
   phases*). Phases 0 and 1 are done (the table, GPL-2 in a file of its own; the machine in SQL);
   phase 2, the monsters family by family, is under way: the zombieman, shotgun guy and
-  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's, the boss brain last (with phase 3's cubes): phase 2 is done. Phase 3 is done too: the projectiles, the brain's cubes, the effects, barrels, items and decorations and the player's body are on the table. Next is phase 4, the weapons.
+  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's, the boss brain last (with phase 3's cubes): phase 2 is done. Phase 3 is done too: the projectiles, the brain's cubes, the effects, barrels, items and decorations and the player's body are on the table. Phase 4 is done: the weapons in your hands. Next is phase 5, DEHACKED's Frame, Pointer and Weapon blocks.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -220,11 +220,31 @@ own sprite (S_PLAY…), puffs and blood, barrels, the decorations and items, the
 arch-vile's fire and the boss brain's cubes and spawn fire. Then the renderer's own walking
 animation and the frame strings in `thinginfo.js` go.
 
-**Phase 4: the weapons.** The player's two psprites (`ps_weapon`, `ps_flash`) as states:
+**Phase 4: the weapons.** *Done.* The player's two psprites (`ps_weapon`, `ps_flash`) as states:
 A_WeaponReady, A_ReFire, A_Lower, A_Raise, A_GunFlash and each weapon's fire action at the
 frames `info.c` gives them, the bobbing, and the renderer's psprite drawn from the state.
 `attack_tics` goes. Test: `weapons-test` (both WADs) gains each weapon's fire cycle in tics
 (the pistol's 4 + 6 + 4 + 5, the super shotgun's long reload).
+
+How it landed:
+- **Data:** `gen-states` also reads `d_items.c`: `WEAPONINFO` in `src/states.js`, the
+  `weapon_info` table.
+- **The player's psprites:** in `player` (`psp_state`, `psp_tics`, `psp_sx`, `psp_sy`,
+  `flash_state`, `flash_tics`, plus `refire`, `attack_down`, `buttons`, `extralight` and `bob`).
+- **The machine:** `SET_PSPRITE` (P_SetPsprite), `MOVE_PSPRITES` (P_MovePsprites, at the end of
+  `PLAYER_THINK` and in P_DeathThink), `PSPRITE_ACTION` and the actions.
+- **Firing and changing:** `CHECK_AMMO`, `FIRE_WEAPON`, `BRING_UP_WEAPON`, `SETUP_PSPRITES` (in
+  `INIT_MAP` and `REBORN_PLAYER`), and `DAMAGE_PLAYER`'s P_DropWeapon.
+- **The shots:** P_BulletSlope, P_GunShot and the P_SubRandom spreads; `AIM_TARGET` gives A_Punch
+  and A_Saw their linetarget.
+- **The HUD:** `HUD_ROW` returns the two pictures and the place. `hud.js` draws them, weapon
+  then flash, and the view's light comes from the flash states' A_Light.
+- **Old saves:** their retired columns (`attack_tics`, `attack_len`, `weapon_y`,
+  `weapon_down`) are dropped as they load (`savegame.js`'s `RETIRED`), and `ADOPT_STATES` puts
+  the weapon up and ready.
+- **Not changed:** the weapon keys still choose as before (1 toggles the fist and chainsaw;
+  3 picks the super shotgun only with 2 shells). DOOM's own rules in `P_PlayerThink` differ
+  slightly and could follow.
 
 **Phase 5: DEHACKED.** Frame blocks (sprite, frame, tics, next state, bright), Pointer blocks
 (an action moved to another frame), Weapon blocks' states and Thing blocks' state fields, in

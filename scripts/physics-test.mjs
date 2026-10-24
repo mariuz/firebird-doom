@@ -267,7 +267,7 @@ if (sky) {
   const hearer = await placeImp((s) => heardSet.has(s) && s !== pl.SEC);
   const deaf = await placeImp((s) => !heardSet.has(s));
   if (hearer) {
-    await db.exec('UPDATE player SET weapon_y = 0, weapon_down = 0, pending_weapon = 0');   // (the weapon up and ready)
+    await db.exec('UPDATE player p SET pending_weapon = 0, psp_sy = 32, psp_tics = 1, flash_state = NULL, psp_state = (SELECT wi.ready_state FROM weapon_info wi WHERE wi.weapon = p.weapon)');   // (the weapon up and ready)
     await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 1, 0, 0, 0)');       // one shot
     await tic(16);
     const st = (await one(`SELECT st FROM things WHERE id = ${hearer}`)).ST;
@@ -283,7 +283,7 @@ if (sky) {
   const amb = await placeImp((s) => heardSet.has(s) && s !== pl.SEC);
   if (amb) {
     await db.exec(`UPDATE things SET flags = 8 WHERE id = ${amb}`);
-    await db.exec('UPDATE player SET weapon_y = 0, weapon_down = 0, pending_weapon = 0');   // (the weapon up and ready)
+    await db.exec('UPDATE player p SET pending_weapon = 0, psp_sy = 32, psp_tics = 1, flash_state = NULL, psp_state = (SELECT wi.ready_state FROM weapon_info wi WHERE wi.weapon = p.weapon)');   // (the weapon up and ready)
     await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 1, 0, 0, 0)');
     await tic(16);
     assert((await one(`SELECT st FROM things WHERE id = ${amb}`)).ST === 'idle', 'an ambush monster out of sight ignores the noise');

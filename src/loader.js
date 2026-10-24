@@ -4,7 +4,7 @@
 // (scripts/sql-smoke.mjs), so CI exercises exactly the SQL the page runs.
 
 import { THING_TYPES, MOBJ_TYPE, SPAWN_STATE, ON_STATES } from './thinginfo.js';
-import { STATES, MOBJINFO } from './states.js';
+import { STATES, MOBJINFO, WEAPONINFO } from './states.js';
 
 // each thing type's eight states (spawn … raise), from its DOOM mobj type: by the
 // map number, else MOBJ_TYPE; [] when DOOM has no such type
@@ -135,7 +135,7 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
   const frames = new Map();
   for (const f of wad.spriteFrames()) frames.set(`${f.sprite}${f.frame}${f.rot}`, f);
 
-  await db.exec('DELETE FROM textures; DELETE FROM flats; DELETE FROM sprite_frames; DELETE FROM thing_types; DELETE FROM states; DELETE FROM screen_cols; DELETE FROM game; DELETE FROM player; DELETE FROM viewcfg; DELETE FROM rules');
+  await db.exec('DELETE FROM textures; DELETE FROM flats; DELETE FROM sprite_frames; DELETE FROM thing_types; DELETE FROM states; DELETE FROM weapon_info; DELETE FROM screen_cols; DELETE FROM game; DELETE FROM player; DELETE FROM viewcfg; DELETE FROM rules');
   await insertRows(db, 'textures', ['id', 'name', 'w', 'h'], texDefs.map((d, i) => [i + 1, d.name, d.w, d.h]));
   await insertRows(db, 'flats', ['id', 'name', 'is_sky'], flats.map((l, i) => [i + 1, l.name, l.name === 'F_SKY1' ? 1 : 0]));
   await insertRows(
@@ -168,6 +168,9 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
   const fastTo = STATE_ID.get('S_SARG_PAIN2');
   await insertRows(db, 'states', ['id', 'name', 'sprite', 'frame', 'bright', 'tics', 'action', 'next_state', 'misc1', 'misc2', 'mode', 'fast'],
     STATES.map((s, i) => [i, ...s, modes[i], i >= fastFrom && i <= fastTo ? 1 : 0]));
+  // weaponinfo[], weapon k + 1 for DOOM's weapontype_t k
+  await insertRows(db, 'weapon_info', ['weapon', 'ammo', 'up_state', 'down_state', 'ready_state', 'atk_state', 'flash_state'],
+    WEAPONINFO.map((w, k) => [k + 1, w.ammo, ...w.states]));
   await db.exec(`SET TERM ^ ;
 EXECUTE BLOCK AS DECLARE i INTEGER = 0;
 BEGIN WHILE (i < 1280) DO BEGIN INSERT INTO screen_cols (x) VALUES (:i); i = i + 1; END END^

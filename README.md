@@ -273,19 +273,42 @@ messages stay out of this repository. Keys speak only the first time, as in vani
 medikit's `GOTMEDINEED` never shows: vanilla checks health below 25 after adding the 25.
 `npm run test:weapons` and `npm run test:pwad` check the messages.
 
-### Changing weapons
+### Weapons
 
-A weapon key only picks the next weapon (`pendingweapon`), as in `p_pspr.c`. The one in your hands
-finishes its attack, then goes down 6 units a tic (`A_Lower`) until it's out of sight. The new one
-comes up just as fast (`A_Raise`), and it can't fire until it's up: 31 tics, nearly a second, from
-one to the other. With the trigger empty, `P_CheckAmmo` makes the best weapon that has ammo the
-next one, and nothing is fired. That happens when you pull the trigger or when an attack ends.
-Its order is plasma gun, super shotgun, chaingun, shotgun, pistol, chainsaw, rocket launcher, BFG.
-Picking up a new weapon brings it up the same way, and so does the berserk pack with the fist.
-Every level starts with the weapon rising (`P_SetupPsprites`), and when you die it drops out of
-sight. The state lives in `PLAYER` (`PENDING_WEAPON`, `WEAPON_Y`, `WEAPON_DOWN`), and
-`DOOM_TIC` returns `WEAPON_Y` for the HUD to draw the sprite that much lower. `npm run
-test:weapons` times it against vanilla's numbers.
+The weapon in your hands runs on DOOM's frame tables, as `p_pspr.c` has it. You have two
+psprites: the weapon (`ps_weapon`) and its muzzle flash (`ps_flash`). Each goes through the weapon
+states of `info.c`, with its tics counted down every tic (`P_MovePsprites`) and its action called
+as it's entered (`P_SetPsprite`). `d_items.c`'s `weaponinfo[]` (in `src/states.js`, loaded into
+`WEAPON_INFO`) gives each weapon its up, down, ready, attack and flash states and its ammo.
+
+- **Ready:** `A_WeaponReady` sways the weapon with your movement (`player->bob`) and fires when you
+  pull the trigger (`P_FireWeapon`). The rocket launcher and the BFG fire once per press
+  (`attackdown`). The rest keep firing while it's held (`A_ReFire`).
+- **Firing:** every shot comes at the frame DOOM gives it. The pistol takes 4 + 6 + 4 + 5 tics, its
+  bullet leaving at the 4th. Only the first shot of a burst is dead accurate (`refire`). A rocket
+  leaves 8 tics after the trigger (`A_GunFlash`, then `A_FireMissile`). The BFG sounds at once and
+  fires 30 tics later. The super shotgun fires at 3 tics, then opens, loads and closes in 59 more.
+  The chaingun fires on both of its 4-tic frames, each with its own flash. The fist and the
+  chainsaw turn you towards what they hit (`A_Punch`, `A_Saw`). The fist only thuds when it
+  connects.
+- **Flashes:** the muzzle flash is drawn over the weapon. Its frames light the view by one or two
+  steps (`A_Light1`, `A_Light2`, in `PLAYER.EXTRALIGHT`) until `S_LIGHTDONE`.
+- **Changing:** a weapon key only picks the next weapon (`pendingweapon`). The one in your hands
+  finishes its attack, then goes down 6 units a tic (`A_Lower`) until it's out of sight. The new one
+  comes up just as fast (`A_Raise`) and can't fire until it's up: 31 tics, nearly a second, from
+  one to the other.
+- **Out of ammo:** with the trigger pulled on an empty weapon, or when an attack ends,
+  `P_CheckAmmo` puts the weapon down and makes the best one with ammo the next. Its order is
+  plasma gun, super shotgun (with more than 2 shells), chaingun, shotgun, pistol, chainsaw,
+  rocket launcher, BFG (with more than 40 cells), fist.
+- **New weapons:** picking up a new weapon brings it up the same way, and so does the berserk pack
+  with the fist.
+- **Levels and death:** every level starts with the weapon rising (`P_SetupPsprites`), and when you
+  die it drops out of sight (`P_DropWeapon`).
+
+`DOOM_TIC` returns each psprite's picture (`PSP_PIC`, `FLASH_PIC`) and where it is (`PSP_SX`,
+`PSP_SY`) for the HUD to draw. `npm run test:weapons` follows each weapon's cycle tic by tic
+against `info.c`.
 
 ### Invulnerability
 
@@ -531,9 +554,9 @@ Chocolate Doom's `deh_*.c`):
   ammo pickup's amount follows the clip size, as `P_GiveAmmo` counts in clips.
 - **Cheat** respells the cheat codes, and BEX **[PARS]** sets par times. Freedoom's own lump has both:
   its par times show on the intermission, and in Phase 1 IDCLIP and IDSPISPOPD swap places.
-- **Frame**, **Pointer**, **Weapon**, **Sound** and **Text** blocks can't be applied. The port has no
-  state tables (each thing type is a state machine with frame letters), so they're listed in the
-  console instead. Freedoom's seven frame patches (brighter muzzle flashes, a shorter super
+- **Frame**, **Pointer**, **Weapon**, **Sound** and **Text** blocks can't be applied yet: the state
+  tables they patch are in Firebird now, and applying them is the next phase (see the ROADMAP).
+  They're listed in the console instead. Freedoom's seven frame patches (brighter muzzle flashes, a shorter super
   shotgun flash) are among them.
 
 `npm run test:dehacked` reads Freedoom's lump and a patch with every kind of block, then plays the
@@ -1046,9 +1069,10 @@ You can also load your own `DOOM1.WAD` / `DOOM.WAD` / `DOOM2.WAD` with the file 
 is uploaded anywhere.
 
 `npm run test:all-maps` loads, plays and renders every map in the WAD, and fires each map's first
-teleporter. `npm run test:weapons` fires the rocket launcher, plasma gun, BFG, chainsaw and, when
-the WAD has it (`WAD=public/wads/freedoom2.wad`), the super shotgun at a monster. It checks ammo,
-sounds, damage, splash and pickups.
+teleporter. `npm run test:weapons` follows the pistol's, shotgun's, chaingun's and (when the WAD has
+it, `WAD=public/wads/freedoom2.wad`) the super shotgun's fire cycles tic by tic. It fires the
+rocket launcher, plasma gun, BFG and chainsaw at a monster, and checks ammo, sounds, damage,
+splash and pickups.
 
 `npm run test:specials` checks:
 
@@ -1228,7 +1252,7 @@ if it went at one go (`P_KillMobj` sets none; a single-player game counts the ki
 and decoration plays its own frames: a bonus's glow, a torch's flicker, a dead body lying still; the things
 that hang from the ceiling hang (`MF_NOGRAVITY`). Last, the player's own body: standing, running,
 shooting, in pain and dying in its `S_PLAY` states (see *Co-op* for how the others look). Every thing a map
-places is on the tables now; the weapons in your hands come next (phase 4).
+places is on the tables now, and so are the weapons in your hands (phase 4: see *Weapons*).
 They start partway into their spawn state (`P_SpawnMapThing`'s `1 + P_Random() % tics`) and look
 (`A_Look`: the gunfire heard in their sector, or the player seen in the 180° ahead), chase
 (`A_Chase`: the 45° turns, `P_Move` and `P_NewChaseDir`, `P_CheckMissileRange` with its

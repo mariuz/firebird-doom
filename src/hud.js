@@ -167,74 +167,25 @@ export function drawText(renderer, text, x, y) {
   }
 }
 
-// A_Light1 / A_Light2 in each flash state: the extralight while that frame shows
-const FLASH_LIGHT = { PISFA0: 1, SHTFA0: 1, SHTFB0: 2, SHT2I0: 1, SHT2J0: 2, CHGFA0: 1, CHGFB0: 2,
-  MISFA0: 1, MISFB0: 1, MISFC0: 2, MISFD0: 2, PLSFA0: 1, PLSFB0: 1, BFGFA0: 1, BFGFB0: 2 };
-
-/** P_PlayerThink's player->extralight: 0, or 1–2 while the muzzle flash shows. */
+/** P_PlayerThink's player->extralight: 0, or 1–2 while a muzzle flash lights the view (A_Light1, A_Light2). */
 export function extraLight(hud) {
-  return FLASH_LIGHT[weaponFrames(hud).flash] ?? 0;
+  return hud.EXTRALIGHT ?? 0;
 }
 
+/**
+ * R_DrawPlayerSprites: the weapon's psprite, then its muzzle flash over it, both where the
+ * weapon is (sx, sy: A_WeaponReady's sway, A_Lower and A_Raise sliding it), each its
+ * state's sprite and frame (HUD_ROW's PSP_PIC and FLASH_PIC). R_DrawPSprite: in the view
+ * (renderer.psprite). Partially invisible, the weapon is fuzz too – flickering back in
+ * the last four seconds (pw_invisibility > 4*32 || & 8); invulnerable, it takes the
+ * inverse colormap with the rest of the view.
+ */
 export function drawWeapon(renderer, hud) {
-  const { gun, flash, bob } = weaponFrames(hud);
-  // R_DrawPSprite: sx = 1, sy = WEAPONTOP (32), in the view (renderer.psprite).
-  // Partially invisible, the weapon is fuzz too – flickering back in the
-  // last four seconds (pw_invisibility > 4*32 || & 8)
   const inv = hud.INVIS_TICS ?? 0;
-  // …and invulnerable, it takes the inverse colormap with the rest of the view
   const cmap = renderer.fixedCm ?? 0;
-  const draw = inv > 4 * 32 || (inv & 8)
-    ? (pic, x, y) => renderer.psprite(pic, x, y, 'fuzz')
-    : (pic, x, y) => renderer.psprite(pic, x, y, cmap);
-  const lowered = hud.WEAPON_Y ?? 0;
-  const sy = 32 + lowered + Math.abs(Math.round(bob));
-  if (flash) draw(renderer.pictureByName(flash), 1 + Math.round(bob), sy);
-  draw(renderer.pictureByName(gun), 1 + Math.round(bob), sy);
-}
-
-/** Which weapon frame and flash frame show now, and the bob. */
-function weaponFrames(hud) {
-  const w = hud.WEAPON;
-  const len = Math.max(1, hud.ATTACK_LEN);
-  const p = hud.ATTACK_TICS > 0 ? 1 - hud.ATTACK_TICS / len : -1;
-  // A_WeaponReady bobs it; lowered or raised (A_Lower/A_Raise) it just slides
-  const lowered = hud.WEAPON_Y ?? 0;
-  const bob = lowered ? 0 : Math.sin(hud.TIC * 0.2) * 2;
-  let gun;
-  let flash = null;
-  if (w === 1) {
-    gun = p < 0 ? 'PUNGA0' : `PUNG${'BCDCB'[Math.min(4, Math.floor(p * 5))]}0`;
-  } else if (w === 2) {
-    gun = p < 0 ? 'PISGA0' : `PISG${'ABCB'[Math.min(3, Math.floor(p * 4))]}0`;
-    if (p >= 0 && p < 0.25) flash = 'PISFA0';
-  } else if (w === 3) {
-    gun = p < 0 ? 'SHTGA0' : `SHTG${'AABCDCBA'[Math.min(7, Math.floor(p * 8))]}0`;
-    if (p >= 0 && p < 0.08) flash = 'SHTFA0';
-    else if (p >= 0.08 && p < 0.16) flash = 'SHTFB0';
-  } else if (w === 8) {
-    // the chainsaw: SAWG C/D while idling, A/B while cutting
-    gun = p < 0 ? `SAWG${(hud.TIC >> 2) & 1 ? 'D' : 'C'}0` : `SAWG${(hud.TIC >> 1) & 1 ? 'B' : 'A'}0`;
-  } else if (w === 9) {
-    // A_FireShotgun2, then open, load and close: SHT2 A–H, muzzle flash I/J
-    gun = p < 0 ? 'SHT2A0' : `SHT2${'AABCDEFGHA'[Math.min(9, Math.floor(p * 10))]}0`;
-    if (p >= 0 && p < 0.05) flash = 'SHT2I0';
-    else if (p >= 0.05 && p < 0.1) flash = 'SHT2J0';
-  } else if (w === 4) {
-    gun = p < 0 ? 'CHGGA0' : `CHGG${(hud.TIC >> 1) & 1 ? 'B' : 'A'}0`;
-    if (p >= 0) flash = `CHGF${(hud.TIC >> 1) & 1 ? 'B' : 'A'}0`;
-  } else if (w === 5) {
-    // A_FireMissile: recoil frame B while the exhaust flash burns through MISF A–D
-    gun = p >= 0 && p < 0.6 ? 'MISGB0' : 'MISGA0';
-    if (p >= 0 && p < 0.5) flash = `MISF${'ABCD'[Math.min(3, Math.floor(p * 8))]}0`;
-  } else if (w === 6) {
-    gun = 'PLSGA0';
-    if (p >= 0) flash = `PLSF${(hud.TIC >> 1) & 1 ? 'B' : 'A'}0`;
-  } else {
-    // A_BFGsound, charge (BFGG A + flash A), then the shot (BFGG B + flash B)
-    gun = p >= 0.33 && p < 0.5 ? 'BFGGB0' : 'BFGGA0';
-    if (p >= 0 && p < 0.33) flash = 'BFGFA0';
-    else if (p >= 0.33 && p < 0.45) flash = 'BFGFB0';
+  const fuzz = inv > 4 * 32 || (inv & 8);
+  for (const name of [hud.PSP_PIC, hud.FLASH_PIC]) {
+    const pic = name ? renderer.pictureByName(name.trim()) : null;
+    if (pic) renderer.psprite(pic, hud.PSP_SX, hud.PSP_SY, fuzz ? 'fuzz' : cmap);
   }
-  return { gun, flash, bob };
 }

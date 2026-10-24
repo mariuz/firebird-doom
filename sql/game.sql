@@ -327,6 +327,13 @@ BEGIN
   alive = 1;
 END^
 
+-- (SET_PSPRITE, P_SetPsprite, declared here for DAMAGE_PLAYER's P_DropWeapon; its body comes
+-- with the weapons, before PLAYER_THINK)
+CREATE OR ALTER PROCEDURE set_psprite (pid SMALLINT, pos SMALLINT, st INTEGER, tic INTEGER)
+AS
+BEGIN
+END^
+
 CREATE OR ALTER PROCEDURE spawn_thing (
   ttype INTEGER, px DOUBLE PRECISION, py DOUBLE PRECISION, pz DOUBLE PRECISION, ang DOUBLE PRECISION)
 RETURNS (new_id INTEGER)
@@ -434,6 +441,10 @@ BEGIN
   UPDATE player SET dead = 1, health = 0, msg = 'You died. Press USE to ' || IIF((SELECT g.players FROM game g WHERE g.id = 1) > 1, 'respawn.', 'restart.'), msg_tics = 100000
    WHERE id = :pid AND health <= 0;
   killed = ROW_COUNT;
+  -- P_KillMobj: P_DropWeapon, the weapon goes down (A_Lower keeps it out of sight)
+  IF (killed > 0) THEN
+    EXECUTE PROCEDURE set_psprite(pid, 0, (SELECT wi.down_state FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon
+                                            WHERE p.id = :pid), tic);
   -- P_KillMobj: source->player->frags[target->player]++ – a player's kill of a
   -- player, their own self included (the status bar counts that one against them)
   IF (killed > 0) THEN
@@ -1481,7 +1492,49 @@ END^
 
 -- P_AimLineAttack, simplified: the slope from (SX, SY, SZ) to the nearest
 -- shootable thing along ANG within RNG that can be seen and sits inside
--- DOOM's vertical aiming window (±100/160); NULL if there is none.
+-- DOOM's vertical aiming window (±100/160); NULL if there is none. AIM_TARGET
+-- also names it (linetarget) and where it stands.
+CREATE OR ALTER PROCEDURE aim_target (
+  sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION, ang DOUBLE PRECISION,
+  rng DOUBLE PRECISION, shooter INTEGER)
+RETURNS (slope DOUBLE PRECISION, tgt INTEGER, tx DOUBLE PRECISION, ty DOUBLE PRECISION)
+AS
+DECLARE ddx DOUBLE PRECISION;
+DECLARE ddy DOUBLE PRECISION;
+DECLARE id INTEGER;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE tmid DOUBLE PRECISION;
+DECLARE along DOUBLE PRECISION;
+BEGIN
+  slope = NULL;
+  tgt = NULL;
+  ddx = COS(ang);
+  ddy = SIN(ang);
+  FOR SELECT q.id, q.x, q.y, q.mid, q.along
+        FROM (SELECT t.id, t.x, t.y, t.z + t.height / 2 mid, t.radius,
+                     (t.x - :sx) * :ddx + (t.y - :sy) * :ddy along,
+                     ABS((t.x - :sx) * :ddy - (t.y - :sy) * :ddx) perp
+                FROM things t
+               WHERE t.kind IN ('monster', 'barrel', 'keen', 'brain', 'player') AND t.st NOT IN ('dying', 'dead')
+                 AND t.id <> :shooter) q
+       WHERE q.along > 0 AND q.along < :rng AND q.perp < q.radius
+         AND ABS(q.mid - :sz) <= q.along * 100 / 160
+       ORDER BY q.along
+        INTO id, x, y, tmid, along
+  DO
+  BEGIN
+    IF (check_sight(sx, sy, sz, x, y, tmid) = 1) THEN
+    BEGIN
+      slope = (tmid - sz) / along;
+      tgt = id;
+      tx = x;
+      ty = y;
+      EXIT;
+    END
+  END
+END^
+
 CREATE OR ALTER PROCEDURE aim_slope (
   sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION, ang DOUBLE PRECISION,
   rng DOUBLE PRECISION, shooter INTEGER)
@@ -1845,6 +1898,478 @@ END^
 -- up to twenty tries for one nobody stands on (G_CheckSpot); failing that, the
 -- player's own start. DOOM refuses a map with fewer than four deathmatch
 -- starts; here one without any falls back to the player starts instead.
+-- ── the weapons on DOOM's frame tables (docs/ROADMAP.md, phase 4) ──────────
+-- p_pspr.c: each player's two psprites, the weapon (POS 0, ps_weapon) and its muzzle flash
+-- (POS 1, ps_flash), go through info.c's weapon states as a thing goes through its own: a
+-- state's tics count down in PLAYER_THINK (P_MovePsprites) and its action is called as it's
+-- entered (P_SetPsprite). weapon_info is d_items.c's weaponinfo[]. The actions run in
+-- P_PlayerThink, before the body's own thinker: the body states they set start at TIC - 1.
+
+-- P_SubRandom × 2^SHIFT in BAM, as radians: (P_Random() - P_Random()) << SHIFT
+CREATE OR ALTER FUNCTION sub_random_angle (shift INTEGER) RETURNS DOUBLE PRECISION
+AS
+DECLARE r1 INTEGER;
+DECLARE r2 INTEGER;
+BEGIN
+  r1 = p_rand256();
+  r2 = p_rand256();
+  RETURN (r1 - r2) * POWER(2, shift) * 2 * PI() / 4294967296e0;
+END^
+
+-- DecreaseAmmo: N of the weapon in hand's ammo
+CREATE OR ALTER PROCEDURE decrease_ammo (pid SMALLINT, n INTEGER)
+AS
+DECLARE ammo VARCHAR(8);
+BEGIN
+  SELECT wi.ammo FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon WHERE p.id = :pid INTO ammo;
+  UPDATE player p
+     SET bullets = p.bullets - IIF(:ammo = 'clip', :n, 0), shells = p.shells - IIF(:ammo = 'shell', :n, 0),
+         rockets = p.rockets - IIF(:ammo = 'misl', :n, 0), cells = p.cells - IIF(:ammo = 'cell', :n, 0)
+   WHERE p.id = :pid;
+END^
+
+-- P_CheckAmmo: enough for a shot of the weapon in hand (the BFG's deh_bfg_cells_per_shot, the
+-- super shotgun's 2, else 1; the fist and the chainsaw need none)? If not, the best weapon that
+-- has some is pending, in DOOM's order (the super shotgun only with more than 2 shells, the BFG
+-- more than 40 cells), and the weapon in hand goes down.
+CREATE OR ALTER PROCEDURE check_ammo (pid SMALLINT, tic INTEGER)
+RETURNS (ok SMALLINT)
+AS
+DECLARE weapon SMALLINT;
+DECLARE ammo VARCHAR(8);
+DECLARE have INTEGER;
+DECLARE need INTEGER;
+DECLARE down INTEGER;
+DECLARE pending SMALLINT;
+BEGIN
+  SELECT p.weapon, wi.ammo, wi.down_state,
+         CASE wi.ammo WHEN 'clip' THEN p.bullets WHEN 'shell' THEN p.shells WHEN 'misl' THEN p.rockets
+                      WHEN 'cell' THEN p.cells END,
+         CASE p.weapon WHEN 7 THEN (SELECT r.bfg_cells FROM rules r WHERE r.id = 1) WHEN 9 THEN 2 ELSE 1 END,
+         CASE WHEN p.has_plasma = 1 AND p.cells > 0 THEN 6
+              WHEN p.has_ssg = 1 AND p.shells > 2 THEN 9
+              WHEN p.has_chaingun = 1 AND p.bullets > 0 THEN 4
+              WHEN p.has_shotgun = 1 AND p.shells > 0 THEN 3
+              WHEN p.bullets > 0 THEN 2
+              WHEN p.has_chainsaw = 1 THEN 8
+              WHEN p.has_launcher = 1 AND p.rockets > 0 THEN 5
+              WHEN p.has_bfg = 1 AND p.cells > 40 THEN 7
+              ELSE 1 END
+    FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon WHERE p.id = :pid
+    INTO weapon, ammo, down, have, need, pending;
+  ok = 1;
+  IF (ammo = 'noammo' OR have >= need) THEN EXIT;
+  ok = 0;
+  UPDATE player p SET pending_weapon = :pending WHERE p.id = :pid;
+  EXECUTE PROCEDURE set_psprite(pid, 0, down, tic);
+END^
+
+-- P_FireWeapon: with the ammo for it, the body shoots (S_PLAY_ATK1), the weapon goes to its
+-- attack state, and the noise wakes whatever hears it (P_NoiseAlert)
+CREATE OR ALTER PROCEDURE fire_weapon (pid SMALLINT, tic INTEGER)
+AS
+DECLARE ok SMALLINT;
+DECLARE tid INTEGER;
+DECLARE sec INTEGER;
+DECLARE alive SMALLINT;
+BEGIN
+  EXECUTE PROCEDURE check_ammo(pid, tic) RETURNING_VALUES ok;
+  IF (ok = 0) THEN EXIT;
+  SELECT p.thing_id, t.sector_id FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = :pid INTO tid, sec;
+  EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK1'), tic - 1) RETURNING_VALUES alive;
+  EXECUTE PROCEDURE set_psprite(pid, 0, (SELECT wi.atk_state FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon
+                                          WHERE p.id = :pid), tic);
+  EXECUTE PROCEDURE noise_alert(sec, tic, pid);
+END^
+
+-- P_BringUpWeapon: the pending weapon (else the one in hand) starts up from WEAPONBOTTOM in its
+-- up state; the chainsaw revs as it comes (DSSAWUP)
+CREATE OR ALTER PROCEDURE bring_up_weapon (pid SMALLINT, tic INTEGER)
+AS
+DECLARE pending SMALLINT;
+DECLARE tid INTEGER;
+BEGIN
+  SELECT IIF(p.pending_weapon = 0, p.weapon, p.pending_weapon), p.thing_id FROM player p WHERE p.id = :pid INTO pending, tid;
+  IF (pending = 8) THEN
+    EXECUTE PROCEDURE play_sound('DSSAWUP', tid, (SELECT t.x FROM things t WHERE t.id = :tid), (SELECT t.y FROM things t WHERE t.id = :tid));
+  UPDATE player p SET pending_weapon = 0, psp_sy = 128 WHERE p.id = :pid;
+  EXECUTE PROCEDURE set_psprite(pid, 0, (SELECT wi.up_state FROM weapon_info wi WHERE wi.weapon = :pending), tic);
+END^
+
+-- P_SetupPsprites (P_SpawnPlayer): no psprites, then the weapon in hand comes up; and the
+-- view's flash light off
+CREATE OR ALTER PROCEDURE setup_psprites (pid SMALLINT, tic INTEGER)
+AS
+BEGIN
+  UPDATE player p SET psp_state = NULL, flash_state = NULL, pending_weapon = p.weapon, extralight = 0 WHERE p.id = :pid;
+  EXECUTE PROCEDURE bring_up_weapon(pid, tic);
+END^
+
+-- P_BulletSlope: the slope to a target straight ahead, else 5.625° (1 << 26) to the left, else
+-- as far to the right; 0 if none of the three finds one
+CREATE OR ALTER PROCEDURE bullet_slope (tid INTEGER)
+RETURNS (slope DOUBLE PRECISION)
+AS
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+BEGIN
+  SELECT t.x, t.y, t.z, t.angle FROM things t WHERE t.id = :tid INTO x, y, z, ang;
+  EXECUTE PROCEDURE aim_slope(x, y, z + 32, ang, 1024, tid) RETURNING_VALUES slope;
+  IF (slope IS NULL) THEN EXECUTE PROCEDURE aim_slope(x, y, z + 32, ang + PI() / 32, 1024, tid) RETURNING_VALUES slope;
+  IF (slope IS NULL) THEN EXECUTE PROCEDURE aim_slope(x, y, z + 32, ang - PI() / 32, 1024, tid) RETURNING_VALUES slope;
+  slope = COALESCE(slope, 0);
+END^
+
+-- P_GunShot: 5 × (P_Random() % 3 + 1) along SLOPE, MISSILERANGE away; a little off line
+-- (P_SubRandom() << 18) unless ACCURATE
+CREATE OR ALTER PROCEDURE gun_shot (tid INTEGER, slope DOUBLE PRECISION, accurate SMALLINT)
+AS
+DECLARE dmg INTEGER;
+DECLARE ang DOUBLE PRECISION;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE hit SMALLINT;
+BEGIN
+  dmg = 5 * (MOD(p_rand256(), 3) + 1);
+  SELECT t.x, t.y, t.z, t.angle FROM things t WHERE t.id = :tid INTO x, y, z, ang;
+  IF (accurate = 0) THEN ang = ang + sub_random_angle(18);
+  EXECUTE PROCEDURE hitscan(x, y, z + 32, ang, 2048, dmg, tid, slope) RETURNING_VALUES hit;
+END^
+
+-- A_Punch: (P_Random() % 10 + 1) × 2, ten times that when berserk, a little off line, at
+-- MELEERANGE; a hit thuds (DSPUNCH) and turns the player to what was hit.
+-- A_Saw: 2 × (P_Random() % 10 + 1) at MELEERANGE + 1; a miss whirs (DSSAWFUL); a hit bites
+-- (DSSAWHIT) and pulls the player round towards it: from more than 4.5° (ANG90/20) off, to
+-- within ANG90/21 of it, else 4.5° past.
+CREATE OR ALTER PROCEDURE a_melee_weapon (pid SMALLINT, saw SMALLINT)
+AS
+DECLARE tid INTEGER;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+DECLARE aim DOUBLE PRECISION;
+DECLARE dmg INTEGER;
+DECLARE slope DOUBLE PRECISION;
+DECLARE tgt INTEGER;
+DECLARE tx DOUBLE PRECISION;
+DECLARE ty DOUBLE PRECISION;
+DECLARE hit SMALLINT;
+DECLARE d DOUBLE PRECISION;
+DECLARE rng DOUBLE PRECISION;
+BEGIN
+  SELECT p.thing_id, t.x, t.y, t.z, t.angle,
+         2 * (MOD(p_rand256(), 10) + 1) * IIF(:saw = 0 AND p.strength_tics > 0, 10, 1)
+    FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = :pid
+    INTO tid, x, y, z, ang, dmg;
+  rng = IIF(saw = 1, 65, 64);
+  aim = ang + sub_random_angle(18);
+  EXECUTE PROCEDURE aim_target(x, y, z + 32, aim, rng, tid) RETURNING_VALUES slope, tgt, tx, ty;
+  EXECUTE PROCEDURE hitscan(x, y, z + 32, aim, rng, dmg, tid, COALESCE(slope, 0)) RETURNING_VALUES hit;
+  IF (tgt IS NULL) THEN
+  BEGIN
+    IF (saw = 1) THEN EXECUTE PROCEDURE play_sound('DSSAWFUL', tid, x, y);
+    EXIT;
+  END
+  EXECUTE PROCEDURE play_sound(IIF(saw = 1, 'DSSAWHIT', 'DSPUNCH'), tid, x, y);
+  d = ATAN2(ty - y, tx - x);
+  IF (saw = 0) THEN ang = d;
+  ELSE
+  BEGIN
+    d = d - ang;
+    d = d - 2 * PI() * FLOOR((d + PI()) / (2 * PI()));   -- (to -π…π)
+    IF (d < 0) THEN ang = IIF(d < -PI() / 40, ang + d + PI() / 42, ang - PI() / 40);
+    ELSE ang = IIF(d > PI() / 40, ang + d - PI() / 42, ang + PI() / 40);
+  END
+  UPDATE things t SET angle = :ang - 2 * PI() * FLOOR(:ang / (2 * PI())) WHERE t.id = :tid;
+END^
+
+-- A_FirePistol, A_FireShotgun, A_FireShotgun2, A_FireCGun: the shot's sound, the body's flash
+-- (S_PLAY_ATK2), the ammo, the muzzle flash (the chaingun's matching the frame it fires in),
+-- P_BulletSlope, then the shots: the pistol's and the chaingun's one, dead on if it's the
+-- first of a burst (!refire); the shotgun's 7; the super shotgun's 20, each a little off in
+-- both directions (P_SubRandom() << 19 across, << 5 in the slope). The chaingun with no
+-- bullets left only clicks (its sound comes before the check).
+CREATE OR ALTER PROCEDURE a_fire_gun (pid SMALLINT, kind VARCHAR(8), tic INTEGER)
+AS
+DECLARE tid INTEGER;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+DECLARE slope DOUBLE PRECISION;
+DECLARE refire INTEGER;
+DECLARE flash INTEGER;
+DECLARE i INTEGER;
+DECLARE dmg INTEGER;
+DECLARE a DOUBLE PRECISION;
+DECLARE sl DOUBLE PRECISION;
+DECLARE r1 INTEGER;
+DECLARE hit SMALLINT;
+DECLARE alive SMALLINT;
+BEGIN
+  SELECT p.thing_id, t.x, t.y, t.z, t.angle, p.refire,
+         wi.flash_state + IIF(:kind = 'cgun', p.psp_state - (SELECT s.id FROM states s WHERE s.name = 'S_CHAIN1'), 0)
+    FROM player p JOIN things t ON t.id = p.thing_id JOIN weapon_info wi ON wi.weapon = p.weapon WHERE p.id = :pid
+    INTO tid, x, y, z, ang, refire, flash;
+  EXECUTE PROCEDURE play_sound(CASE kind WHEN 'shotgun' THEN 'DSSHOTGN' WHEN 'shotgun2' THEN 'DSDSHTGN' ELSE 'DSPISTOL' END, tid, x, y);
+  IF (kind = 'cgun' AND (SELECT p.bullets FROM player p WHERE p.id = :pid) = 0) THEN EXIT;
+  EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK2'), tic - 1) RETURNING_VALUES alive;
+  EXECUTE PROCEDURE decrease_ammo(pid, IIF(kind = 'shotgun2', 2, 1));
+  EXECUTE PROCEDURE set_psprite(pid, 1, flash, tic);
+  EXECUTE PROCEDURE bullet_slope(tid) RETURNING_VALUES slope;
+  IF (kind = 'shotgun2') THEN
+  BEGIN
+    i = 0;
+    WHILE (i < 20) DO
+    BEGIN
+      dmg = 5 * (MOD(p_rand256(), 3) + 1);
+      a = ang + sub_random_angle(19);
+      r1 = p_rand256();
+      sl = slope + (r1 - p_rand256()) / 2048e0;
+      EXECUTE PROCEDURE hitscan(x, y, z + 32, a, 2048, dmg, tid, sl) RETURNING_VALUES hit;
+      i = i + 1;
+    END
+  END
+  ELSE
+  BEGIN
+    i = 0;
+    WHILE (i < IIF(kind = 'shotgun', 7, 1)) DO
+    BEGIN
+      EXECUTE PROCEDURE gun_shot(tid, slope, IIF(kind <> 'shotgun' AND refire = 0, 1, 0));
+      i = i + 1;
+    END
+  END
+END^
+
+-- A_FireMissile, A_FirePlasma, A_FireBFG: the ammo (the BFG's deh_bfg_cells_per_shot), the
+-- plasma rifle's flash (one of its two, P_Random() & 1), then P_SpawnPlayerMissile and the
+-- missile's own sound (the rocket's DSRLAUNC, the plasma's DSPLASMA; the BFG's ball has none:
+-- its sound came with A_BFGsound)
+CREATE OR ALTER PROCEDURE a_fire_projectile (pid SMALLINT, mtype INTEGER, tic INTEGER)
+AS
+DECLARE tid INTEGER;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+BEGIN
+  EXECUTE PROCEDURE decrease_ammo(pid, IIF(mtype = 9005, (SELECT r.bfg_cells FROM rules r WHERE r.id = 1), 1));
+  IF (mtype = 9004) THEN
+    EXECUTE PROCEDURE set_psprite(pid, 1, (SELECT wi.flash_state FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon
+                                            WHERE p.id = :pid) + BIN_AND(p_rand256(), 1), tic);
+  SELECT p.thing_id, t.x, t.y, t.z, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = :pid
+    INTO tid, x, y, z, ang;
+  EXECUTE PROCEDURE fire_missile(mtype, tid, x, y, z, ang);
+  IF (mtype <> 9005) THEN EXECUTE PROCEDURE play_sound(IIF(mtype = 9003, 'DSRLAUNC', 'DSPLASMA'), tid, x, y);
+END^
+
+-- A_WeaponReady: out of the shooting frames the body stands (S_PLAY); the chainsaw idles
+-- (DSSAWIDL, in S_SAW); a pending weapon, or no health, puts this one down; the trigger fires
+-- (P_FireWeapon) – the rocket launcher and the BFG once a press (attackdown); else the weapon
+-- sways with the player's bob: sx = 1 + bob·cos, sy = WEAPONTOP + bob·sin of (128 × leveltime)
+-- in DOOM's 8192 fine angles, the sine's taken over the first half only
+CREATE OR ALTER PROCEDURE a_weapon_ready (pid SMALLINT, tic INTEGER)
+AS
+DECLARE tid INTEGER;
+DECLARE weapon SMALLINT;
+DECLARE pending SMALLINT;
+DECLARE health INTEGER;
+DECLARE fire SMALLINT;
+DECLARE down SMALLINT;
+DECLARE bob DOUBLE PRECISION;
+DECLARE psp INTEGER;
+DECLARE body INTEGER;
+DECLARE down_st INTEGER;
+DECLARE alive SMALLINT;
+DECLARE a INTEGER;
+BEGIN
+  SELECT p.thing_id, p.weapon, p.pending_weapon, p.health, p.buttons, p.attack_down, p.bob, p.psp_state, t.state, wi.down_state
+    FROM player p JOIN things t ON t.id = p.thing_id JOIN weapon_info wi ON wi.weapon = p.weapon WHERE p.id = :pid
+    INTO tid, weapon, pending, health, fire, down, bob, psp, body, down_st;
+  IF (EXISTS (SELECT 1 FROM states s WHERE s.id = :body AND s.name IN ('S_PLAY_ATK1', 'S_PLAY_ATK2'))) THEN
+    EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY'), tic - 1) RETURNING_VALUES alive;
+  IF (weapon = 8 AND EXISTS (SELECT 1 FROM states s WHERE s.id = :psp AND s.name = 'S_SAW')) THEN
+    EXECUTE PROCEDURE play_sound('DSSAWIDL', tid, (SELECT t.x FROM things t WHERE t.id = :tid), (SELECT t.y FROM things t WHERE t.id = :tid));
+  IF (pending <> 0 OR health <= 0) THEN
+  BEGIN
+    EXECUTE PROCEDURE set_psprite(pid, 0, down_st, tic);
+    EXIT;
+  END
+  IF (fire = 1) THEN
+  BEGIN
+    IF (down = 0 OR weapon NOT IN (5, 7)) THEN
+    BEGIN
+      UPDATE player p SET attack_down = 1 WHERE p.id = :pid;
+      EXECUTE PROCEDURE fire_weapon(pid, tic);
+      EXIT;
+    END
+  END
+  ELSE UPDATE player p SET attack_down = 0 WHERE p.id = :pid;
+  a = MOD(128 * tic, 8192);
+  UPDATE player p SET psp_sx = 1 + :bob * COS(:a * PI() / 4096), psp_sy = 32 + :bob * SIN(MOD(:a, 4096) * PI() / 4096)
+   WHERE p.id = :pid;
+END^
+
+-- A_ReFire: the trigger still held (and no weapon pending, and alive), another shot, counted
+-- (refire); let go, the count starts over and P_CheckAmmo looks at what's left
+CREATE OR ALTER PROCEDURE a_refire (pid SMALLINT, tic INTEGER)
+AS
+DECLARE ok SMALLINT;
+BEGIN
+  IF (EXISTS (SELECT 1 FROM player p WHERE p.id = :pid AND p.buttons = 1 AND p.pending_weapon = 0 AND p.health > 0)) THEN
+  BEGIN
+    UPDATE player p SET refire = p.refire + 1 WHERE p.id = :pid;
+    EXECUTE PROCEDURE fire_weapon(pid, tic);
+  END
+  ELSE
+  BEGIN
+    UPDATE player p SET refire = 0 WHERE p.id = :pid;
+    EXECUTE PROCEDURE check_ammo(pid, tic) RETURNING_VALUES ok;
+  END
+END^
+
+-- A_Lower: down LOWERSPEED (6) a tic; at WEAPONBOTTOM (128) a dead player's stays there, and
+-- otherwise the pending weapon is taken in hand and comes up (P_BringUpWeapon)
+CREATE OR ALTER PROCEDURE a_lower (pid SMALLINT, tic INTEGER)
+AS
+DECLARE sy DOUBLE PRECISION;
+DECLARE dead SMALLINT;
+DECLARE health INTEGER;
+BEGIN
+  UPDATE player p SET psp_sy = p.psp_sy + 6 WHERE p.id = :pid RETURNING p.psp_sy, p.dead, p.health INTO sy, dead, health;
+  IF (sy < 128) THEN EXIT;
+  IF (dead = 1) THEN
+  BEGIN
+    UPDATE player p SET psp_sy = 128 WHERE p.id = :pid;
+    EXIT;
+  END
+  IF (health <= 0) THEN
+  BEGIN
+    EXECUTE PROCEDURE set_psprite(pid, 0, 0, tic);
+    EXIT;
+  END
+  UPDATE player p SET weapon = p.pending_weapon WHERE p.id = :pid;
+  EXECUTE PROCEDURE bring_up_weapon(pid, tic);
+END^
+
+-- A_Raise: up RAISESPEED (6) a tic; at WEAPONTOP (32), ready (the weapon's ready state)
+CREATE OR ALTER PROCEDURE a_raise (pid SMALLINT, tic INTEGER)
+AS
+DECLARE sy DOUBLE PRECISION;
+BEGIN
+  UPDATE player p SET psp_sy = p.psp_sy - 6 WHERE p.id = :pid RETURNING p.psp_sy INTO sy;
+  IF (sy > 32) THEN EXIT;
+  UPDATE player p SET psp_sy = 32 WHERE p.id = :pid;
+  EXECUTE PROCEDURE set_psprite(pid, 0, (SELECT wi.ready_state FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon
+                                          WHERE p.id = :pid), tic);
+END^
+
+-- The weapons' actions, by name (a psprite's state's action, P_SetPsprite calls it)
+CREATE OR ALTER PROCEDURE psprite_action (pid SMALLINT, pos SMALLINT, act VARCHAR(24), tic INTEGER)
+AS
+DECLARE ok SMALLINT;
+DECLARE tid INTEGER;
+DECLARE alive SMALLINT;
+BEGIN
+  IF (act = 'A_WeaponReady') THEN EXECUTE PROCEDURE a_weapon_ready(pid, tic);
+  ELSE IF (act = 'A_ReFire') THEN EXECUTE PROCEDURE a_refire(pid, tic);
+  ELSE IF (act = 'A_CheckReload') THEN EXECUTE PROCEDURE check_ammo(pid, tic) RETURNING_VALUES ok;
+  ELSE IF (act = 'A_Lower') THEN EXECUTE PROCEDURE a_lower(pid, tic);
+  ELSE IF (act = 'A_Raise') THEN EXECUTE PROCEDURE a_raise(pid, tic);
+  ELSE IF (act = 'A_GunFlash') THEN
+  BEGIN
+    -- A_GunFlash: the body's flash (S_PLAY_ATK2) and the weapon's muzzle flash
+    SELECT p.thing_id FROM player p WHERE p.id = :pid INTO tid;
+    EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK2'), tic - 1) RETURNING_VALUES alive;
+    EXECUTE PROCEDURE set_psprite(pid, 1, (SELECT wi.flash_state FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon
+                                            WHERE p.id = :pid), tic);
+  END
+  ELSE IF (act = 'A_Punch') THEN EXECUTE PROCEDURE a_melee_weapon(pid, 0);
+  ELSE IF (act = 'A_Saw') THEN EXECUTE PROCEDURE a_melee_weapon(pid, 1);
+  ELSE IF (act = 'A_FirePistol') THEN EXECUTE PROCEDURE a_fire_gun(pid, 'pistol', tic);
+  ELSE IF (act = 'A_FireShotgun') THEN EXECUTE PROCEDURE a_fire_gun(pid, 'shotgun', tic);
+  ELSE IF (act = 'A_FireShotgun2') THEN EXECUTE PROCEDURE a_fire_gun(pid, 'shotgun2', tic);
+  ELSE IF (act = 'A_FireCGun') THEN EXECUTE PROCEDURE a_fire_gun(pid, 'cgun', tic);
+  ELSE IF (act = 'A_FireMissile') THEN EXECUTE PROCEDURE a_fire_projectile(pid, 9003, tic);
+  ELSE IF (act = 'A_FirePlasma') THEN EXECUTE PROCEDURE a_fire_projectile(pid, 9004, tic);
+  ELSE IF (act = 'A_FireBFG') THEN EXECUTE PROCEDURE a_fire_projectile(pid, 9005, tic);
+  -- A_Light0, A_Light1, A_Light2: the muzzle flash lights the view (player->extralight)
+  ELSE IF (act IN ('A_Light0', 'A_Light1', 'A_Light2')) THEN
+    UPDATE player p SET extralight = CAST(SUBSTRING(:act FROM 8 FOR 1) AS SMALLINT) WHERE p.id = :pid;
+  -- A_BFGsound, A_OpenShotgun2, A_LoadShotgun2; A_CloseShotgun2's sound, then A_ReFire
+  ELSE IF (act IN ('A_BFGsound', 'A_OpenShotgun2', 'A_LoadShotgun2', 'A_CloseShotgun2')) THEN
+  BEGIN
+    SELECT p.thing_id FROM player p WHERE p.id = :pid INTO tid;
+    EXECUTE PROCEDURE play_sound(TRIM(CASE act WHEN 'A_BFGsound' THEN 'DSBFG' WHEN 'A_OpenShotgun2' THEN 'DSDBOPN'
+                                               WHEN 'A_LoadShotgun2' THEN 'DSDBLOAD' ELSE 'DSDBCLS' END),
+                                 tid, (SELECT t.x FROM things t WHERE t.id = :tid), (SELECT t.y FROM things t WHERE t.id = :tid));
+    IF (act = 'A_CloseShotgun2') THEN EXECUTE PROCEDURE a_refire(pid, tic);
+  END
+END^
+
+-- P_SetPsprite: psprite POS into state ST – its tics start, a state with misc1 places the weapon
+-- (sx, sy = misc1, misc2), then its action is called; a 0-tic state goes straight on to the
+-- next, and S_NULL (0) takes the psprite away
+CREATE OR ALTER PROCEDURE set_psprite (pid SMALLINT, pos SMALLINT, st INTEGER, tic INTEGER)
+AS
+DECLARE tics INTEGER;
+DECLARE act VARCHAR(24);
+DECLARE m1 INTEGER;
+DECLARE m2 INTEGER;
+DECLARE cur INTEGER;
+DECLARE n INTEGER = 0;
+BEGIN
+  WHILE (n < 100) DO   -- (a ring of 0-tic states would hang DOOM; here it stops)
+  BEGIN
+    n = n + 1;
+    IF (st IS NULL OR st = 0) THEN
+    BEGIN
+      IF (pos = 0) THEN UPDATE player p SET psp_state = NULL WHERE p.id = :pid;
+      ELSE UPDATE player p SET flash_state = NULL WHERE p.id = :pid;
+      EXIT;
+    END
+    SELECT s.tics, s.action, s.misc1, s.misc2 FROM states s WHERE s.id = :st INTO tics, act, m1, m2;
+    IF (pos = 0) THEN
+      UPDATE player p SET psp_state = :st, psp_tics = :tics,
+                          psp_sx = IIF(:m1 <> 0, :m1, p.psp_sx), psp_sy = IIF(:m1 <> 0, :m2, p.psp_sy)
+       WHERE p.id = :pid;
+    ELSE UPDATE player p SET flash_state = :st, flash_tics = :tics WHERE p.id = :pid;
+    IF (act IS NOT NULL) THEN EXECUTE PROCEDURE psprite_action(pid, pos, act, tic);
+    -- (the action may have set another state, or none)
+    SELECT IIF(:pos = 0, p.psp_state, p.flash_state), IIF(:pos = 0, p.psp_tics, p.flash_tics)
+      FROM player p WHERE p.id = :pid INTO cur, tics;
+    IF (cur IS NULL OR tics <> 0) THEN EXIT;
+    SELECT s.next_state FROM states s WHERE s.id = :cur INTO st;
+  END
+END^
+
+-- P_MovePsprites: each psprite's tics count down (a state of -1 tics lasts), and at 0 it goes
+-- on to its next state; the weapon first, then the flash (which the weapon may just have lit)
+CREATE OR ALTER PROCEDURE move_psprites (pid SMALLINT, tic INTEGER)
+AS
+DECLARE st INTEGER;
+DECLARE tics INTEGER;
+BEGIN
+  SELECT p.psp_state, p.psp_tics FROM player p WHERE p.id = :pid INTO st, tics;
+  IF (st IS NOT NULL AND tics <> -1) THEN
+  BEGIN
+    UPDATE player p SET psp_tics = :tics - 1 WHERE p.id = :pid;
+    IF (tics - 1 = 0) THEN
+      EXECUTE PROCEDURE set_psprite(pid, 0, (SELECT s.next_state FROM states s WHERE s.id = :st), tic);
+  END
+  SELECT p.flash_state, p.flash_tics FROM player p WHERE p.id = :pid INTO st, tics;
+  IF (st IS NOT NULL AND tics <> -1) THEN
+  BEGIN
+    UPDATE player p SET flash_tics = :tics - 1 WHERE p.id = :pid;
+    IF (tics - 1 = 0) THEN
+      EXECUTE PROCEDURE set_psprite(pid, 1, (SELECT s.next_state FROM states s WHERE s.id = :st), tic);
+  END
+END^
+
 CREATE OR ALTER PROCEDURE deathmatch_spot (pid SMALLINT, old INTEGER)
 RETURNS (sx DOUBLE PRECISION, sy DOUBLE PRECISION, sa DOUBLE PRECISION)
 AS
@@ -1909,7 +2434,7 @@ BEGIN
   EXECUTE PROCEDURE play_sound('DSTELEPT', fog, sx + 20 * COS(sa), sy + 20 * SIN(sa));
   UPDATE player p
      SET thing_id = :nid, health = (SELECT r.init_health FROM rules r WHERE r.id = 1), armor = 0, armor_type = 0,
-         dead = 0, weapon = 2, pending_weapon = 0, weapon_y = 90, weapon_down = 0, attack_tics = 0, attack_len = 0, attacker_id = NULL,
+         dead = 0, weapon = 2, pending_weapon = 0, refire = 0, attack_down = 1, attacker_id = NULL,
          bullets = (SELECT r.init_bullets FROM rules r WHERE r.id = 1), shells = 0, rockets = 0, cells = 0,
          has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0, has_chainsaw = 0, has_ssg = 0,
          max_bullets = (SELECT r.max_bullets FROM rules r WHERE r.id = 1), max_shells = (SELECT r.max_shells FROM rules r WHERE r.id = 1),
@@ -1919,6 +2444,8 @@ BEGIN
          view_z = (SELECT t.z FROM things t WHERE t.id = :nid) + 41, use_down = 1,
          invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0, strength_tics = 0, allmap = 0
    WHERE p.id = :pid;
+  -- (G_PlayerReborn: attackdown, so the trigger held from before doesn't fire; P_SetupPsprites)
+  EXECUTE PROCEDURE setup_psprites(pid, (SELECT g.tic FROM game g WHERE g.id = 1));
 END^
 
 CREATE OR ALTER PROCEDURE player_think (
@@ -1949,8 +2476,6 @@ DECLARE sec INTEGER;
 DECLARE sspec INTEGER;
 DECLARE is_dead SMALLINT;
 DECLARE weapon SMALLINT;
-DECLARE attack_tics INTEGER;
-DECLARE attack_len INTEGER;
 DECLARE bullets INTEGER;
 DECLARE shells INTEGER;
 DECLARE has_sg SMALLINT;
@@ -1988,9 +2513,6 @@ DECLARE has_ssg SMALLINT;
 DECLARE shot_hit SMALLINT;
 DECLARE old_weapon SMALLINT;
 DECLARE pending SMALLINT;
-DECLARE weapon_y INTEGER;
-DECLARE weapon_down SMALLINT;
-DECLARE was_attacking INTEGER;
 DECLARE neww SMALLINT;
 DECLARE preact INTEGER;
 DECLARE killer_ang DOUBLE PRECISION;
@@ -2003,21 +2525,24 @@ DECLARE qn INTEGER;
 DECLARE tries INTEGER;
 DECLARE noclip SMALLINT;
 BEGIN
-  SELECT p.thing_id, t.x, t.y, t.z, t.angle, t.momx, t.momy, t.momz, p.dead, p.weapon, p.attack_tics, p.attack_len,
+  SELECT p.thing_id, t.x, t.y, t.z, t.angle, t.momx, t.momy, t.momz, p.dead, p.weapon,
          p.bullets, p.shells, p.has_shotgun, p.has_chaingun, p.use_down, p.view_h,
          p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg, p.has_chainsaw, p.has_ssg, p.noclip,
-         p.pending_weapon, p.weapon_y, p.weapon_down
+         p.pending_weapon
     FROM player p JOIN things t ON t.id = p.thing_id
    WHERE p.id = :pid
-    INTO tid, x, y, z, ang, momx, momy, momz, is_dead, weapon, attack_tics, attack_len,
+    INTO tid, x, y, z, ang, momx, momy, momz, is_dead, weapon,
          bullets, shells, has_sg, has_cg, use_down, view_h,
          rockets, cells, has_rl, has_pl, has_bfg, has_saw, has_ssg, noclip,
-         pending, weapon_y, weapon_down;
+         pending;
+  -- (this tic's trigger, for the weapon's actions: player->cmd.buttons & BT_ATTACK)
+  UPDATE player p SET buttons = :fire WHERE p.id = :pid;
 
   IF (is_dead = 1) THEN
   BEGIN
-    -- P_DeathThink: sink to the floor, wait for USE – and turn to face your
-    -- killer, 5° a tic; until you do, the red of the damage stays
+    -- P_DeathThink: the weapon goes on going down (P_MovePsprites); sink to the floor, wait for
+    -- USE – and turn to face your killer, 5° a tic; until you do, the red of the damage stays
+    EXECUTE PROCEDURE move_psprites(pid, tic);
     view_h = MAXVALUE(6, view_h - 1);
     SELECT ATAN2(a.y - :y, a.x - :x) FROM player p JOIN things a ON a.id = p.attacker_id
      WHERE p.id = :pid AND a.id <> :tid INTO killer_ang;
@@ -2043,10 +2568,7 @@ BEGIN
       END
       UPDATE game SET exit_kind = 3 WHERE id = 1;
     END
-    -- A_WeaponReady/A_Lower: a dead player's weapon goes down, and stays
-    UPDATE player SET view_h = :view_h, view_z = :z + :view_h, use_down = :use_key, attack_tics = 0,
-                      weapon_y = MINVALUE(96, weapon_y + 6), weapon_down = 1
-     WHERE id = :pid;
+    UPDATE player SET view_h = :view_h, view_z = :z + :view_h, use_down = :use_key WHERE id = :pid;
     EXIT;
   END
 
@@ -2248,149 +2770,15 @@ BEGIN
     neww = weapon_sel;
   IF (neww > 0 AND neww <> weapon) THEN pending = neww;
 
-  -- A_FirePistol / A_FireShotgun / A_FireCGun / A_Punch
-  was_attacking = attack_tics;
-  IF (attack_tics > 0) THEN attack_tics = attack_tics - 1;
-  -- A_FireBFG: the ball leaves 20 tics after the trigger, once the gun has charged
-  IF (weapon = 7 AND attack_len = 60 AND attack_tics = 40) THEN
-    EXECUTE PROCEDURE fire_missile(9005, tid, x, y, z, ang);
-  -- A_OpenShotgun2 / A_LoadShotgun2 / A_CloseShotgun2
-  IF (weapon = 9 AND attack_len = 57) THEN
-    EXECUTE PROCEDURE play_sound(CASE attack_tics WHEN 42 THEN 'DSDBOPN' WHEN 30 THEN 'DSDBLOAD'
-                                                  WHEN 18 THEN 'DSDBCLS' END, tid, x, y);
-  -- A_WeaponReady: the chainsaw idles noisily
-  IF (weapon = 8 AND fire = 0 AND attack_tics = 0 AND weapon_y = 0 AND weapon_down = 0 AND MOD(tic, 8) = 0) THEN
-    EXECUTE PROCEDURE play_sound('DSSAWIDL', tid, x, y);
-  -- P_CheckAmmo, when the trigger is pulled (A_WeaponReady) or an attack ends
-  -- (A_ReFire): not enough for the weapon in hand, the best one that has some
-  -- becomes the pending weapon, and nothing is fired
-  IF (attack_tics = 0 AND weapon_y = 0 AND weapon_down = 0 AND pending = 0 AND (fire = 1 OR was_attacking = 1)
-      AND ((weapon IN (2, 4) AND bullets = 0) OR (weapon = 3 AND shells = 0) OR (weapon = 5 AND rockets = 0)
-        OR (weapon = 6 AND cells = 0) OR (weapon = 7 AND cells < (SELECT r.bfg_cells FROM rules r WHERE r.id = 1)) OR (weapon = 9 AND shells < 2))) THEN
-  BEGIN
-    pending = CASE WHEN has_pl = 1 AND cells > 0 THEN 6
-                   WHEN has_ssg = 1 AND shells >= 2 THEN 9
-                   WHEN has_cg = 1 AND bullets > 0 THEN 4
-                   WHEN has_sg = 1 AND shells > 0 THEN 3
-                   WHEN bullets > 0 THEN 2
-                   WHEN has_saw = 1 THEN 8
-                   WHEN has_rl = 1 AND rockets > 0 THEN 5
-                   WHEN has_bfg = 1 AND cells >= (SELECT r.bfg_cells FROM rules r WHERE r.id = 1) THEN 7
-                   ELSE 1 END;
-    IF (pending = weapon) THEN pending = 0;
-  END
-  -- A_WeaponReady with a pending weapon starts A_Lower: down LOWERSPEED (6) a
-  -- tic from WEAPONTOP to WEAPONBOTTOM (96 lower); there the new weapon comes
-  -- up (P_BringUpWeapon, A_Raise: RAISESPEED 6 a tic). Nothing fires meanwhile.
-  IF (attack_tics = 0 AND weapon_y = 0 AND weapon_down = 0 AND pending > 0) THEN weapon_down = 1;
-  IF (weapon_down = 1) THEN
-  BEGIN
-    weapon_y = weapon_y + 6;
-    IF (weapon_y >= 96) THEN
-    BEGIN
-      IF (pending > 0) THEN weapon = pending;
-      pending = 0;
-      weapon_down = 0;
-      weapon_y = 90;                            -- (A_Raise runs at once)
-      IF (weapon = 8) THEN EXECUTE PROCEDURE play_sound('DSSAWUP', tid, x, y);
-    END
-  END
-  ELSE IF (weapon_y > 0) THEN weapon_y = MAXVALUE(0, weapon_y - 6);
-  ELSE IF (fire = 1 AND attack_tics = 0 AND pending = 0) THEN
-  BEGIN
-    pellets = 0;
-    -- P_BulletSlope: the vertical slope to a monster straight ahead, else
-    -- 5.625° either side, else level; bullets keep their own heading.
-    -- Fist and chainsaw aim once, at melee range.
-    bslope = NULL;
-    tries = 0;
-    WHILE (tries < IIF(weapon IN (1, 8), 1, 3) AND bslope IS NULL) DO
-    BEGIN
-      EXECUTE PROCEDURE aim_slope(x, y, z + 32, ang + CASE tries WHEN 1 THEN 0.09817e0 WHEN 2 THEN -0.09817e0 ELSE 0 END,
-                                  IIF(weapon IN (1, 8), 65, 1024), tid)
-        RETURNING_VALUES bslope;
-      tries = tries + 1;
-    END
-    bslope = COALESCE(bslope, 0);
-    IF (weapon = 1) THEN
-    BEGIN
-      -- A_Punch: (P_Random() % 10 + 1) × 2, ten times that when berserk
-      attack_len = 18;
-      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang, 64,
-        2 * (1 + CAST(FLOOR(p_random() * 10) AS INTEGER))
-          * IIF((SELECT p.strength_tics FROM player p WHERE p.id = :pid) > 0, 10, 1), tid, bslope)
-        RETURNING_VALUES shot_hit;
-    END
-    ELSE IF (weapon = 8) THEN
-    BEGIN
-      -- A_Saw: 2d10 × 2 at MELEERANGE + 1, every 4 tics
-      attack_len = 4;
-      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang + (p_random() - p_random()) * 0.04, 65,
-                                2 * (1 + CAST(FLOOR(p_random() * 10) AS INTEGER)), tid, bslope)
-        RETURNING_VALUES shot_hit;
-    END
-    ELSE IF (weapon = 9) THEN
-    BEGIN
-      -- A_FireShotgun2: 20 pellets, two shells, a wide horizontal spread
-      attack_len = 57;
-      pellets = 20;
-      spread = 0.196;
-      shells = shells - 2;
-    END
-    ELSE IF (weapon = 2) THEN BEGIN attack_len = 14; pellets = 1; spread = 0.04; bullets = bullets - 1; END
-    ELSE IF (weapon = 3) THEN BEGIN attack_len = 37; pellets = 7; spread = 0.10; shells = shells - 1; END
-    ELSE IF (weapon = 4) THEN BEGIN attack_len = 4;  pellets = 1; spread = 0.06; bullets = bullets - 1; END
-    ELSE IF (weapon = 5) THEN
-    BEGIN
-      attack_len = 20;
-      rockets = rockets - 1;
-      EXECUTE PROCEDURE fire_missile(9003, tid, x, y, z, ang);
-    END
-    ELSE IF (weapon = 6) THEN
-    BEGIN
-      attack_len = 3;
-      cells = cells - 1;
-      EXECUTE PROCEDURE fire_missile(9004, tid, x, y, z, ang);
-    END
-    ELSE IF (weapon = 7) THEN
-    BEGIN
-      attack_len = 60;
-      cells = cells - (SELECT r.bfg_cells FROM rules r WHERE r.id = 1);
-    END
-    attack_tics = attack_len;
-    -- P_FireWeapon: the body shoots (S_PLAY_ATK1); the guns with a flash light it up
-    -- (S_PLAY_ATK2: A_FirePistol, A_FireShotgun(2), A_FireCGun, and A_GunFlash for the
-    -- rocket launcher and the BFG). (The weapons' own frames come with phase 4: until
-    -- then the flash comes with the shot.)
-    EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK1'), tic - 1)
-      RETURNING_VALUES alive;
-    IF (weapon IN (2, 3, 4, 5, 7, 9)) THEN
-      EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK2'), tic - 1)
-        RETURNING_VALUES alive;
-    EXECUTE PROCEDURE play_sound(CASE weapon WHEN 1 THEN 'DSPUNCH' WHEN 3 THEN 'DSSHOTGN' WHEN 5 THEN 'DSRLAUNC'
-                                             WHEN 6 THEN 'DSPLASMA' WHEN 7 THEN 'DSBFG'
-                                             WHEN 8 THEN IIF(shot_hit = 1, 'DSSAWHIT', 'DSSAWFUL')
-                                             WHEN 9 THEN 'DSDSHTGN' ELSE 'DSPISTOL' END,
-                                 tid, x, y);
-    i = 0;
-    WHILE (i < pellets) DO
-    BEGIN
-      EXECUTE PROCEDURE hitscan(x, y, z + 32, ang + (p_random() - p_random()) * spread, 2048,
-                                5 * (1 + CAST(FLOOR(p_random() * 3) AS INTEGER)), tid, bslope)
-        RETURNING_VALUES shot_hit;
-      i = i + 1;
-    END
-    EXECUTE PROCEDURE noise_alert(sec, tic, pid);   -- P_FireWeapon: every weapon, the fist too
-  END
 
   UPDATE things SET x = :x, y = :y, z = :z, angle = :ang, momx = :momx, momy = :momy, momz = :momz,
                     sector_id = :sec
    WHERE id = :tid;
-  UPDATE player SET weapon = :weapon, attack_tics = :attack_tics, attack_len = :attack_len,
-                    pending_weapon = :pending, weapon_y = :weapon_y, weapon_down = :weapon_down,
-                    bullets = :bullets, shells = :shells, rockets = :rockets, cells = :cells, use_down = :use_key,
-                    view_h = :view_h, view_z = :view_z
+  UPDATE player SET pending_weapon = :pending, use_down = :use_key, view_h = :view_h, view_z = :view_z, bob = :bob
    WHERE id = :pid;
+  -- P_MovePsprites: the weapon and its flash, a tic on (firing, lowering, raising)
+  EXECUTE PROCEDURE move_psprites(pid, tic);
+  SELECT p.weapon, p.pending_weapon FROM player p WHERE p.id = :pid INTO weapon, pending;
 
   -- P_GiveAmmo: twice the ammo on the easiest skill and on Nightmare
   SELECT IIF(g.skill IN (1, 5), 2, 1), g.players, g.deathmatch FROM game g WHERE g.id = 1 INTO mult, np, dm;
@@ -4055,22 +4443,24 @@ RETURNS (
   rockets INTEGER, cells INTEGER, has_launcher SMALLINT, has_plasma SMALLINT, has_bfg SMALLINT,
   has_chainsaw SMALLINT, has_ssg SMALLINT,
   max_bullets INTEGER, max_shells INTEGER, max_rockets INTEGER, max_cells INTEGER,
-  attack_tics INTEGER, attack_len INTEGER, damage_count INTEGER, bonus_count INTEGER,
+  psp_pic VARCHAR(8), flash_pic VARCHAR(8), damage_count INTEGER, bonus_count INTEGER,
   msg VARCHAR(80), dead SMALLINT, exit_kind SMALLINT,
   kills INTEGER, total_kills INTEGER, items INTEGER, total_items INTEGER,
   secrets INTEGER, total_secrets INTEGER,
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
   sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER,
-  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, weapon_y INTEGER,
+  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, psp_sx DOUBLE PRECISION, psp_sy DOUBLE PRECISION, extralight SMALLINT,
   attacker_angle DOUBLE PRECISION, frags INTEGER, deathmatch SMALLINT)
 AS
 BEGIN
   SELECT g.tic, p.health, p.armor, p.bullets, p.shells, p.weapon, p.has_shotgun, p.has_chaingun, p.keycards,
          p.rockets, p.cells, p.has_launcher, p.has_plasma, p.has_bfg, p.has_chainsaw, p.has_ssg,
          p.max_bullets, p.max_shells, p.max_rockets, p.max_cells,
-         p.attack_tics, p.attack_len, p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
+         -- (R_DrawPSprite's lumps: the state's sprite and frame, rotation 0)
+         (SELECT TRIM(s.sprite) || s.frame || '0' FROM states s WHERE s.id = p.psp_state),
+         (SELECT TRIM(s.sprite) || s.frame || '0' FROM states s WHERE s.id = p.flash_state), p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
          p.dead, g.exit_kind, p.kills, g.total_kills, p.items, g.total_items, p.secrets, g.total_secrets,
-         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics, p.iron_tics, p.infra_tics, p.strength_tics, p.allmap, p.god, p.weapon_y,
+         t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics, p.iron_tics, p.infra_tics, p.strength_tics, p.allmap, p.god, p.psp_sx, p.psp_sy, p.extralight,
          (SELECT ATAN2(a.y - t.y, a.x - t.x) FROM things a WHERE a.id = p.attacker_id AND a.id <> t.id),
          -- ST_updateWidgets' st_fragscount: the others you killed, less the times you killed yourself
          COALESCE((SELECT SUM(IIF(f.victim = :pid, -f.n, f.n)) FROM frags f WHERE f.killer = :pid), 0), g.deathmatch
@@ -4079,9 +4469,9 @@ BEGIN
     INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards,
          rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg,
          max_bullets, max_shells, max_rockets, max_cells,
-         attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind,
+         psp_pic, flash_pic, damage_count, bonus_count, msg, dead, exit_kind,
          kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z,
-         sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y,
+         sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, psp_sx, psp_sy, extralight,
          attacker_angle, frags, deathmatch;
   SUSPEND;
 END^
@@ -5576,6 +5966,12 @@ BEGIN
   UPDATE things t SET st = 'dead', dead_tic = COALESCE(t.dead_tic, :tic)
    WHERE t.state IS NOT NULL AND t.st <> 'dead' AND t.kind IN ('monster', 'keen')
      AND EXISTS (SELECT 1 FROM states s WHERE s.id = t.state AND s.mode = 'dead');
+  -- saves from before the weapons were on the tables (phase 4): the weapon ready and up, or a
+  -- dead player's down out of sight
+  UPDATE player p
+     SET psp_state = (SELECT IIF(p.dead = 1, wi.down_state, wi.ready_state) FROM weapon_info wi WHERE wi.weapon = p.weapon),
+         psp_tics = 1, psp_sx = 1, psp_sy = IIF(p.dead = 1, 128, 32), flash_state = NULL, extralight = 0
+   WHERE p.psp_state IS NULL;
 END^
 
 CREATE OR ALTER PROCEDURE world_tic (tic INTEGER)
@@ -5630,13 +6026,13 @@ RETURNS (
   rockets INTEGER, cells INTEGER, has_launcher SMALLINT, has_plasma SMALLINT, has_bfg SMALLINT,
   has_chainsaw SMALLINT, has_ssg SMALLINT,
   max_bullets INTEGER, max_shells INTEGER, max_rockets INTEGER, max_cells INTEGER,
-  attack_tics INTEGER, attack_len INTEGER, damage_count INTEGER, bonus_count INTEGER,
+  psp_pic VARCHAR(8), flash_pic VARCHAR(8), damage_count INTEGER, bonus_count INTEGER,
   msg VARCHAR(80), dead SMALLINT, exit_kind SMALLINT,
   kills INTEGER, total_kills INTEGER, items INTEGER, total_items INTEGER,
   secrets INTEGER, total_secrets INTEGER,
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
   sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER,
-  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, weapon_y INTEGER,
+  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, psp_sx DOUBLE PRECISION, psp_sy DOUBLE PRECISION, extralight SMALLINT,
   attacker_angle DOUBLE PRECISION, frags INTEGER, deathmatch SMALLINT)
 AS
 DECLARE i INTEGER = 0;
@@ -5651,8 +6047,8 @@ BEGIN
     EXECUTE PROCEDURE world_tic(tic);
     i = i + 1;
   END
-  FOR SELECT tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle, frags, deathmatch FROM hud_row((SELECT vc.player_id FROM viewcfg vc WHERE vc.id = 1))
-      INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle, frags, deathmatch
+  FOR SELECT tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, psp_pic, flash_pic, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, psp_sx, psp_sy, extralight, attacker_angle, frags, deathmatch FROM hud_row((SELECT vc.player_id FROM viewcfg vc WHERE vc.id = 1))
+      INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, psp_pic, flash_pic, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, psp_sx, psp_sy, extralight, attacker_angle, frags, deathmatch
   DO SUSPEND;
 END^
 
@@ -5666,13 +6062,13 @@ RETURNS (
   rockets INTEGER, cells INTEGER, has_launcher SMALLINT, has_plasma SMALLINT, has_bfg SMALLINT,
   has_chainsaw SMALLINT, has_ssg SMALLINT,
   max_bullets INTEGER, max_shells INTEGER, max_rockets INTEGER, max_cells INTEGER,
-  attack_tics INTEGER, attack_len INTEGER, damage_count INTEGER, bonus_count INTEGER,
+  psp_pic VARCHAR(8), flash_pic VARCHAR(8), damage_count INTEGER, bonus_count INTEGER,
   msg VARCHAR(80), dead SMALLINT, exit_kind SMALLINT,
   kills INTEGER, total_kills INTEGER, items INTEGER, total_items INTEGER,
   secrets INTEGER, total_secrets INTEGER,
   px DOUBLE PRECISION, py DOUBLE PRECISION, pangle DOUBLE PRECISION, view_z DOUBLE PRECISION,
   sides_rev INTEGER, map_name VARCHAR(8), invis_tics INTEGER, invuln_tics INTEGER,
-  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, weapon_y INTEGER,
+  iron_tics INTEGER, infra_tics INTEGER, strength_tics INTEGER, allmap SMALLINT, god SMALLINT, psp_sx DOUBLE PRECISION, psp_sy DOUBLE PRECISION, extralight SMALLINT,
   attacker_angle DOUBLE PRECISION, frags INTEGER, deathmatch SMALLINT)
 AS
 DECLARE pid SMALLINT;
@@ -5698,8 +6094,8 @@ BEGIN
     EXECUTE PROCEDURE player_think(pid, c_fwd, c_side, c_turn, c_fire, c_use, c_weapon, c_run, tic);
   END
   EXECUTE PROCEDURE world_tic(tic);
-  FOR SELECT tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle, frags, deathmatch FROM hud_row((SELECT vc.player_id FROM viewcfg vc WHERE vc.id = 1))
-      INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, attack_tics, attack_len, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, weapon_y, attacker_angle, frags, deathmatch
+  FOR SELECT tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, psp_pic, flash_pic, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, psp_sx, psp_sy, extralight, attacker_angle, frags, deathmatch FROM hud_row((SELECT vc.player_id FROM viewcfg vc WHERE vc.id = 1))
+      INTO tic, health, armor, bullets, shells, weapon, has_shotgun, has_chaingun, keycards, rockets, cells, has_launcher, has_plasma, has_bfg, has_chainsaw, has_ssg, max_bullets, max_shells, max_rockets, max_cells, psp_pic, flash_pic, damage_count, bonus_count, msg, dead, exit_kind, kills, total_kills, items, total_items, secrets, total_secrets, px, py, pangle, view_z, sides_rev, map_name, invis_tics, invuln_tics, iron_tics, infra_tics, strength_tics, allmap, god, psp_sx, psp_sy, extralight, attacker_angle, frags, deathmatch
   DO SUSPEND;
 END^
 
@@ -5936,8 +6332,7 @@ BEGIN
          sides_rev = 0          -- (the switches' textures start over with the map)
    WHERE id = 1;
 
-  -- P_SetupPsprites: every level starts with the weapon coming up
-  UPDATE player SET pending_weapon = 0, weapon_y = 90, weapon_down = 0, attack_tics = 0, attack_len = 0, attacker_id = NULL;
+  UPDATE player SET pending_weapon = 0, refire = 0, attacker_id = NULL;
   IF (new_game = 1) THEN
     UPDATE player
        SET health = (SELECT r.init_health FROM rules r WHERE r.id = 1), armor = 0, armor_type = 0, bullets = (SELECT r.init_bullets FROM rules r WHERE r.id = 1), shells = 0,
@@ -5946,10 +6341,14 @@ BEGIN
            has_chainsaw = 0, has_ssg = 0,
            rockets = 0, cells = 0, max_rockets = (SELECT r.max_rockets FROM rules r WHERE r.id = 1), max_cells = (SELECT r.max_cells FROM rules r WHERE r.id = 1), god = 0, noclip = 0;
   UPDATE player
-     SET keycards = IIF(:dm > 0, 7, 0), kills = 0, items = 0, secrets = 0, dead = 0, attack_tics = 0,
+     SET keycards = IIF(:dm > 0, 7, 0), kills = 0, items = 0, secrets = 0, dead = 0,
          damage_count = 0, bonus_count = 0, view_h = 41, use_down = 0, invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0, strength_tics = 0, allmap = 0,
          msg = :map_name, msg_tics = 105;
   UPDATE player p SET view_z = (SELECT z FROM things t WHERE t.id = p.thing_id) + 41;
+  -- P_SpawnPlayer's P_SetupPsprites: every level starts with the weapon coming up
+  FOR SELECT p.id FROM player p ORDER BY p.id INTO i
+  DO
+    EXECUTE PROCEDURE setup_psprites(i, 0);
 END^
 
 SET TERM ; ^

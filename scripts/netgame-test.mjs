@@ -139,13 +139,18 @@ assert(dead.DEAD === 1 && back.DEAD === 0 && back.THING_ID !== dead.THING_ID && 
   const stopped = (await look()).FRAME;
   assert([...seen].every((f) => 'ABCD'.includes(f)) && seen.size === 4 && stopped === 'A',
     `running, player 2 goes through ${[...seen].sort().join('')} (S_PLAY_RUN1–4), and stands (A) once stopped`);
+  // (the pistol: P_FireWeapon's S_PLAY_ATK1 at the trigger, A_FirePistol's S_PLAY_ATK2 4 tics on for
+  // 6, then ATK1 again until the pistol is ready, 19 tics after the trigger: A_WeaponReady's S_PLAY)
   await tic([IDLE, [0, 0, 0, 1, 0, 0, 0]]);
   const shot = (await look()).FRAME;
-  for (let i = 0; i < 8; i++) await tic([IDLE, IDLE]);
+  for (let i = 0; i < 5; i++) await tic([IDLE, IDLE]);
+  const flash = (await look()).FRAME;
+  for (let i = 0; i < 6; i++) await tic([IDLE, IDLE]);
   const after = (await look()).FRAME;
-  for (let i = 0; i < 14; i++) await tic([IDLE, IDLE]);
+  for (let i = 0; i < 10; i++) await tic([IDLE, IDLE]);
   const done = (await look()).FRAME;
-  assert(shot === 'F' && after === 'E' && done === 'A', `a shot: ${shot} (the flash, S_PLAY_ATK2), then ${after} (S_PLAY_ATK1), then ${done}`);
+  assert(shot === 'E' && flash === 'F' && after === 'E' && done === 'A',
+    `a shot: ${shot} (S_PLAY_ATK1), ${flash} as the pistol fires (S_PLAY_ATK2), ${after} again, then ${done}`);
   await db.exec('EXECUTE PROCEDURE damage_player(5, NULL, 2)');
   const pain = (await look()).FRAME;
   for (let i = 0; i < 9; i++) await tic([IDLE, IDLE]);

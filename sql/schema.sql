@@ -186,6 +186,18 @@ CREATE TABLE states (
   fast       SMALLINT DEFAULT 0 NOT NULL
 );
 
+-- d_items.c's weaponinfo[]: each weapon's ammo and its states (src/states.js's WEAPONINFO),
+-- by this port's weapon number (DOOM's weapontype_t + 1: 1 the fist … 9 the super shotgun)
+CREATE TABLE weapon_info (
+  weapon       SMALLINT NOT NULL PRIMARY KEY,
+  ammo         VARCHAR(8) NOT NULL,          -- clip, shell, misl, cell, noammo
+  up_state     INTEGER NOT NULL,             -- upstate: A_Raise
+  down_state   INTEGER NOT NULL,             -- downstate: A_Lower
+  ready_state  INTEGER NOT NULL,             -- readystate: A_WeaponReady
+  atk_state    INTEGER NOT NULL,             -- atkstate: P_FireWeapon goes here
+  flash_state  INTEGER NOT NULL              -- flashstate: the muzzle flash (0: none)
+);
+
 -- ── the map ─────────────────────────────────────────────────────────────
 -- The map's REJECT lump, a row of bits per sector: the sectors that can't be
 -- seen from it, as hex digits (digit k holds sectors 4k–4k+3, lowest bit
@@ -385,11 +397,21 @@ CREATE TABLE player (
   max_rockets  INTEGER DEFAULT 50 NOT NULL,
   max_cells    INTEGER DEFAULT 300 NOT NULL,
   keycards     INTEGER DEFAULT 0 NOT NULL,       -- 1 blue 2 yellow 4 red
-  attack_tics  INTEGER DEFAULT 0 NOT NULL,
-  attack_len   INTEGER DEFAULT 0 NOT NULL,
-  pending_weapon SMALLINT DEFAULT 0 NOT NULL,   -- pendingweapon: 0 none, else the weapon to switch to
-  weapon_y     INTEGER DEFAULT 0 NOT NULL,      -- the weapon sprite below WEAPONTOP: 0 up, 96 out of sight
-  weapon_down  SMALLINT DEFAULT 0 NOT NULL,     -- 1 while it's being lowered (A_Lower)
+  pending_weapon SMALLINT DEFAULT 0 NOT NULL,   -- pendingweapon: 0 none (wp_nochange), else the weapon to switch to
+  -- the player's two psprites (pspdef_t): the weapon (ps_weapon) and its muzzle flash
+  -- (ps_flash), each a state and the tics left in it (NULL: none); sx, sy where the weapon
+  -- is drawn (WEAPONTOP 32 up, WEAPONBOTTOM 128 out of sight; the flash goes with it)
+  psp_state    INTEGER,
+  psp_tics     INTEGER DEFAULT 0 NOT NULL,
+  psp_sx       DOUBLE PRECISION DEFAULT 1 NOT NULL,
+  psp_sy       DOUBLE PRECISION DEFAULT 32 NOT NULL,
+  flash_state  INTEGER,
+  flash_tics   INTEGER DEFAULT 0 NOT NULL,
+  refire       INTEGER DEFAULT 0 NOT NULL,      -- player->refire: shots in a row (the pistol's first is accurate)
+  attack_down  SMALLINT DEFAULT 0 NOT NULL,     -- player->attackdown: the rocket launcher and BFG fire once a press
+  buttons      SMALLINT DEFAULT 0 NOT NULL,     -- this tic's BT_ATTACK, for A_WeaponReady and A_ReFire
+  extralight   SMALLINT DEFAULT 0 NOT NULL,     -- 0–2 while a muzzle flash lights the view (A_Light1, A_Light2)
+  bob          DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- player->bob: P_CalcHeight's, for A_WeaponReady's sway
   damage_count INTEGER DEFAULT 0 NOT NULL,
   bonus_count  INTEGER DEFAULT 0 NOT NULL,
   kills        INTEGER DEFAULT 0 NOT NULL,

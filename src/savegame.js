@@ -20,6 +20,25 @@ const MOVING = {
   linedefs: ['special'],
 };
 
+// columns older saves have and this version doesn't: dropped as a save is loaded (the weapon's
+// old countdown and height, before the weapons went onto DOOM's frame tables: ADOPT_STATES
+// puts the weapon up and ready instead)
+const RETIRED = { player: ['attack_tics', 'attack_len', 'weapon_y', 'weapon_down'] };
+
+/** SAVE without its tables' RETIRED columns (a new object; the save itself is left alone) */
+function withoutRetired(save) {
+  if (!save?.tables) return save;
+  const tables = { ...save.tables };
+  for (const [t, gone] of Object.entries(RETIRED)) {
+    const tab = tables[t];
+    if (!tab || !Array.isArray(tab.cols) || !Array.isArray(tab.rows)) continue;
+    const keep = tab.cols.map((c, i) => (gone.includes(String(c).toLowerCase()) ? -1 : i)).filter((i) => i >= 0);
+    if (keep.length === tab.cols.length) continue;
+    tables[t] = { cols: keep.map((i) => tab.cols[i]), rows: tab.rows.map((r) => (Array.isArray(r) ? keep.map((i) => r[i]) : r)) };
+  }
+  return { ...save, tables };
+}
+
 async function table(db, sql) {
   const { rows } = await db.query(sql, [], { rowMode: 'object' });
   const cols = rows.length ? Object.keys(rows[0]).map((c) => c.toLowerCase()) : [];
@@ -102,6 +121,7 @@ export async function unpackSave(text) {
  */
 export async function restoreGame(db, save) {
   if (save?.version !== SAVE_VERSION) throw new Error(`unknown save version ${save?.version}`);
+  save = withoutRetired(save);
   await checkTables(db, save);
   for (const t of WHOLE) {
     await db.exec(`DELETE FROM ${t}`);

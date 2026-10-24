@@ -1400,12 +1400,12 @@ async function frameNow() {
       : hud.BONUS_COUNT ? Math.min(12, 8 + ((hud.BONUS_COUNT + 7) >> 3))
         : blink(hud.IRON_TICS) ? 13 : 0;
     renderer.drawView({ x: hud.PX, y: hud.PY, z: hud.VIEW_Z, angle: hud.PANGLE, tic: hud.TIC, palette, fixedColormap,
-      extralight: hud.DEAD ? 0 : extraLight(hud) },
+      extralight: extraLight(hud) },
       walls, sprites, map);
     // R_DrawViewBorder round a small view (FLOOR7_2, DOOM II's GRNROCK)
     if (renderer.scaledW < 320) renderer.drawBorder(wad.mapNames().some((m) => m.startsWith('MAP')) ? 'GRNROCK' : 'FLOOR7_2');
     renderer.composeView();
-    if (!hud.DEAD) drawWeapon(renderer, hud);
+    drawWeapon(renderer, hud);   // (dead, it's lowered out of sight: A_Lower)
     if (showMap) drawAutomap(tics);
     // (the face still keeps its time with the bar off: ST_Ticker runs regardless)
     const faceNow = face.update(hud, tics, lastFire);

@@ -124,14 +124,13 @@ const highWall = Renderer.prototype.lightIndex.call({ proj: 160, extralight: 0, 
 assert(lowWall === highWall + 3 && wallMap(160, 200, 1) === lowWall,
   `in low detail a wall 200 away is darker (colormap ${lowWall} against ${highWall}), as vanilla's rw_scale halves while scalelight doesn't`);
 
-// extralight: the muzzle flash lifts every light level, up to 15
-const hud = (w, p, len) => ({ WEAPON: w, ATTACK_LEN: len, ATTACK_TICS: Math.round((1 - p) * len), TIC: 0, WEAPON_Y: 0 });
-const flashes = [extraLight(hud(2, 0.1, 14)), extraLight(hud(3, 0.02, 37)), extraLight(hud(3, 0.1, 37)), extraLight(hud(1, 0.1, 18)),
-  extraLight({ WEAPON: 2, ATTACK_LEN: 14, ATTACK_TICS: 0, TIC: 0 })];
+// extralight: the muzzle flash lifts every light level, up to 15 (the flash states' A_Light1 and
+// A_Light2 set it in SQL: weapons-test follows each weapon's; here it's only passed on)
+const flashes = [extraLight({ EXTRALIGHT: 1 }), extraLight({ EXTRALIGHT: 2 }), extraLight({ EXTRALIGHT: 0 }), extraLight({})];
 const lit = Renderer.prototype.lightIndex.call({ proj: 160, extralight: 2, fixedCm: null }, 160, 300);
 const dark = Renderer.prototype.lightIndex.call({ proj: 160, extralight: 0, fixedCm: null }, 160, 300);
-assert(flashes.join() === '1,1,2,0,0' && lit === dark - 8 && lightNum(250, 2) === 15,
-  `extralight: pistol flash 1, shotgun 1 then 2, fist and idle 0; two steps make a wall 8 colormaps brighter (${dark} → ${lit}); never past 15`);
+assert(flashes.join() === '1,2,0,0' && lit === dark - 8 && lightNum(250, 2) === 15,
+  `extralight: the player's (${flashes.join(', ')}) reaches the view; two steps make a wall 8 colormaps brighter (${dark} → ${lit}); never past 15`);
 
 console.log(failures ? `${failures} failure(s)` : 'light ok');
 process.exit(failures ? 1 : 0);

@@ -86,6 +86,7 @@ assert(fresh > maxId && ran === 35 && p.HEALTH > 0, `after loading, a new thing 
     const label = `${old.fixture.commit} (${old.fixture.date}, "${old.fixture.subject}")`;
     if (!wad.mapNames().includes(old.map)) continue;   // (the fixtures are of Freedoom 1's E1M1)
     let problem = '';
+    let weaponsAdopted = false;
     try {
       await loadMap(db, wad, res, old.map, { skill: old.skill });
       await restoreGame(db, old);
@@ -118,12 +119,18 @@ assert(fresh > maxId && ran === 35 && p.HEALTH > 0, `after loading, a new thing 
           }
         }
       }
+      // (a save from before the weapons were on the frame tables: the weapon comes back up and ready)
+      if (!problem && !old.tables.player.cols.includes('psp_state')) {
+        const w = (await db.query(`SELECT p.dead, p.psp_sy, s.action FROM player p LEFT JOIN states s ON s.id = p.psp_state WHERE p.id = 1`)).rows[0];
+        if (w.DEAD === 0 && (w.ACTION?.trim() !== 'A_WeaponReady' || w.PSP_SY !== 32)) problem = `the weapon isn't up and ready (${w.ACTION}, ${w.PSP_SY})`;
+        else weaponsAdopted = true;
+      }
       if (!problem) {
         try { for (let i = 0; i < 35; i++) await tic(1, 0.05, i % 5 === 0 ? 1 : 0); } catch (err) { problem = `won't play on: ${err.message.split('\n')[0]}`; }
       }
     }
     assert(!problem, `a save from ${label} loads${problem ? `: ${problem}` : `, every saved value back, and plays on`}`
-      + `${adopted.size ? `; ${adopted.size} monsters join the frame tables` : ''}${added.length ? `; ${added.length} newer columns take their defaults` : ''}${dropped.length ? `; dropped since: ${dropped.join(', ')}` : ''}`);
+      + `${adopted.size ? `; ${adopted.size} monsters join the frame tables` : ''}${weaponsAdopted ? '; the weapon comes back ready' : ''}${added.length ? `; ${added.length} newer columns take their defaults` : ''}${dropped.length ? `; dropped since: ${dropped.join(', ')}` : ''}`);
   }
 }
 
