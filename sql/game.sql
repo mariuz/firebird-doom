@@ -4342,6 +4342,7 @@ BEGIN
   ELSE IF (act = 'A_SargAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 10, 4, NULL);
   ELSE IF (act = 'A_SkullAttack') THEN EXECUTE PROCEDURE a_skull_attack(tid);
   ELSE IF (act = 'A_HeadAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 6, 10, NULL);
+  ELSE IF (act = 'A_BruisAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 8, 10, 'DSCLAW');
   ELSE IF (act = 'A_Fall') THEN
     -- A_Fall: the corpse no longer blocks (MF_SOLID off)
     UPDATE things SET solid = 0 WHERE id = :tid;

@@ -84,14 +84,14 @@ await loadMap(db, wad, res, wad.mapNames()[0], { skill: 3 });
 // (phase 2: the map's zombiemen, shotgun guys and chaingunners in their spawn state, each
 // partway into it, 1 + P_Random() % 10 tics, with mobjinfo's reaction time)
 const onMap = await all(`SELECT t.thing_type, s.name, t.state_tic - g.tic left_tics, t.reaction, t.st FROM things t
-  JOIN states s ON s.id = t.state CROSS JOIN game g WHERE g.id = 1 AND t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006, 3005)`);
-const spawnName = { 3004: 'S_POSS_STND', 9: 'S_SPOS_STND', 65: 'S_CPOS_STND', 3001: 'S_TROO_STND', 3002: 'S_SARG_STND', 58: 'S_SARG_STND', 3006: 'S_SKULL_STND', 3005: 'S_HEAD_STND' };
+  JOIN states s ON s.id = t.state CROSS JOIN game g WHERE g.id = 1 AND t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006, 3005, 3003, 69)`);
+const spawnName = { 3004: 'S_POSS_STND', 9: 'S_SPOS_STND', 65: 'S_CPOS_STND', 3001: 'S_TROO_STND', 3002: 'S_SARG_STND', 58: 'S_SARG_STND', 3006: 'S_SKULL_STND', 3005: 'S_HEAD_STND', 3003: 'S_BOSS_STND', 69: 'S_BOS2_STND' };
 const offsets = new Set(onMap.map((r) => r.LEFT_TICS));
-const unstated = await one('SELECT COUNT(*) n FROM things t WHERE t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006, 3005) AND t.state IS NULL');
+const unstated = await one('SELECT COUNT(*) n FROM things t WHERE t.thing_type IN (3004, 9, 65, 3001, 3002, 58, 3006, 3005, 3003, 69) AND t.state IS NULL');
 assert(onMap.length > 0 && unstated.N === 0
   && onMap.every((r) => r.NAME.trim() === spawnName[r.THING_TYPE] && r.LEFT_TICS >= 1 && r.LEFT_TICS <= 10 && r.REACTION === 8 && r.ST.trim() === 'idle')
   && (onMap.length < 4 || offsets.size > 1),
-  `the map's ${onMap.length} zombiemen, shotgun guys, chaingunners, imps, demons, lost souls and cacodemons start in their spawn states, 1 to 10 tics in (${[...offsets].sort((a, b) => a - b).join(',')}), reaction time 8`);
+  `the map's ${onMap.length} zombiemen, shotgun guys, chaingunners, imps, demons, lost souls, cacodemons and barons start in their spawn states, 1 to 10 tics in (${[...offsets].sort((a, b) => a - b).join(',')}), reaction time 8`);
 const ID = new Map(STATES.map((x, i) => [x[0], i]));
 const NAME = (i) => (i == null ? null : STATES[i][0]);
 const pl = await one("SELECT t.x, t.y, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1");
@@ -421,6 +421,32 @@ await remove(caco);
 assert(headTrace.startsWith('0:S_HEAD_ATK1 5:S_HEAD_ATK2 10:S_HEAD_ATK3') && bitC >= 10 && bitC <= 60 && bitC % 10 === 0 && !biteSndC.includes('DSFIRSHT')
   && heads === 1 && spitSnd.includes('DSFIRSHT') && zc.join() === '-1,-2,-3',
   `the cacodemon: ${headTrace.split(' ').slice(0, 3).join(' ')}; a bite of ${bitC} up close, a fireball further off (${spitSnd.join()}); killed in the air it falls (momz ${zc.join(', ')})`);
+
+// the barons: A_BruisAttack claws within reach for (P_Random() % 8 + 1) × 10 with DSCLAW, else
+// throws a green fireball; the knight cries DOOM II's DSKNTSIT
+P = 3500;
+await atTic(P);
+const baron = await spawnAt(3003, 50, facing);
+await db.exec('DELETE FROM sound_events');
+const hpB = (await one('SELECT health FROM player WHERE id = 1')).HEALTH;
+await setState(baron, 'S_BOSS_ATK1', P);
+const baronTrace = await trace(baron, P, P + 25);
+const clawB = await sounds();
+const clawedB = hpB - (await one('SELECT health FROM player WHERE id = 1')).HEALTH;
+await remove(baron);
+const knight = await spawnAt(69, 300, facing);
+await db.exec('DELETE FROM sound_events');
+const green0 = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9002')).N;
+await setState(knight, 'S_BOS2_ATK3', P + 30);
+const green = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9002')).N - green0;
+await db.exec('DELETE FROM things WHERE thing_type = 9002');
+await db.exec('DELETE FROM sound_events');
+await setState(knight, 'S_BOS2_STND', P + 40);   // (A_Look: facing the player, it sees them)
+const kntSnd = await sounds();
+await remove(knight);
+assert(baronTrace.startsWith('0:S_BOSS_ATK1 8:S_BOSS_ATK2 16:S_BOSS_ATK3') && clawB.includes('DSCLAW') && clawedB >= 10 && clawedB <= 80 && clawedB % 10 === 0
+  && green === 1 && kntSnd.includes('DSKNTSIT'),
+  `the barons: ${baronTrace.split(' ').slice(0, 3).join(' ')}, a claw of ${clawedB}; the knight throws ${green} fireball from afar and cries ${kntSnd.join()}`);
 
 // every type on the tables lies down 'dead' at the end of its death (and its gibbing), even
 // where that last frame is also a decoration's spawn state (S_POSS_DIE5: a dead former human)

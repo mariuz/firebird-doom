@@ -41,7 +41,7 @@ export const THING_TYPES = [
   M(3006, 'SKUL', { hp: 100, speed: 8, radius: 16, painChance: 256, walk: 'AB', attack: 'CD', pain: 'E', death: 'FGHIJK', atk: 'skull', dmgLo: 3, dmgHi: 24, bright: 1, atkSnd: 'DSSKLATK', painSnd: 'DSDMPAIN', deathSnd: 'DSFIRXPL', activeSnd: 'DSDMACT' }),
   M(3005, 'HEAD', { hp: 400, speed: 8, radius: 31, painChance: 128, walk: 'A', attack: 'BCD', pain: 'EF', death: 'GHIJKL', atk: 'missile', missile: 9001, dmgLo: 5, dmgHi: 40, seeSnd: 'DSCACSIT', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSCACDTH', activeSnd: 'DSDMACT' }),
   M(3003, 'BOSS', { hp: 1000, speed: 8, radius: 24, height: 64, painChance: 50, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMNO', atk: 'missile', missile: 9002, dmgLo: 8, dmgHi: 64, seeSnd: 'DSBRSSIT', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSBRSDTH', activeSnd: 'DSDMACT' }),
-  M(69, 'BOS2', { hp: 500, speed: 8, radius: 24, height: 64, painChance: 50, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMNO', atk: 'missile', missile: 9002, dmgLo: 8, dmgHi: 64, seeSnd: 'DSBRSSIT', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSBRSDTH', activeSnd: 'DSDMACT' }),
+  M(69, 'BOS2', { hp: 500, speed: 8, radius: 24, height: 64, painChance: 50, walk: 'ABCD', attack: 'EFG', pain: 'H', death: 'IJKLMNO', atk: 'missile', missile: 9002, dmgLo: 8, dmgHi: 64, seeSnd: 'DSKNTSIT', atkSnd: 'DSFIRSHT', painSnd: 'DSDMPAIN', deathSnd: 'DSKNTDTH', activeSnd: 'DSDMACT' }),   // (MT_KNIGHT's own cries)
   // the bosses
   M(16, 'CYBR', { hp: 4000, speed: 16, radius: 40, height: 110, painChance: 20, walk: 'ABCD', attack: 'EF', pain: 'G', death: 'HIJKLMNOP', atk: 'missile', missile: 9003, dmgLo: 20, dmgHi: 160, seeSnd: 'DSCYBSIT', atkSnd: 'DSRLAUNC', painSnd: 'DSDMPAIN', deathSnd: 'DSCYBDTH', activeSnd: 'DSDMACT' }),
   M(7, 'SPID', { hp: 3000, speed: 12, radius: 128, height: 100, painChance: 40, walk: 'ABCDEF', attack: 'GH', pain: 'I', death: 'JKLMNOPQRS', atk: 'hitscan', shots: 3, dmgLo: 3, dmgHi: 15, seeSnd: 'DSSPISIT', atkSnd: 'DSSHOTGN', painSnd: 'DSDMPAIN', deathSnd: 'DSSPIDTH', activeSnd: 'DSDMACT' }),
@@ -153,4 +153,5 @@ export const ON_STATES = new Set([
   3002, 58,      // the demon, the spectre
   3006,          // the lost soul
   3005,          // the cacodemon
+  3003, 69,      // the baron of Hell, the Hell knight
 ]);
