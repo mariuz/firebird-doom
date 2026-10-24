@@ -166,6 +166,10 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
       await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
           EXECUTE PROCEDURE spawn_thing(9006, ${s2.x}, ${s2.y}, ${s2.z + 32}, ${heading}) RETURNING_VALUES id;
           UPDATE things SET momx = ${Math.cos(heading) * 10}, momy = ${Math.sin(heading) * 10} WHERE id = :id;
+          -- (A_Tracer steers only when gametic & 3 is 0, and it runs every 2 tics: a missile whose
+          -- frames change on odd tics never homes, as half of DOOM's don't. This one is lined up
+          -- with the steering tics)
+          UPDATE things t SET state_tic = (SELECT 4 * (FLOOR(g.tic / 4) + 1) FROM game g WHERE g.id = 1) WHERE t.id = :id;
         END`);
     };
     const err = (m) => Math.abs(norm(Math.atan2(p.Y - m.Y, p.X - m.X) - m.ANGLE));
@@ -174,7 +178,7 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
     let last = null;
     for (let i = 0; i < 9; i++) {
       await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
-      const m = await one(`SELECT x, y, angle FROM things WHERE thing_type = 9006 AND st = 'fly'`);
+      const m = await one(`SELECT x, y, angle FROM things WHERE thing_type = 9006 AND st NOT IN ('dying', 'dead')`);
       if (!m) break;
       if (last !== null && Math.abs(m.ANGLE - last) > 1e-6) turns.push(Math.abs(norm(m.ANGLE - last)) * 180 / Math.PI);
       last = m.ANGLE;

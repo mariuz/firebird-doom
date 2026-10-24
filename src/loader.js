@@ -20,9 +20,13 @@ const STATE_ID = new Map(STATES.map((s, i) => [s[0], i]));
  */
 export function stateModes() {
   const mode = new Array(STATES.length).fill(null);
-  const order = [[5, 'dying'], [6, 'dying'], [0, 'idle'], [1, 'chase'], [4, 'attack'], [3, 'melee'], [2, 'pain'], [7, 'raise']];
+  const order = [[5, 'dying'], [6, 'dying'], [0, 'fly'], [0, 'idle'], [1, 'chase'], [4, 'attack'], [3, 'melee'], [2, 'pain'], [7, 'raise']];
+  // (a projectile's flight is 'fly', as the old rules call it)
+  const MISSILES = new Set(['MT_TROOPSHOT', 'MT_HEADSHOT', 'MT_BRUISERSHOT', 'MT_ROCKET', 'MT_PLASMA', 'MT_BFG', 'MT_TRACER',
+    'MT_FATSHOT', 'MT_ARACHPLAZ', 'MT_SPAWNSHOT']);
   for (const [field, m] of order) {
-    for (const mobj of Object.values(MOBJINFO)) {
+    for (const [name, mobj] of Object.entries(MOBJINFO)) {
+      if (m === 'fly' && !MISSILES.has(name)) continue;
       for (let s = mobj.states[field], n = 0; s > 0 && mode[s] === null && n < 64; s = STATES[s][6], n++) {
         mode[s] = m === 'dying' && STATES[s][4] === -1 ? 'dead' : m;
       }

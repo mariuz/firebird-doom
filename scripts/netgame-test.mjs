@@ -408,7 +408,8 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   const m0 = await thing(1);
   await db.exec("UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE kind = 'monster'");   // (quiet: the rest stay out of it)
   const imp = await spawn(3001, m0.X - 200, m0.Y);
-  await db.exec(`EXECUTE PROCEDURE monster_missile(${imp}, 9000, ${m0.X + 300}, ${m0.Y + 300}, ${m0.Z}, 20, 0, ${m0.X + 500}, ${m0.Y + 300}, ${m0.Z})`);
+  // (from where player 1 stands, player 1 its shooter: a missile passes its own shooter)
+  await db.exec(`EXECUTE PROCEDURE monster_missile(${m0.ID}, 9000, ${m0.X}, ${m0.Y}, ${m0.Z}, 20, 0, ${m0.X + 200}, ${m0.Y}, ${m0.Z})`);
   const ball = await one('SELECT SQRT(momx * momx + momy * momy) v FROM things WHERE thing_type = 9000 ORDER BY id DESC ROWS 1');
   await db.exec('DELETE FROM things WHERE thing_type = 9000');
   // (the old rules' 2; mobjinfo's 8 for the types on DOOM's frame tables)

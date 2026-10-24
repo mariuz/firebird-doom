@@ -157,4 +157,7 @@ export const ON_STATES = new Set([
   16, 7,         // the cyberdemon, the spider mastermind
   84, 72, 71, 67, 68,   // DOOM II's: the SS guard, Commander Keen, the pain elemental, the mancubus, the arachnotron
   66, 64,        // the revenant, the arch-vile
+  // phase 3: the projectiles – fireballs, rockets, plasma, the BFG's ball, the revenant's
+  // homing missile, the mancubus's fireballs, the arachnotron's plasma
+  9000, 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008,
 ]);

@@ -1195,7 +1195,18 @@ That's changing, in phases ([docs/ROADMAP.md](docs/ROADMAP.md)). DOOM's state ta
 (a state's tics start, its action is called, a 0-tic state goes straight on, `S_NULL` removes the thing)
 and `STATES_THINK` moves on, each tic, only the things whose state ends then (an index on the tic it
 ends; about 5 µs a tic when none does). The monsters move onto it family by family, and the first
-families are there: the zombieman, the shotgun guy, the chaingunner, the imp, the demon, the spectre, the lost soul, the cacodemon, the Hell knight, the baron of Hell, the cyberdemon and the spider mastermind live entirely on DOOM's states: all of DOOM I's monsters, and all of DOOM II's but the boss brain: the SS guard, Commander Keen, the pain elemental, the mancubus, the arachnotron, the revenant and the arch-vile.
+families are there: the zombieman, the shotgun guy, the chaingunner, the imp, the demon, the spectre, the lost soul, the cacodemon, the Hell knight, the baron of Hell, the cyberdemon and the spider mastermind live entirely on DOOM's states: all of DOOM I's monsters, and all of DOOM II's but the boss brain: the SS guard, Commander Keen, the pain elemental, the mancubus, the arachnotron, the revenant and the arch-vile. So do the projectiles (phase 3): the imp's,
+cacodemon's and baron's fireballs, rockets, plasma, the BFG's ball, the revenant's homing missile, the
+mancubus's fireballs and the arachnotron's plasma fly in their spawn states' frames and burst through their
+death states, as `P_SpawnMissile` and `P_SpawnPlayerMissile` start them: from the shooter, the first frame
+up to 3 tics short, half a move ahead (`P_CheckMissileSpawn`). `P_XYMovement` moves them, in half moves
+when they're fast (DOOM halves only positive moves, and so does this); `PIT_CheckThing` decides what they
+hit: never their shooter, harmlessly one of its species, a solid thing that can't be shot, or something
+that takes (P_Random() % 8 + 1) × the missile's damage. A wall stops them, unless a sky lies behind it,
+when they're simply gone; a floor or a ceiling, sky or not, bursts them (`P_ZMovement`). The rocket's
+`A_Explode` and the BFG's `A_BFGSpray` come in their death frames. `A_Tracer` steers the revenant's missile
+16.875° at a time on every fourth tic, so, as in DOOM, one whose frames change on odd tics never homes:
+about half of them.
 They start partway into their spawn state (`P_SpawnMapThing`'s `1 + P_Random() % tics`) and look
 (`A_Look`: the gunfire heard in their sector, or the player seen in the 180° ahead), chase
 (`A_Chase`: the 45° turns, `P_Move` and `P_NewChaseDir`, `P_CheckMissileRange` with its

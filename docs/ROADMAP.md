@@ -35,7 +35,7 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
   phases*). Phases 0 and 1 are done (the table, GPL-2 in a file of its own; the machine in SQL);
   phase 2, the monsters family by family, is under way: the zombieman, shotgun guy and
-  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's but the boss brain; the boss brain, whose cubes are projectiles (phase 3), is last.
+  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's but the boss brain; the boss brain, whose cubes are projectiles (phase 3), is last. Phase 3 is under way: the projectiles are on the table.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -195,7 +195,13 @@ name; each family leaves its mode code behind when it moves. Test (a `states-tes
 its timings (the zombieman's 10 + 8 + 8 tics to fire), pain and death take its painstate and
 deathstate (xdeath when gibbed), and the existing behaviour tests still pass.
 
-**Phase 3: everything else that animates.** Projectiles (and their explosions), the player's
+**Phase 3: everything else that animates.** *Under way.* The projectiles are done (ON_STATES 9000–9008):
+`MISSILE_CHECK` (PIT_CheckLine for a missile, with the ceilingline's sky), `MISSILE_TRY` (PIT_CheckThing and
+the move), `EXPLODE_MISSILE` (P_ExplodeMissile), `CHECK_MISSILE_SPAWN` (P_CheckMissileSpawn), `MISSILES_THINK`
+(P_XYMovement's half moves, P_ZMovement), A_Explode, A_BFGSpray and A_Tracer; a missile spawned in the state
+pass moves that tic. Two changes from the old rules: a missile bursts on a sky ceiling (DOOM's P_ZMovement)
+instead of vanishing, and starts at its shooter rather than a body's width ahead. Next: the boss brain's
+cubes, then puffs, blood and the rest. The plan as it was: Projectiles (and their explosions), the player's
 own sprite (S_PLAY…), puffs and blood, barrels, the decorations and items, the teleport fog, the
 arch-vile's fire and the boss brain's cubes and spawn fire. Then the renderer's own walking
 animation and the frame strings in `thinginfo.js` go.

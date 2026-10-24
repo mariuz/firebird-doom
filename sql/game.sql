@@ -1441,6 +1441,168 @@ BEGIN
   END
 END^
 
+-- ── projectiles on DOOM's frame tables (docs/ROADMAP.md, phase 3) ──────────
+-- PIT_CheckLine and P_TryMove's heights for a missile moving to (NX, NY) at Z: a one-sided
+-- line stops it (blocking lines don't: they're for walkers), and so does an opening too low,
+-- a ceiling it would poke through or a step more than 24 up. SKY: the line that brought the
+-- ceiling lowest (ceilingline) has a sky ceiling behind it, so the missile goes into the sky.
+CREATE OR ALTER PROCEDURE missile_check (
+  nx DOUBLE PRECISION, ny DOUBLE PRECISION, z DOUBLE PRECISION, rad DOUBLE PRECISION, hgt DOUBLE PRECISION)
+RETURNS (ok SMALLINT, sky SMALLINT, sec INTEGER, floor_z DOUBLE PRECISION, ceil_z DOUBLE PRECISION)
+AS
+DECLARE bsec INTEGER;
+DECLARE ff DOUBLE PRECISION;
+DECLARE fc DOUBLE PRECISION;
+DECLARE bf DOUBLE PRECISION;
+DECLARE bc DOUBLE PRECISION;
+DECLARE bsky SMALLINT;
+BEGIN
+  ok = 1;
+  sky = 0;
+  sec = sector_at(nx, ny);
+  SELECT floor_h, ceil_h FROM sectors WHERE id = :sec INTO floor_z, ceil_z;
+  FOR SELECT q.back_sector, f.floor_h, f.ceil_h, b.floor_h, b.ceil_h, b.sky
+        FROM (SELECT l.*,
+                     MINVALUE(1e0, MAXVALUE(0e0, ((:nx - l.x1) * l.dx + (:ny - l.y1) * l.dy) / NULLIF(l.len2, 0))) t
+                FROM lines_in_box(:nx - :rad, :ny - :rad, :nx + :rad, :ny + :rad) lb
+                LEFT JOIN linedefs l ON l.id = lb.line_id
+               WHERE l.minx <= :nx + :rad AND l.maxx >= :nx - :rad
+                 AND l.miny <= :ny + :rad AND l.maxy >= :ny - :rad) q
+        JOIN sectors f ON f.id = q.front_sector
+        LEFT JOIN sectors b ON b.id = q.back_sector
+       WHERE (q.x1 + q.t * q.dx - :nx) * (q.x1 + q.t * q.dx - :nx)
+           + (q.y1 + q.t * q.dy - :ny) * (q.y1 + q.t * q.dy - :ny) < :rad * :rad
+       ORDER BY q.id
+        INTO bsec, ff, fc, bf, bc, bsky
+  DO
+  BEGIN
+    IF (bsec IS NULL) THEN
+    BEGIN
+      ok = 0;
+      EXIT;
+    END
+    IF (MINVALUE(fc, bc) < ceil_z) THEN
+    BEGIN
+      ceil_z = MINVALUE(fc, bc);
+      sky = IIF(bsky = 1, 1, 0);   -- (ceilingline->backsector->ceilingpic == skyflatnum)
+    END
+    floor_z = MAXVALUE(floor_z, ff, bf);
+  END
+  IF (ceil_z - floor_z < hgt OR ceil_z - z < hgt OR floor_z - z > 24) THEN ok = 0;
+END^
+
+-- P_ExplodeMissile: it stops, goes into its death state with that state's first tics cut by
+-- P_Random() & 3 (at least 1), no longer a missile, and plays its death sound
+CREATE OR ALTER PROCEDURE explode_missile (tid INTEGER, tic INTEGER)
+AS
+DECLARE dstate INTEGER;
+DECLARE snd VARCHAR(8);
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE alive SMALLINT;
+BEGIN
+  SELECT tt.death_state, tt.death_snd, t.x, t.y FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+   WHERE t.id = :tid INTO dstate, snd, x, y;
+  IF (dstate IS NULL) THEN EXIT;
+  UPDATE things t SET momx = 0, momy = 0, momz = 0 WHERE t.id = :tid;
+  EXECUTE PROCEDURE set_state(tid, dstate, tic) RETURNING_VALUES alive;
+  IF (alive = 0) THEN EXIT;
+  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3))
+   WHERE t.id = :tid AND t.state_tic IS NOT NULL;
+  IF (snd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(snd, tid, x, y);
+END^
+
+-- P_TryMove for a missile to (NX, NY): first PIT_CheckThing, the first thing whose box it
+-- touches at a height it overlaps that's solid or shootable. Its own shooter it passes; one
+-- of the shooter's own species (the knight and the baron are one) it bursts on harmlessly,
+-- unless that's a player; a solid thing that can't be shot stops it; anything else takes
+-- (P_Random() % 8 + 1) × its damage, from the shooter. Then the lines (MISSILE_CHECK): it
+-- bursts against them, or, a sky behind, is gone. MOVED: 1 it's there now, 0 it burst or
+-- went. (P_CheckMissileSpawn asks the same of where it is, NX and NY its own.)
+CREATE OR ALTER PROCEDURE missile_try (tid INTEGER, nx DOUBLE PRECISION, ny DOUBLE PRECISION, tic INTEGER)
+RETURNS (moved SMALLINT)
+AS
+DECLARE z DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE owner INTEGER;
+DECLARE otype INTEGER;
+DECLARE mdmg INTEGER;
+DECLARE hid INTEGER;
+DECLARE htype INTEGER;
+DECLARE hkind VARCHAR(10);
+DECLARE shootable SMALLINT;
+DECLARE hitp SMALLINT;
+DECLARE ok SMALLINT;
+DECLARE sky SMALLINT;
+DECLARE sec INTEGER;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
+BEGIN
+  moved = 0;
+  SELECT t.z, t.radius, t.height, t.owner_id, tt.dmg_lo FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+   WHERE t.id = :tid INTO z, rad, hgt, owner, mdmg;
+  otype = NULL;
+  SELECT o.thing_type FROM things o WHERE o.id = :owner INTO otype;
+  FOR SELECT o.id, o.thing_type, o.kind,
+             IIF(o.kind IN ('monster', 'barrel', 'keen', 'brain') AND o.st NOT IN ('dying', 'dead'), 1,
+                 IIF(o.kind = 'player' AND EXISTS (SELECT 1 FROM player p WHERE p.thing_id = o.id AND p.dead = 0), 1, 0))
+        FROM things o
+       WHERE o.x BETWEEN :nx - 160 AND :nx + 160 AND o.id <> :tid
+         AND ABS(o.x - :nx) < o.radius + :rad AND ABS(o.y - :ny) < o.radius + :rad
+         AND NOT (:z > o.z + o.height) AND NOT (:z + :hgt < o.z)
+       ORDER BY o.id
+        INTO hid, htype, hkind, shootable
+  DO
+  BEGIN
+    IF (shootable = 0 AND NOT EXISTS (SELECT 1 FROM things s WHERE s.id = :hid AND s.solid = 1)) THEN CONTINUE;
+    IF (otype IS NOT NULL AND (otype = htype OR (otype IN (69, 3003) AND htype IN (69, 3003)))) THEN
+    BEGIN
+      IF (hid = owner) THEN CONTINUE;
+      IF (hkind <> 'player') THEN
+      BEGIN
+        EXECUTE PROCEDURE explode_missile(tid, tic);
+        EXIT;
+      END
+    END
+    IF (shootable = 1) THEN
+    BEGIN
+      hitp = NULL;
+      SELECT p.id FROM player p WHERE p.thing_id = :hid INTO hitp;
+      IF (hitp IS NOT NULL) THEN EXECUTE PROCEDURE damage_player((MOD(p_rand256(), 8) + 1) * mdmg, owner, hitp);
+      ELSE EXECUTE PROCEDURE damage_thing(hid, (MOD(p_rand256(), 8) + 1) * mdmg, owner);
+    END
+    EXECUTE PROCEDURE explode_missile(tid, tic);
+    EXIT;
+  END
+  EXECUTE PROCEDURE missile_check(nx, ny, z, rad, hgt) RETURNING_VALUES ok, sky, sec, fz, cz;
+  IF (ok = 0) THEN
+  BEGIN
+    IF (sky = 1) THEN DELETE FROM things t WHERE t.id = :tid;   -- (into the sky: P_RemoveMobj)
+    ELSE EXECUTE PROCEDURE explode_missile(tid, tic);
+    EXIT;
+  END
+  UPDATE things t SET x = :nx, y = :ny, sector_id = :sec WHERE t.id = :tid;
+  moved = 1;
+END^
+
+-- P_CheckMissileSpawn: a missile just fired has its first tics cut by P_Random() & 3 (at least
+-- 1), moves half its momentum on, and bursts at once if it isn't free there
+CREATE OR ALTER PROCEDURE check_missile_spawn (mid INTEGER)
+AS
+DECLARE tic INTEGER;
+DECLARE moved SMALLINT;
+DECLARE nx DOUBLE PRECISION;
+DECLARE ny DOUBLE PRECISION;
+BEGIN
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3)),
+                      x = t.x + t.momx / 2, y = t.y + t.momy / 2, z = t.z + t.momz / 2
+   WHERE t.id = :mid AND t.state_tic IS NOT NULL;
+  SELECT t.x, t.y FROM things t WHERE t.id = :mid INTO nx, ny;
+  EXECUTE PROCEDURE missile_try(mid, nx, ny, tic) RETURNING_VALUES moved;
+END^
+
 -- P_SpawnPlayerMissile: a projectile leaving the shooter at gun height,
 -- autoaimed: straight ahead, else 5.625° either side, else level.
 CREATE OR ALTER PROCEDURE fire_missile (
@@ -1468,6 +1630,8 @@ BEGIN
   EXECUTE PROCEDURE spawn_thing(mtype, sx, sy, sz + 32, aim) RETURNING_VALUES mid;
   UPDATE things t SET momx = COS(:aim) * :spd, momy = SIN(:aim) * :spd, momz = :spd * :slope, owner_id = :owner
    WHERE t.id = :mid;
+  IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :mid AND t.state IS NOT NULL)) THEN
+    EXECUTE PROCEDURE check_missile_spawn(mid);
 END^
 
 -- P_RadiusAttack: DMG at the centre, minus the distance (box distance less
@@ -2348,10 +2512,26 @@ AS
 DECLARE mid INTEGER;
 DECLARE spd DOUBLE PRECISION;
 DECLARE flight DOUBLE PRECISION;
+DECLARE adx DOUBLE PRECISION;
+DECLARE ady DOUBLE PRECISION;
 BEGIN
   SELECT speed FROM thing_types WHERE thing_type = :mtype INTO spd;
   -- Nightmare or -fast: imp, cacodemon and baron fireballs fly at 20
   IF (mtype IN (9000, 9001, 9002) AND EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND (g.skill = 5 OR g.fast = 1))) THEN spd = 20;
+  IF (EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = :mtype AND tt.on_states = 1)) THEN
+  BEGIN
+    -- (on DOOM's frame tables: P_SpawnMissile)
+    EXECUTE PROCEDURE spawn_thing(mtype, sx, sy, sz + 32, ang) RETURNING_VALUES mid;
+    adx = ABS(tx - sx);
+    ady = ABS(ty - sy);
+    flight = MAXVALUE(1, FLOOR((adx + ady - MINVALUE(adx, ady) / 2) / spd));
+    UPDATE things t SET momx = COS(:ang) * :spd, momy = SIN(:ang) * :spd, momz = (:tz - :sz) / :flight, owner_id = :owner,
+                        target_id = (SELECT o.target_id FROM things o WHERE o.id = :owner),
+                        tplayer = COALESCE((SELECT o.tplayer FROM things o WHERE o.id = :owner), t.tplayer)
+     WHERE t.id = :mid;
+    EXECUTE PROCEDURE check_missile_spawn(mid);
+    EXIT;
+  END
   EXECUTE PROCEDURE spawn_thing(mtype, sx + COS(ang) * (rad + 8), sy + SIN(ang) * (rad + 8), sz + 32, ang)
     RETURNING_VALUES mid;
   -- momz = (dest z − source z) / tics of flight: feet to feet, so a missile
@@ -4568,6 +4748,55 @@ BEGIN
   EXECUTE PROCEDURE a_chase(tid, tic);
 END^
 
+-- A_Tracer: every fourth tic, a puff where the revenant's missile is and a puff of smoke just
+-- behind it (MT_SMOKE: a puff here); then, while its target lives, it turns towards it by at
+-- most TRACEANGLE (16.875°), goes on at its speed that way, and climbs or sinks by 1/8 towards
+-- 40 above the target's feet
+CREATE OR ALTER PROCEDURE a_tracer (tid INTEGER, tic INTEGER)
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE momx DOUBLE PRECISION;
+DECLARE momy DOUBLE PRECISION;
+DECLARE momz DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+DECLARE spd DOUBLE PRECISION;
+DECLARE d DOUBLE PRECISION;
+DECLARE ta DOUBLE PRECISION;
+DECLARE adx DOUBLE PRECISION;
+DECLARE ady DOUBLE PRECISION;
+DECLARE n DOUBLE PRECISION;
+DECLARE mid INTEGER;
+BEGIN
+  IF (MOD(tic, 4) <> 0) THEN EXIT;
+  SELECT t.x, t.y, t.z, t.momx, t.momy, t.momz, t.angle, tt.speed FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+   WHERE t.id = :tid INTO x, y, z, momx, momy, momz, ang, spd;
+  EXECUTE PROCEDURE spawn_thing(9010, x, y, z, 0) RETURNING_VALUES mid;
+  EXECUTE PROCEDURE spawn_thing(9010, x - momx, y - momy, z, 0) RETURNING_VALUES mid;
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL OR palive = 0) THEN EXIT;
+  ta = 0.29452431127404e0;   -- TRACEANGLE, 0xc000000
+  d = ATAN2(py - y, px - x) - ang;
+  d = d - 2 * PI() * FLOOR((d + PI()) / (2 * PI()));   -- (into [−π, π))
+  IF (ABS(d) <= ta) THEN ang = ang + d;
+  ELSE ang = ang + SIGN(d) * ta;
+  adx = ABS(px - x);
+  ady = ABS(py - y);
+  n = MAXVALUE(1, FLOOR((adx + ady - MINVALUE(adx, ady) / 2) / spd));
+  momz = IIF((pz + 40 - z) / n < momz, momz - 0.125e0, momz + 0.125e0);
+  UPDATE things t SET angle = :ang, momx = COS(:ang) * :spd, momy = SIN(:ang) * :spd, momz = :momz WHERE t.id = :tid;
+END^
+
 -- The actions, by name (info.c's codepointers). Only those the first things on the
 -- table need are here; any other name does nothing until its phase brings it.
 CREATE OR ALTER PROCEDURE state_action (tid INTEGER, act VARCHAR(24), tic INTEGER)
@@ -4592,6 +4821,16 @@ BEGIN
   ELSE IF (act = 'A_CyberAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, NULL, NULL, NULL);
   ELSE IF (act = 'A_SpidRefire') THEN EXECUTE PROCEDURE a_cpos_refire(tid, tic, 10);
   ELSE IF (act = 'A_BspiAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, NULL, NULL, NULL);
+  ELSE IF (act = 'A_Explode') THEN
+  BEGIN
+    -- A_Explode: P_RadiusAttack, 128 at the centre, from whoever fired it
+    SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO x, y;
+    EXECUTE PROCEDURE radius_attack(x, y, (SELECT t.z FROM things t WHERE t.id = :tid), 128,
+                                    (SELECT t.owner_id FROM things t WHERE t.id = :tid));
+  END
+  ELSE IF (act = 'A_BFGSpray') THEN
+    EXECUTE PROCEDURE bfg_spray((SELECT t.angle FROM things t WHERE t.id = :tid), (SELECT t.owner_id FROM things t WHERE t.id = :tid));
+  ELSE IF (act = 'A_Tracer') THEN EXECUTE PROCEDURE a_tracer(tid, tic);
   ELSE IF (act = 'A_SkelFist') THEN EXECUTE PROCEDURE a_melee_missile(tid, 10, 6, 'DSSKEPCH', 1);
   ELSE IF (act = 'A_SkelMissile') THEN EXECUTE PROCEDURE a_skel_missile(tid);
   ELSE IF (act = 'A_VileChase') THEN EXECUTE PROCEDURE a_vile_chase(tid, tic);
@@ -4773,6 +5012,75 @@ BEGIN
   END
 END^
 
+-- P_MobjThinker's movement for the missiles on the tables (those not yet burst):
+-- P_XYMovement, in half moves while one of them is over MAXMOVE/2 (15: DOOM asks only of
+-- the positive ones), each a MISSILE_TRY; then P_ZMovement: on through the floor or the
+-- ceiling, it bursts there (sky or not). AFTER_ID: only those spawned after it.
+CREATE OR ALTER PROCEDURE missiles_think (tic INTEGER, after_id INTEGER = 0)
+AS
+DECLARE tid INTEGER;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE momx DOUBLE PRECISION;
+DECLARE momy DOUBLE PRECISION;
+DECLARE momz DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE xmove DOUBLE PRECISION;
+DECLARE ymove DOUBLE PRECISION;
+DECLARE moved SMALLINT;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
+BEGIN
+  FOR SELECT t.id FROM things t
+       WHERE t.kind = 'missile' AND t.state IS NOT NULL AND t.st NOT IN ('dying', 'dead') AND t.id > :after_id
+       ORDER BY t.id
+        INTO tid
+  DO
+  BEGIN
+    x = NULL;
+    SELECT t.x, t.y, t.momx, t.momy FROM things t WHERE t.id = :tid AND t.st NOT IN ('dying', 'dead')
+      INTO x, y, momx, momy;
+    IF (x IS NULL) THEN CONTINUE;
+    moved = 1;
+    xmove = momx;
+    ymove = momy;
+    WHILE (moved = 1 AND (xmove <> 0 OR ymove <> 0)) DO
+    BEGIN
+      IF (xmove > 15 OR ymove > 15) THEN
+      BEGIN
+        xmove = xmove / 2;
+        ymove = ymove / 2;
+        EXECUTE PROCEDURE missile_try(tid, x + xmove, y + ymove, tic) RETURNING_VALUES moved;
+      END
+      ELSE
+      BEGIN
+        EXECUTE PROCEDURE missile_try(tid, x + xmove, y + ymove, tic) RETURNING_VALUES moved;
+        xmove = 0;
+        ymove = 0;
+      END
+      IF (moved = 1) THEN SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO x, y;
+    END
+    IF (moved = 0) THEN CONTINUE;
+    SELECT t.z, t.momz, t.radius, t.height FROM things t WHERE t.id = :tid INTO z, momz, rad, hgt;
+    EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
+    IF (z = fz AND momz = 0) THEN CONTINUE;
+    z = z + momz;
+    IF (z <= fz) THEN
+    BEGIN
+      UPDATE things t SET z = :fz WHERE t.id = :tid;
+      EXECUTE PROCEDURE explode_missile(tid, tic);
+    END
+    ELSE IF (z + hgt > cz) THEN
+    BEGIN
+      UPDATE things t SET z = :cz - :hgt WHERE t.id = :tid;
+      EXECUTE PROCEDURE explode_missile(tid, tic);
+    END
+    ELSE UPDATE things t SET z = :z WHERE t.id = :tid;
+  END
+END^
+
 -- P_MobjThinker's countdown, for the things on the table: each whose state ends this
 -- tic goes on to the next, in spawn order (P_RunThinkers). Only those are touched
 -- (the index on STATE_TIC), not every thing every tic.
@@ -4813,6 +5121,7 @@ BEGIN
   -- P_MobjThinker's movement, for the things on the tables that move: first P_XYMovement
   -- for a charging lost soul (SKULLS_THINK), then P_ZMovement for those in the air
   EXECUTE PROCEDURE skulls_think(tic);
+  EXECUTE PROCEDURE missiles_think(tic);
   -- P_ZMovement: a walker thrown up (an arch-vile's blast) rises, bumps the ceiling and
   -- falls at 1 unit/tic² to the floor; a flier (MF_FLOAT, MF_NOGRAVITY) drifts 4 units a
   -- tic towards its target's middle while it's alive and not charging or squeezing
@@ -4820,7 +5129,7 @@ BEGIN
   FOR SELECT t.id, t.x, t.y, t.z, t.momz, t.radius, t.height, tt.floats, t.flags,
              IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type, t.st
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-       WHERE t.state IS NOT NULL AND (t.momz <> 0 OR tt.floats = 1) ORDER BY t.id
+       WHERE t.state IS NOT NULL AND (t.momz <> 0 OR tt.floats = 1) AND t.kind <> 'missile' ORDER BY t.id
         INTO tid, x, y, z, momz, rad, hgt, floats, flags, living, ttype, st
   DO
   BEGIN
@@ -4875,6 +5184,8 @@ BEGIN
   -- a lost soul spat in this pass (A_PainAttack, A_PainDie) flies its first step this same tic,
   -- as a new thinker runs in the pass that made it in DOOM
   EXECUTE PROCEDURE skulls_think(tic, COALESCE(newest, 0));
+  -- (and so does a missile fired in it: a monster's attack, its first move made too)
+  EXECUTE PROCEDURE missiles_think(tic, COALESCE(newest, 0));
 END^
 
 -- A save from before a type moved onto the tables: its things of that type take the

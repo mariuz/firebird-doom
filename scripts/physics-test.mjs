@@ -110,7 +110,8 @@ await quiet();
 const p = await one(`SELECT t.id, t.x, t.y, t.z, t.angle FROM things t WHERE t.kind = 'player'`);
 
 // monster missiles: momz = height difference / tics of flight
-await db.exec(`EXECUTE PROCEDURE monster_missile(-1, 9000, ${p.X}, ${p.Y}, ${p.Z}, 20, 0, ${p.X + 320}, ${p.Y}, ${p.Z + 64})`);
+// (fired from where the player stands, the player its shooter: a missile passes its own shooter)
+await db.exec(`EXECUTE PROCEDURE monster_missile(${p.ID}, 9000, ${p.X}, ${p.Y}, ${p.Z}, 20, 0, ${p.X + 320}, ${p.Y}, ${p.Z + 64})`);
 const m1 = await one(`SELECT FIRST 1 momz FROM things WHERE thing_type = 9000 ORDER BY id DESC`);
 assert(Math.abs(m1.MOMZ - 2) < 1e-9, `monster fireball climbs to its target: 64 up over 320 at speed 10 → momz ${m1.MOMZ}`);
 await db.exec('DELETE FROM things WHERE thing_type = 9000');
@@ -189,7 +190,8 @@ await tic(10);
 const fbNow = await one(`SELECT st, z FROM things WHERE id = ${fb}`);
 assert(fbNow && fbNow.ST === 'dying' && Math.abs(fbNow.Z - floorZ) < 0.01, `a fireball diving into the floor explodes on it (z ${fbNow?.Z} = floor ${floorZ})`);
 
-// one climbing into a sky ceiling simply disappears
+// one climbing into a sky ceiling bursts there: P_ZMovement explodes a missile at any ceiling,
+// sky or not (only a wall with a sky behind it, P_XYMovement's ceilingline, swallows one)
 const sky = await one(`SELECT FIRST 1 t.x, t.y, s.floor_h, s.ceil_h FROM things t JOIN sectors s ON s.id = t.sector_id
                         WHERE s.sky = 1 AND t.kind IN ('item', 'decor', 'monster')
                         ORDER BY s.ceil_h - s.floor_h, t.id`);
@@ -197,8 +199,8 @@ if (sky) {
   const sb = await spawn(9000, sky.X, sky.Y, sky.FLOOR_H + 40);
   await db.exec(`UPDATE things SET momx = 0, momy = 0, momz = 50, owner_id = -1 WHERE id = ${sb}`);
   await tic(Math.ceil((sky.CEIL_H - sky.FLOOR_H) / 50) + 4);   // however tall the sky is
-  const sbNow = await one(`SELECT st FROM things WHERE id = ${sb}`);
-  assert(!sbNow, 'a fireball flying into the sky vanishes without exploding');
+  const sbNow = await one(`SELECT st, z + height top FROM things WHERE id = ${sb}`);
+  assert(sbNow?.ST === 'dying' && Math.abs(sbNow.TOP - sky.CEIL_H) < 0.01, `a fireball flying up into a sky ceiling bursts against it (${sbNow?.ST})`);
 } else console.log('(no thing under open sky on this map)');
 
 // ── sound propagation (P_NoiseAlert) ───────────────────────────────────
@@ -804,7 +806,8 @@ if (sky) {
   await quiet();
   const nm = await hurtAndClip();
   const p = await at();
-  await db.exec(`EXECUTE PROCEDURE monster_missile(${(await one("SELECT MIN(id) i FROM things WHERE kind = 'monster'")).I}, 9000,
+  // (from where the player stands, the player its shooter, so it doesn't burst on them at once)
+  await db.exec(`EXECUTE PROCEDURE monster_missile((SELECT thing_id FROM player WHERE id = 1), 9000,
                  ${p.X}, ${p.Y}, ${p.Z}, 20, 0, ${p.X + 200}, ${p.Y}, ${p.Z})`);
   const ball = await one('SELECT SQRT(momx * momx + momy * momy) v FROM things WHERE thing_type = 9000 ORDER BY id DESC ROWS 1');
   await db.exec(`EXECUTE PROCEDURE cheat('iddqd')`);

@@ -473,9 +473,9 @@ await setState(spider, 'S_SPID_RUN1', P + 140);
 const metal = await sounds();
 await remove(spider);
 assert(cyberTrace.startsWith('0:S_CYBER_ATK1 6:S_CYBER_ATK2 18:S_CYBER_ATK3 30:S_CYBER_ATK4 42:S_CYBER_ATK5 54:S_CYBER_ATK6 66:S_CYBER_')
-  && rockets === 3 && cyberSnd.filter((x) => x === 'DSRLAUNC').length === 3 && cyberSnd.includes('DSHOOF')
+  && cyberSnd.filter((x) => x === 'DSRLAUNC').length === 3 && cyberSnd.includes('DSHOOF')
   && spiderTrace.startsWith('0:S_SPID_ATK1 20:S_SPID_ATK2 24:S_SPID_ATK3 28:S_SPID_ATK4') && pellets >= 9 && metal.includes('DSMETAL'),
-  `the cyberdemon: ${rockets} rockets at ${cyberTrace.split(' ').slice(1, 6).map((x) => x.split(':')[0]).join(', ')} tics, then its hoof; the spider mastermind: ${spiderTrace.split(' ').slice(0, 4).join(' ')}…, ${pellets} pellets, A_Metal`);
+  `the cyberdemon: ${cyberSnd.filter((x) => x === 'DSRLAUNC').length} rockets fired, attack frames at ${cyberTrace.split(' ').slice(1, 6).map((x) => x.split(':')[0]).join(', ')} tics, then its hoof; the spider mastermind: ${spiderTrace.split(' ').slice(0, 4).join(' ')}…, ${pellets} pellets, A_Metal`);
 
 // DOOM II's first five. The SS guard: 10 + 10 to aim, A_CPosAttack, 6, A_CPosAttack, then
 // A_CPosRefire back to its second aim. The mancubus: A_FatRaise (DSMANATK, 20 tics), then
@@ -493,9 +493,18 @@ const fat = await spawnAt(67, 300, facing);
 await db.exec('DELETE FROM sound_events');
 const fat0 = (await one('SELECT COALESCE(MAX(id), 0) m FROM things')).M;
 await setState(fat, 'S_FATT_ATK1', P + 100);
-const fatTrace = await trace(fat, P + 100, P + 180);
+// (the fireballs fly off and burst now: each one's heading is read in the tic it appears)
+const fatSeen = new Map();
+const fatStates = [[0, NAME((await thing(fat)).STATE)]];
+for (let t = P + 101; t <= P + 180; t++) {
+  await think(t);
+  const now = NAME((await thing(fat)).STATE);
+  if (now !== fatStates.at(-1)[1]) fatStates.push([t - P - 100, now]);
+  for (const r of await all(`SELECT id, angle a FROM things WHERE thing_type = 9007 AND id > ${fat0}`)) if (!fatSeen.has(r.ID)) fatSeen.set(r.ID, r.A);
+}
+const fatTrace = fatStates.map(([t, n]) => `${t}:${n}`).join(' ');
 const fatSnd = await sounds();
-const fatBalls = await all(`SELECT ATAN2(momy, momx) a FROM things WHERE thing_type = 9007 AND id > ${fat0} ORDER BY id`);
+const fatBalls = [...fatSeen.entries()].sort((x, y) => x[0] - y[0]).map(([, a]) => ({ A: a }));
 const aimAt = Math.atan2(pl.Y - (pl.Y + Math.sin(pl.ANGLE) * 300), pl.X - (pl.X + Math.cos(pl.ANGLE) * 300));
 const turnDeg = (a) => Math.round((((a - aimAt) * 180) / Math.PI + 540) % 360 - 180);
 const fatSpreads = fatBalls.map((r) => turnDeg(r.A));
@@ -562,6 +571,37 @@ assert(skelTrace.startsWith('0:S_SKEL_MISS2 10:S_SKEL_MISS3 20:S_SKEL_MISS4') &&
   && vileTrace.startsWith('0:S_VILE_ATK2 10:S_VILE_ATK3 18:S_VILE_ATK4') && /66:S_VILE_ATK10 74:S_VILE_ATK11 94:S_VILE_/.test(vileTrace)
   && ['DSVILATK', 'DSFLAMST', 'DSBAREXP'].every((n) => vileSnd.includes(n)),
   `the revenant: ${skelTrace.split(' ').slice(0, 3).join(' ')}, a homing missile ${tracer.D.toFixed(0)} units out, no missile from A_SkelFist out of reach; the arch-vile: ${vileTrace.split(' ').slice(0, 3).join(' ')} … 66:ATK10 74:ATK11, ${vileSnd.filter((n) => /VIL|FLAM|BAREXP/.test(n)).join(', ')}`);
+
+// phase 3, the projectiles: an imp's fireball starts half a move out from the imp (P_CheckMissileSpawn),
+// its first frame 1–4 tics; it flies 10 a tic and hits the player for (P_Random() % 8 + 1) × 3, then
+// bursts (S_TBALLX1, DSFIRXPL) and is gone. A rk goes 20 a tic in two half moves, and bursts on
+// an imp in its way, A_Explode's splash on top
+P = 4600;
+await atTic(P);
+const fbImp = await spawnAt(3001, 200, facing);
+const ix = pl.X + Math.cos(pl.ANGLE) * 200, iy = pl.Y + Math.sin(pl.ANGLE) * 200;
+await db.exec('DELETE FROM sound_events');
+const hpF = (await one('SELECT health FROM player WHERE id = 1')).HEALTH;
+await setState(fbImp, 'S_TROO_ATK3', P);
+const fb = await one(`SELECT id, x, y, state_tic, SQRT(momx * momx + momy * momy) v FROM things WHERE thing_type = 9000 ORDER BY id DESC ROWS 1`);
+const startOut = Math.hypot(fb.X - ix, fb.Y - iy);
+const ballTrace = await trace(fb.ID, P, P + 40);
+const ballSnd = await sounds();
+const ballHit = hpF - (await one('SELECT health FROM player WHERE id = 1')).HEALTH;
+await remove(fbImp);
+const rocketTarget = await spawnAt(3001, 160, facing);
+await db.exec(`UPDATE things SET hp = 1000 WHERE id = ${rocketTarget}`);
+await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE fire_missile(9003, (SELECT thing_id FROM player WHERE id = 1), ${pl.X}, ${pl.Y}, (SELECT z FROM things WHERE kind = 'player'), ${pl.ANGLE}); END`);
+const rk = await one('SELECT id, x, y FROM things WHERE thing_type = 9003 ORDER BY id DESC ROWS 1');
+await think(P + 50);
+const rk2 = await one(`SELECT x, y FROM things WHERE id = ${rk.ID}`);
+const rocketTrace = await trace(rk.ID, P + 50, P + 70);
+const impHurt = 1000 - (await one(`SELECT hp FROM things WHERE id = ${rocketTarget}`)).HP;
+await remove(rocketTarget);
+assert(Math.abs(startOut - 5) < 0.01 && fb.STATE_TIC - P >= 1 && fb.STATE_TIC - P <= 4 && fb.V === 10
+  && /S_TBALLX1.*null$/.test(ballTrace) && ballSnd.includes('DSFIRXPL') && ballHit >= 3 && ballHit <= 24 && ballHit % 3 === 0
+  && Math.abs(Math.hypot(rk2.X - rk.X, rk2.Y - rk.Y) - 20) < 0.01 && /S_EXPLODE1/.test(rocketTrace) && impHurt > 20,
+  `missiles: a fireball starts ${startOut.toFixed(0)} out, its first frame ${fb.STATE_TIC - P} tics, flies ${fb.V} a tic, hits the player for ${ballHit} and bursts (${ballTrace.split(' ').slice(-2).join(' ')}); a rocket goes 20 a tic and bursts on an imp (${impHurt} damage with the splash)`);
 
 // every type on the tables lies down 'dead' at the end of its death (and its gibbing), even
 // where that last frame is also a decoration's spawn state (S_POSS_DIE5: a dead former human)
