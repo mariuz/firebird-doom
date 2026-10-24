@@ -235,7 +235,10 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
     await db.exec(`UPDATE player SET health = 100000, armor = 0`);
     await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
         EXECUTE PROCEDURE spawn_thing(64, ${s2.x}, ${s2.y}, ${s2.z}, ${dir + Math.PI}) RETURNING_VALUES id;
-        UPDATE things SET st = 'attack', st_len = 80, st_tics = 80, reaction = 0 WHERE id = :id;
+        UPDATE things SET reaction = 0 WHERE id = :id;
+        -- (on DOOM's frame tables: straight into its attack, S_VILE_ATK1, 86 tics)
+        EXECUTE PROCEDURE set_state(id, (SELECT s.id FROM states s WHERE s.name = 'S_VILE_ATK1'), (SELECT g.tic FROM game g WHERE g.id = 1))
+          RETURNING_VALUES id;
       END`);
     const v0 = (await one('SELECT health FROM player')).HEALTH;
     let flameTics = 0;
@@ -271,13 +274,19 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
     assert(['DSVILATK', 'DSFLAMST', 'DSBAREXP'].every((n) => vsnd.includes(n)), `arch-vile sounds (${vsnd})`);
     assert(orphanTics <= 2, `the flame goes out when the attack ends (outlived it by ${orphanTics} tics)`);
 
-    // the arch-vile raises a corpse: heal frames, the corpse's death in reverse, full health
+    // the arch-vile raises a corpse: heal frames, the corpse's death in reverse, full health.
+    // (Both on DOOM's frame tables: a dead imp lying in S_TROO_DIE5, and an arch-vile chasing
+    // towards it, A_VileChase looking one step (15) ahead along its heading; 50 off, it isn't in
+    // the corpse's way itself, which P_CheckPosition would count)
     await db.exec(`DELETE FROM things WHERE thing_type IN (64, 9015)`);
-    const c = await db.query(`EXECUTE BLOCK RETURNS (corpse INTEGER, vile INTEGER) AS BEGIN
+    const heading = ((Math.round(dir / (Math.PI / 4)) % 8) + 8) % 8;
+    const c = await db.query(`EXECUTE BLOCK RETURNS (corpse INTEGER, vile INTEGER) AS DECLARE a SMALLINT; BEGIN
         EXECUTE PROCEDURE spawn_thing(3001, ${s2.x}, ${s2.y}, ${s2.z}, 0) RETURNING_VALUES corpse;
-        UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, hp = 0, solid = 0, frame = 'M' WHERE id = :corpse;
-        EXECUTE PROCEDURE spawn_thing(64, ${s2.x - Math.cos(dir) * 50}, ${s2.y - Math.sin(dir) * 50}, ${s2.z}, ${dir}) RETURNING_VALUES vile;
-        UPDATE things SET st = 'chase', st_tics = 1, reaction = 5 WHERE id = :vile;
+        UPDATE things SET st = 'dead', state = (SELECT id FROM states WHERE name = 'S_TROO_DIE5'), state_tic = NULL,
+                          hp = 0, solid = 0 WHERE id = :corpse;
+        EXECUTE PROCEDURE spawn_thing(64, ${s2.x - Math.cos(heading * Math.PI / 4) * 50}, ${s2.y - Math.sin(heading * Math.PI / 4) * 50}, ${s2.z}, ${dir}) RETURNING_VALUES vile;
+        UPDATE things SET reaction = 5, movedir = ${heading}, movecount = 10 WHERE id = :vile;
+        EXECUTE PROCEDURE set_state(vile, (SELECT id FROM states WHERE name = 'S_VILE_RUN1'), (SELECT tic FROM game WHERE id = 1)) RETURNING_VALUES a;
         SUSPEND;
       END`);
     const { CORPSE: corpse, VILE: vile } = c.rows[0];
@@ -285,15 +294,15 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
     const raiseFrames = [];
     for (let i = 0; i < 45; i++) {
       await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
-      const r = await one(`SELECT (SELECT st || ':' || COALESCE(frame, '') FROM things WHERE id = ${vile}) v,
-                                  (SELECT st FROM things WHERE id = ${corpse}) cst,
-                                  (SELECT frame FROM things WHERE id = ${corpse}) cfr FROM rdb$database`);
-      if (r.V) vileStates.add(r.V);
-      if (r.CST === 'raise' && raiseFrames.at(-1) !== r.CFR.trim()) raiseFrames.push(r.CFR.trim());
+      const r = await one(`SELECT (SELECT s.name FROM things t JOIN states s ON s.id = t.state WHERE t.id = ${vile}) v,
+                                  (SELECT s.name FROM things t JOIN states s ON s.id = t.state WHERE t.id = ${corpse}) cst,
+                                  (SELECT s.frame FROM things t JOIN states s ON s.id = t.state WHERE t.id = ${corpse}) cfr FROM rdb$database`);
+      if (r.V) vileStates.add(r.V.trim());
+      if (/RAISE/.test(r.CST ?? '') && raiseFrames.at(-1) !== r.CFR.trim()) raiseFrames.push(r.CFR.trim());
     }
     const back = await one(`SELECT st, hp, solid FROM things WHERE id = ${corpse}`);
     const slop = (await one(`SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSSLOP'`)).N;
-    assert([...vileStates].some((v) => v.startsWith('heal:')), `arch-vile casts its heal (${[...vileStates].filter((v) => v.startsWith('heal')).join(' ')})`);
+    assert([...vileStates].some((v) => v.startsWith('S_VILE_HEAL')), `arch-vile casts its heal (${[...vileStates].filter((v) => v.startsWith('S_VILE_HEAL')).join(' ')})`);
     assert(raiseFrames.join('') === 'MLKJI', `the corpse rises through its death frames in reverse (${raiseFrames.join('')})`);
     assert(back.ST !== 'dead' && back.HP === 60 && back.SOLID === 1 && slop > 0, `the imp is back: ${back.ST}, ${back.HP} hp, solid`);
     await db.exec(`DELETE FROM things WHERE id IN (${corpse}, ${vile})`);

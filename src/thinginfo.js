@@ -156,4 +156,5 @@ export const ON_STATES = new Set([
   3003, 69,      // the baron of Hell, the Hell knight
   16, 7,         // the cyberdemon, the spider mastermind
   84, 72, 71, 67, 68,   // DOOM II's: the SS guard, Commander Keen, the pain elemental, the mancubus, the arachnotron
+  66, 64,        // the revenant, the arch-vile
 ]);

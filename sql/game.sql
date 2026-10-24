@@ -3937,7 +3937,7 @@ END^
 -- A_TroopAttack, and its kin: face the target; within melee reach (P_CheckMeleeRange) a
 -- blow of (P_Random() % SIDES + 1) × MULT with SND, else P_SpawnMissile: the type's
 -- missile from 32 up, towards the target (at a shadow up to 22.5° astray), with its sound
-CREATE OR ALTER PROCEDURE a_melee_missile (tid INTEGER, sides INTEGER, mult INTEGER, snd VARCHAR(8))
+CREATE OR ALTER PROCEDURE a_melee_missile (tid INTEGER, sides INTEGER, mult INTEGER, snd VARCHAR(8), melee_only SMALLINT = 0)
 AS
 DECLARE tgt INTEGER;
 DECLARE tp SMALLINT;
@@ -3972,7 +3972,7 @@ BEGIN
     EXECUTE PROCEDURE hurt_target(tgt, (MOD(p_rand256(), sides) + 1) * mult, tid, tp);
     EXIT;
   END
-  IF (mtype IS NULL) THEN EXIT;   -- (A_SargAttack: a bite or nothing)
+  IF (mtype IS NULL OR melee_only = 1) THEN EXIT;   -- (A_SargAttack, A_SkelFist: a blow or nothing)
   ang = ATAN2(py - y, px - x);
   IF (shadow = 1) THEN ang = ang + (p_rand256() - p_rand256()) * PI() / 2048;
   IF (msnd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(msnd, tid, x, y);
@@ -4103,6 +4103,103 @@ BEGIN
   EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI() / 2, tgt, tp);
   EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI(), tgt, tp);
   EXECUTE PROCEDURE pain_shoot_skull(x, y, z, rad, ang + PI() * 3 / 2, tgt, tp);
+END^
+
+-- A_SkelMissile: face the target and fire a homing missile (MT_TRACER) from 16 units
+-- higher, its sound DSSKEATK, starting one step ahead of where P_SpawnMissile puts it
+CREATE OR ALTER PROCEDURE a_skel_missile (tid INTEGER)
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE aim DOUBLE PRECISION;
+DECLARE mtype INTEGER;
+DECLARE msnd VARCHAR(8);
+DECLARE before INTEGER;
+BEGIN
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL) THEN EXIT;
+  EXECUTE PROCEDURE a_face_target(tid);
+  SELECT t.x, t.y, t.z, t.radius, tt.missile_type, tt.atk_snd FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+   WHERE t.id = :tid INTO x, y, z, rad, mtype, msnd;
+  aim = ATAN2(py - y, px - x);
+  IF (shadow = 1) THEN aim = aim + (p_rand256() - p_rand256()) * PI() / 2048;
+  IF (msnd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(msnd, tid, x, y);
+  before = (SELECT MAX(t.id) FROM things t);
+  EXECUTE PROCEDURE monster_missile(tid, mtype, x, y, z + 16, rad, aim, px, py, pz);
+  UPDATE things m SET x = m.x + m.momx, y = m.y + m.momy WHERE m.id > :before AND m.thing_type = :mtype;
+END^
+
+-- A_VileTarget: face the target and light the fire on it (MT_FIRE, its A_StartFire's DSFLAMST;
+-- the flame, still on the old rules, dances in front of the target while the arch-vile attacks)
+CREATE OR ALTER PROCEDURE a_vile_target (tid INTEGER)
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE gang DOUBLE PRECISION;
+DECLARE mid INTEGER;
+BEGIN
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL) THEN EXIT;
+  EXECUTE PROCEDURE a_face_target(tid);
+  IF (tgt IS NOT NULL) THEN SELECT o.angle FROM things o WHERE o.id = :tgt INTO gang;
+  ELSE SELECT o.angle FROM player p JOIN things o ON o.id = p.thing_id WHERE p.id = :tp INTO gang;
+  EXECUTE PROCEDURE spawn_thing(9015, px + COS(gang) * 24, py + SIN(gang) * 24, pz, 0) RETURNING_VALUES mid;
+  UPDATE things t SET owner_id = :tid, st = 'burn' WHERE t.id = :mid;
+  EXECUTE PROCEDURE play_sound('DSFLAMST', mid, px, py);
+END^
+
+-- A_VileAttack: face the target; if it can still see it, DSBAREXP, 20 damage and a toss into
+-- the air (1000 / mass), and the fire, moved between them (24 in front of the target), blasts
+-- 70 around (an arch-vile's blast provokes nobody)
+CREATE OR ALTER PROCEDURE a_vile_attack (tid INTEGER)
+AS
+DECLARE tgt INTEGER;
+DECLARE tp SMALLINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+DECLARE pz DOUBLE PRECISION;
+DECLARE psec INTEGER;
+DECLARE prad DOUBLE PRECISION;
+DECLARE palive SMALLINT;
+DECLARE shadow SMALLINT;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+DECLARE fx DOUBLE PRECISION;
+DECLARE fy DOUBLE PRECISION;
+BEGIN
+  EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+  IF (px IS NULL) THEN EXIT;
+  EXECUTE PROCEDURE a_face_target(tid);
+  IF (mobj_sees(tid, px, py, pz, psec) = 0) THEN EXIT;
+  SELECT t.x, t.y, t.angle FROM things t WHERE t.id = :tid INTO x, y, ang;
+  EXECUTE PROCEDURE play_sound('DSBAREXP', tid, x, y);
+  EXECUTE PROCEDURE hurt_target(tgt, 20, tid, tp);
+  IF (tgt IS NULL) THEN UPDATE things t SET momz = 10 WHERE t.id = (SELECT p.thing_id FROM player p WHERE p.id = :tp);
+  ELSE UPDATE things t SET momz = 1000e0 / (SELECT tt.mass FROM thing_types tt WHERE tt.thing_type = t.thing_type) WHERE t.id = :tgt;
+  fx = px - COS(ang) * 24;
+  fy = py - SIN(ang) * 24;
+  UPDATE things t SET x = :fx, y = :fy WHERE t.kind = 'flame' AND t.owner_id = :tid;
+  IF (EXISTS (SELECT 1 FROM things t WHERE t.kind = 'flame' AND t.owner_id = :tid)) THEN
+    EXECUTE PROCEDURE radius_attack(fx, fy, pz, 70, tid);
 END^
 
 -- A_CPosRefire: keep firing, unless (40 times in 256 it doesn't ask) the target is
@@ -4409,6 +4506,68 @@ BEGIN
   IF (nst IS NOT NULL) THEN EXECUTE PROCEDURE set_state(tid, nst, tic) RETURNING_VALUES alive;
 END^
 
+-- A_VileChase: where its next step would take it, a corpse lying still that can be raised
+-- (a raise state), within its radius and the arch-vile's (20), with room to stand up
+-- (P_CheckPosition: the arch-vile itself in the way counts)? Then the arch-vile turns to it
+-- and goes into S_VILE_HEAL1, DSSLOP, and the corpse gets up through its raise state, at
+-- full health, solid, with no target. Else A_Chase.
+CREATE OR ALTER PROCEDURE a_vile_chase (tid INTEGER, tic INTEGER)
+AS
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE spd DOUBLE PRECISION;
+DECLARE movedir SMALLINT;
+DECLARE d DOUBLE PRECISION = 0.7171630859375e0;
+DECLARE tx DOUBLE PRECISION;
+DECLARE ty DOUBLE PRECISION;
+DECLARE cid INTEGER;
+DECLARE cx DOUBLE PRECISION;
+DECLARE cy DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
+DECLARE crad DOUBLE PRECISION;
+DECLARE chgt DOUBLE PRECISION;
+DECLARE craise INTEGER;
+DECLARE ok SMALLINT;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz2 DOUBLE PRECISION;
+DECLARE dz DOUBLE PRECISION;
+DECLARE sec INTEGER;
+DECLARE alive SMALLINT;
+BEGIN
+  SELECT t.x, t.y, tt.speed, t.movedir FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
+    INTO x, y, spd, movedir;
+  IF (movedir < 8) THEN
+  BEGIN
+    tx = x + spd * CASE movedir WHEN 0 THEN 1 WHEN 1 THEN d WHEN 2 THEN 0 WHEN 3 THEN -d
+                                WHEN 4 THEN -1 WHEN 5 THEN -d WHEN 6 THEN 0 ELSE d END;
+    ty = y + spd * CASE movedir WHEN 0 THEN 0 WHEN 1 THEN d WHEN 2 THEN 1 WHEN 3 THEN d
+                                WHEN 4 THEN 0 WHEN 5 THEN -d WHEN 6 THEN -1 ELSE -d END;
+    FOR SELECT c.id, c.x, c.y, c.z, ct.radius, ct.height, ct.raise_state
+          FROM things c JOIN thing_types ct ON ct.thing_type = c.thing_type
+         WHERE c.x BETWEEN :tx - 160 AND :tx + 160 AND c.state IS NOT NULL AND c.state_tic IS NULL
+           AND c.st = 'dead' AND ct.raise_state > 0
+           AND ABS(c.x - :tx) <= ct.radius + 20 AND ABS(c.y - :ty) <= ct.radius + 20
+         ORDER BY c.id
+          INTO cid, cx, cy, cz, crad, chgt, craise
+    DO
+    BEGIN
+      EXECUTE PROCEDURE check_position(cid, cx, cy, cz, crad, chgt, 1) RETURNING_VALUES ok, fz, cz2, dz, sec;
+      IF (ok = 1) THEN
+      BEGIN
+        UPDATE things t SET angle = ATAN2(:cy - t.y, :cx - t.x) WHERE t.id = :tid;
+        EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_VILE_HEAL1'), tic) RETURNING_VALUES alive;
+        EXECUTE PROCEDURE play_sound('DSSLOP', cid, cx, cy);
+        UPDATE things t SET hp = (SELECT ct.hp FROM thing_types ct WHERE ct.thing_type = t.thing_type), solid = 1,
+                            target_id = NULL, just_hit = 0, dead_tic = NULL, flags = BIN_AND(t.flags, BIN_NOT(8))
+         WHERE t.id = :cid;
+        EXECUTE PROCEDURE set_state(cid, craise, tic) RETURNING_VALUES alive;
+        EXIT;
+      END
+    END
+  END
+  EXECUTE PROCEDURE a_chase(tid, tic);
+END^
+
 -- The actions, by name (info.c's codepointers). Only those the first things on the
 -- table need are here; any other name does nothing until its phase brings it.
 CREATE OR ALTER PROCEDURE state_action (tid INTEGER, act VARCHAR(24), tic INTEGER)
@@ -4433,6 +4592,18 @@ BEGIN
   ELSE IF (act = 'A_CyberAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, NULL, NULL, NULL);
   ELSE IF (act = 'A_SpidRefire') THEN EXECUTE PROCEDURE a_cpos_refire(tid, tic, 10);
   ELSE IF (act = 'A_BspiAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, NULL, NULL, NULL);
+  ELSE IF (act = 'A_SkelFist') THEN EXECUTE PROCEDURE a_melee_missile(tid, 10, 6, 'DSSKEPCH', 1);
+  ELSE IF (act = 'A_SkelMissile') THEN EXECUTE PROCEDURE a_skel_missile(tid);
+  ELSE IF (act = 'A_VileChase') THEN EXECUTE PROCEDURE a_vile_chase(tid, tic);
+  ELSE IF (act = 'A_VileTarget') THEN EXECUTE PROCEDURE a_vile_target(tid);
+  ELSE IF (act = 'A_VileAttack') THEN EXECUTE PROCEDURE a_vile_attack(tid);
+  ELSE IF (act IN ('A_SkelWhoosh', 'A_VileStart')) THEN
+  BEGIN
+    -- A_SkelWhoosh: face the target and swing (DSSKESWG); A_VileStart: DSVILATK
+    IF (act = 'A_SkelWhoosh') THEN EXECUTE PROCEDURE a_face_target(tid);
+    SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO x, y;
+    EXECUTE PROCEDURE play_sound(IIF(act = 'A_SkelWhoosh', 'DSSKESWG', 'DSVILATK'), tid, x, y);
+  END
   ELSE IF (act = 'A_FatRaise') THEN
   BEGIN
     EXECUTE PROCEDURE a_face_target(tid);
