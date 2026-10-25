@@ -116,22 +116,13 @@ CREATE TABLE thing_types (
   hp           INTEGER,
   speed        DOUBLE PRECISION,
   pain_chance  INTEGER,
-  walk_fr      VARCHAR(16),
-  atk_fr       VARCHAR(16),
-  pain_fr      VARCHAR(16),
-  death_fr     VARCHAR(16),
-  death_sprite CHAR(4),
-  bright       SMALLINT DEFAULT 0 NOT NULL,
-  atk_kind     VARCHAR(10),            -- hitscan missile melee
-  missile_type INTEGER,
-  dmg_lo       INTEGER,
-  dmg_hi       INTEGER,
-  shots        INTEGER,
+  dmg_lo       INTEGER,                -- a projectile's damage: (P_Random() % 8 + 1) × this
   drop_type    INTEGER,
   pickup       VARCHAR(10),
   amount       INTEGER,
   label        VARCHAR(80),             -- the pickup message (GOTARMOR…)
-  -- sfx lump names (DS*) for A_Look / attack / A_Pain / A_Scream
+  -- sfx lump names (DS*): mobjinfo's seesound (A_Look; a projectile's as it's fired), activesound,
+  -- attacksound (A_Chase before a melee attack, A_SkullAttack), painsound and deathsound
   see_snd      VARCHAR(8),
   active_snd   VARCHAR(8),                     -- activesound: now and then while chasing
   atk_snd      VARCHAR(8),
@@ -143,12 +134,6 @@ CREATE TABLE thing_types (
   nogravity    SMALLINT DEFAULT 0 NOT NULL,  -- MF_NOGRAVITY: hangs in the air (a puff, fog, fire; a flier)
   reaction_time INTEGER DEFAULT 8 NOT NULL,   -- mobjinfo's reactiontime: 8, the player's 0 (DeHackEd's Reaction time)
   shadow       SMALLINT DEFAULT 0 NOT NULL,  -- MF_SHADOW: drawn as fuzz (the spectre)
-  -- a separate close-range attack (the revenant's fist)
-  melee_fr      VARCHAR(8),
-  melee_snd     VARCHAR(8),
-  melee_hit_snd VARCHAR(8),
-  melee_dmg     INTEGER,                     -- damage is melee_dmg × 1d(melee_rolls)
-  melee_rolls   INTEGER,
   count_kill    SMALLINT DEFAULT 0 NOT NULL, -- MF_COUNTKILL: in the kill tally
   count_item    SMALLINT DEFAULT 0 NOT NULL, -- MF_COUNTITEM: in the item tally
   -- mobjinfo's states (STATES ids; 0 = none): the frame tables, filled from src/states.js
@@ -160,13 +145,12 @@ CREATE TABLE thing_types (
   death_state   INTEGER DEFAULT 0 NOT NULL,
   xdeath_state  INTEGER DEFAULT 0 NOT NULL,
   raise_state   INTEGER DEFAULT 0 NOT NULL,
-  on_states     SMALLINT DEFAULT 0 NOT NULL  -- 1: its behaviour runs on the frame tables (thinginfo.js's ON_STATES)
+  on_states     SMALLINT DEFAULT 0 NOT NULL  -- 1: on the frame tables (thinginfo.js's ON_STATES: every type but the markers)
 );
 
--- DOOM's state table, info.c's states[] (src/states.js, GPL-2): a frame of a
--- thing's animation, how long it lasts, the action called when it's entered,
--- and the state after it. The id is DOOM's statenum. (Loaded and checked, not
--- yet played: docs/ROADMAP.md, "DOOM's frame tables, in phases".)
+-- DOOM's state table, info.c's states[] (src/states.js, GPL-2, as a DEHACKED lump patched
+-- it): a frame of a thing's or a weapon's animation, how long it lasts, the action called when
+-- it's entered, and the state after it. The id is DOOM's statenum.
 CREATE TABLE states (
   id         INTEGER NOT NULL PRIMARY KEY,
   name       VARCHAR(24) NOT NULL,          -- S_POSS_ATK1 …
@@ -340,16 +324,12 @@ CREATE TABLE things (
   movedir     SMALLINT DEFAULT 8 NOT NULL,      -- P_NewChaseDir's heading: 0 east … 7 south-east (45° steps), 8 none
   movecount   INTEGER DEFAULT 0 NOT NULL,       -- chase steps before it picks a new heading
   just_attacked SMALLINT DEFAULT 0 NOT NULL,    -- MF_JUSTATTACKED
-  think_tic   INTEGER,                          -- the last tic MONSTERS_THINK went through it
   dead_tic   INTEGER,                          -- when it became a corpse
   sector_id  INTEGER,
   hp         INTEGER,
-  st         VARCHAR(8) DEFAULT 'idle' NOT NULL,    -- idle chase attack pain dying dead
-  st_tics    INTEGER DEFAULT 0 NOT NULL,
-  st_len     INTEGER DEFAULT 0 NOT NULL,
-  step       INTEGER DEFAULT 0 NOT NULL,
-  frame      CHAR(1),                               -- NULL = animate walk_fr by tic
-  sprite     CHAR(4),                               -- NULL = thing_types.sprite
+  -- its state's mode (STATES.MODE: idle chase attack melee pain dying dead raise fly), kept
+  -- here by SET_STATE for the many queries that ask it (what can be shot, what's a corpse)
+  st         VARCHAR(8) DEFAULT 'idle' NOT NULL,
   momx       DOUBLE PRECISION DEFAULT 0 NOT NULL,
   momy       DOUBLE PRECISION DEFAULT 0 NOT NULL,
   momz       DOUBLE PRECISION DEFAULT 0 NOT NULL,
@@ -362,9 +342,9 @@ CREATE TABLE things (
   threshold  INTEGER DEFAULT 0 NOT NULL,            -- chase steps before it may switch target again
   tplayer    SMALLINT DEFAULT 1 NOT NULL,           -- the player it's after when TARGET_ID is NULL
   translation SMALLINT DEFAULT 0 NOT NULL,          -- a player's colours: 0 green, 1 indigo, 2 brown, 3 red (MF_TRANSLATION)
-  -- DOOM's frame tables (phase 1): the thing's state (STATES id; NULL: today's rules still
-  -- run it) and the tic that state ends (NULL: never, a -1 tics state). SET_STATE and
-  -- STATES_THINK move it on; MONSTERS_THINK leaves a stated thing alone.
+  -- DOOM's frame tables: the thing's state (STATES id; NULL only for the markers DOOM never
+  -- draws) and the tic that state ends (NULL: never, a -1 tics state). SET_STATE and
+  -- STATES_THINK move it on.
   state       INTEGER,
   state_tic   INTEGER,
   just_hit    SMALLINT DEFAULT 0 NOT NULL         -- MF_JUSTHIT: hurt into its pain state, it fights back next (P_CheckMissileRange)

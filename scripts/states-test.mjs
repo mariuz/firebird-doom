@@ -101,7 +101,7 @@ const setState = async (id, name, tic) => (await one(`EXECUTE BLOCK RETURNS (ali
   EXECUTE PROCEDURE set_state(${id}, ${ID.get(name)}, ${tic}) RETURNING_VALUES alive; SUSPEND; END`)).ALIVE;
 // (the game's tic moves on with it, as in DOOM_TIC: what's spawned in it starts its state then)
 const think = (tic) => db.query(`EXECUTE BLOCK AS BEGIN UPDATE game SET tic = ${tic} WHERE id = 1; EXECUTE PROCEDURE states_think(${tic}); END`);
-const thing = (id) => one(`SELECT state, state_tic, solid, st, st_tics, frame FROM things WHERE id = ${id}`);
+const thing = (id) => one(`SELECT state, state_tic, solid, st FROM things WHERE id = ${id}`);
 /** run STATES_THINK from tic FROM to TO; [tic, state name] at each change */
 async function trace(id, from, to) {
   const seen = [[from, NAME((await thing(id))?.STATE)]];
@@ -129,11 +129,15 @@ await setState(z, 'S_POSS_ATK2', T + 100);
 const fired = await drawn();
 assert(aim === 'POSSE' && fired === 'POSSF', `FRAME_SPRITES draws a thing on the table with its state's frame (${aim}, then ${fired})`);
 
-// today's rules leave it alone: MONSTERS_THINK doesn't move a stated monster on
-const before = await thing(z);
-await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE monsters_think(${T + 101}); EXECUTE PROCEDURE monsters_think(${T + 109}); END`);
-const after = await thing(z);
-assert(JSON.stringify(before) === JSON.stringify(after), 'MONSTERS_THINK leaves a thing on the table alone (its old mode, countdown and frame untouched)');
+// phase 6: the old rules are gone – no MONSTERS_THINK, no frame strings, no per-thing countdowns –
+// and everything a map places but the markers DOOM never draws has a state
+const oldProcs = (await one(`SELECT COUNT(*) n FROM rdb$procedures WHERE TRIM(rdb$procedure_name) IN ('MONSTERS_THINK')`)).N;
+const oldCols = (await all(`SELECT TRIM(rf.rdb$relation_name) || '.' || TRIM(rf.rdb$field_name) c FROM rdb$relation_fields rf
+    WHERE (TRIM(rf.rdb$relation_name) = 'THINGS' AND TRIM(rf.rdb$field_name) IN ('ST_TICS', 'ST_LEN', 'STEP', 'FRAME', 'SPRITE', 'THINK_TIC'))
+       OR (TRIM(rf.rdb$relation_name) = 'THING_TYPES' AND TRIM(rf.rdb$field_name) IN ('WALK_FR', 'ATK_FR', 'PAIN_FR', 'DEATH_FR', 'MELEE_FR', 'ATK_KIND'))`)).map((r) => r.C);
+const leftUnstated = (await all(`SELECT DISTINCT t.kind FROM things t WHERE t.state IS NULL`)).map((r) => r.KIND.trim());
+assert(oldProcs === 0 && oldCols.length === 0 && leftUnstated.every((k) => k === 'marker'),
+  `the old rules are gone (MONSTERS_THINK ${oldProcs ? 'still there' : 'gone'}${oldCols.length ? `; columns left: ${oldCols.join(', ')}` : ''}); every thing on the map has a state${leftUnstated.length ? ` but the ${leftUnstated.join(', ')}s` : ''}`);
 
 // dying: A_Scream's sound as it enters S_POSS_DIE2, A_Fall's MF_SOLID off at DIE3, and DIE5 for ever
 await db.exec('DELETE FROM sound_events');

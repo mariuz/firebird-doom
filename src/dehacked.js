@@ -269,7 +269,7 @@ export function applyDehacked(baseTypes, patch) {
     set('mass', 'mass', num('mass'));
     set('reaction time', 'reaction', num('reaction time'));
     for (const k of THING_STATES) if (k in f) done.push(k);   // (applyTables put them in mobjinfo)
-    if ('missile damage' in f) { t.dmgLo = num('missile damage'); t.dmgHi = 8 * num('missile damage'); done.push('missile damage'); }
+    set('missile damage', 'dmgLo', num('missile damage'));
     for (const [k, field] of [['alert sound', 'seeSnd'], ['attack sound', 'atkSnd'], ['pain sound', 'painSnd'],
       ['death sound', 'deathSnd'], ['action sound', 'activeSnd']]) {
       if (k in f) { t[field] = SFX[num(k)] ?? null; done.push(k); }

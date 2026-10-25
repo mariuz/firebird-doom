@@ -229,7 +229,7 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
     // the revenant's fist: swing, then 6 × 1d10 at arm's length
     await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
         EXECUTE PROCEDURE spawn_thing(66, ${p.X + Math.cos(dir) * 52}, ${p.Y + Math.sin(dir) * 52}, ${p.Z}, ${dir + Math.PI}) RETURNING_VALUES id;
-        UPDATE things SET st = 'chase', st_tics = 1, reaction = 0 WHERE id = :id;
+        UPDATE things SET reaction = 0 WHERE id = :id;
       END`);
     const hp0 = (await one('SELECT health FROM player')).HEALTH;
     for (let i = 0; i < 26; i++) await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');

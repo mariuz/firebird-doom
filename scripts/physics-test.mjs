@@ -46,7 +46,7 @@ if (crushMap) {
   const imp = await spawn(3001, at.X, at.Y);
   await db.exec(`UPDATE things SET st = 'idle', flags = 8, hp = 10000 WHERE id = ${imp}`);  // deaf, tough, stays put
   const corpse = await spawn(3004, at.X + 4, at.Y + 4);
-  await db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0, frame = 'L' WHERE id = ${corpse}`);
+  await db.exec(`UPDATE things SET st = 'dead', state = (SELECT id FROM states WHERE name = 'S_POSS_DIE5'), state_tic = NULL, solid = 0 WHERE id = ${corpse}`);
   await db.exec(`EXECUTE PROCEDURE activate_line(${line.ID}, 'walk')`);
   const spd = [6, 77].includes(line.SPECIAL) ? 2 : 1;
   let low = sec.CEIL_H;
@@ -63,7 +63,7 @@ if (crushMap) {
     if (ticks % 20 === 0) for (const r of (await db.query("SELECT DISTINCT sound FROM sound_events WHERE sound = 'DSSTNMOV'")).rows) sounds.add(r.SOUND);
   }
   const impNow = await one(`SELECT hp, st FROM things WHERE id = ${imp}`);
-  const gib = await one(`SELECT sprite, height, solid FROM things WHERE id = ${corpse}`);
+  const gib = await one(`SELECT s.sprite, t.height, t.solid FROM things t JOIN states s ON s.id = t.state WHERE t.id = ${corpse}`);
   assert(Math.abs(low - (sec.FLOOR_H + 8)) < 0.01, `${crushMap}: crusher (type ${line.SPECIAL}) comes down to floor + 8 (${sec.CEIL_H} → ${low})`);
   assert(rose, `${crushMap}: …and goes back up, round and round (cycle took ${ticks} tics)`);
   assert(!impNow || impNow.HP < 10000, `${crushMap}: an imp under it is crushed (${impNow ? 10000 - impNow.HP : 'all'} damage)`);
@@ -433,7 +433,7 @@ if (sky) {
     await db.exec(`DELETE FROM things WHERE id = ${imp2}`);
 
     // an arch-vile fighting a demon flames the demon, not the player
-    await db.exec(`UPDATE things SET target_id = ${demon2}, threshold = 100, st = 'attack', st_len = 80, st_tics = 80 WHERE id = ${vile}`);
+    await db.exec(`UPDATE things SET target_id = ${demon2}, threshold = 100 WHERE id = ${vile}`);
     await db.exec(`UPDATE things SET flags = 8, st = 'idle' WHERE id = ${demon2}`);
     await db.exec('UPDATE player SET health = 1000, armor = 0');
     const dhp0 = (await one(`SELECT hp FROM things WHERE id = ${demon2}`)).HP;
@@ -655,7 +655,7 @@ if (sky) {
     await db.exec('EXECUTE PROCEDURE damage_player(80)');
     const brute = await placeMon(3002, 40, `, angle = ${dir + Math.PI}`);
     for (let i = 0; i < 40; i++) {
-      await db.exec(`UPDATE things SET st = 'attack', st_len = 24, st_tics = 8, hp = 1000 WHERE id = ${brute}`);
+      await db.exec(`UPDATE things SET hp = 1000 WHERE id = ${brute}`);   // (it bites on its own: A_Chase, A_SargAttack)
       await tic();
     }
     const unhurt = await one('SELECT health, damage_count FROM player');
@@ -817,23 +817,35 @@ if (sky) {
   const god = (await one('SELECT god FROM player')).GOD;
   assert(nm.HEALTH === 80 && nm.BULLETS === 30 && Math.abs(ball.V - 20) < 0.01 && god === 0,
     `Nightmare: full damage, double ammo (+${nm.BULLETS - 10}), imp fireballs at ${ball.V.toFixed(0)}, and IDDQD does nothing`);
-  // demons run twice as often (the test fireball goes first: it flies east, right through where the demon stands)
+  // demons run twice as often: their run, attack and pain frames last half their tics (G_InitNew's
+  // -fast: S_SARG_RUN1's 2 is 1), so the demon is in a new state every tic (the test fireball goes
+  // first: it flies east, right through where the demon stands)
   await db.exec('DELETE FROM things WHERE thing_type = 9000');
   const demon = await spawn(3002, p.X + 96, p.Y);
+  await db.query(`EXECUTE BLOCK AS DECLARE a SMALLINT; BEGIN
+      UPDATE things SET hp = 1000 WHERE id = ${demon};
+      EXECUTE PROCEDURE set_state(${demon}, (SELECT id FROM states WHERE name = 'S_SARG_RUN1'), (SELECT tic FROM game WHERE id = 1)) RETURNING_VALUES a;
+    END`);
+  const runFor = (await one(`SELECT t.state_tic - g.tic n FROM things t CROSS JOIN game g WHERE t.id = ${demon} AND g.id = 1`)).N;
   const steps = [];
   for (let i = 0; i < 6; i++) {
-    await db.exec(`UPDATE things SET st = 'chase', st_tics = 1, reaction = 9, hp = 1000 WHERE id = ${demon}`);
     await tic();
-    steps.push((await one(`SELECT st_tics FROM things WHERE id = ${demon}`)).ST_TICS);
+    steps.push((await one(`SELECT TRIM(s.name) n FROM things t JOIN states s ON s.id = t.state WHERE t.id = ${demon}`)).N.replace('S_SARG_', ''));
   }
-  assert(steps.every((s) => s >= 1 && s <= 2), `Nightmare demons take a step every 1–2 tics (${steps.join(' ')}), not every 3`);
+  // (each run frame a tic; an attack frame 4, not 8)
+  const runs = steps.slice(0, steps.findIndex((s) => !s.startsWith('RUN')) >>> 0);
+  const longest = Math.max(...steps.map((s, i) => steps.slice(i).findIndex((x) => x !== s) >>> 0).filter((n) => n < 99));
+  assert(runFor === 1 && runs.length >= 2 && runs.every((s, i) => i === 0 || s !== runs[i - 1]) && longest <= 4,
+    `Nightmare demons' frames last half as long: S_SARG_RUN1 ${runFor} tic, not 2; a run frame every tic, an attack frame at most 4 (${steps.join(' ')})`);
   await db.exec(`DELETE FROM things WHERE id = ${demon}`);
 
   // a corpse gets back up at its spawn spot, in teleport fog; a lost soul doesn't
   await db.exec('DELETE FROM sound_events');
   const corpse = await spawn(3001, p.X + 64, p.Y);
   const soul = await spawn(3006, p.X - 64, p.Y);
-  await db.exec(`UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, hp = 0, solid = 0, frame = 'M', dead_tic = 0,
+  // (corpses in their last death state)
+  await db.exec(`UPDATE things SET st = 'dead', state_tic = NULL, hp = 0, solid = 0, dead_tic = 0,
+                 state = (SELECT s.id FROM states s WHERE s.name = IIF(things.thing_type = 3006, 'S_SKULL_DIE6', 'S_TROO_DIE5')),
                  spawn_x = x, spawn_y = y, spawn_angle = 1.5, x = x + 8 WHERE id IN (${corpse}, ${soul})`);
   let tries = 0;
   while ((await one(`SELECT st FROM things WHERE id = ${corpse}`)).ST === 'dead' && tries++ < 3000) {

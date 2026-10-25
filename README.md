@@ -49,17 +49,18 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
 | `G_DoCompleted`: which map comes next, secret exits included | [src/progress.js](src/progress.js) |
 | `EV_DoCeiling` crushers, `EV_CeilingCrushStop`, `raiseFloorCrush`, `P_ChangeSector` | the `crush` mover kind, `CRUSH_THINGS` |
-| `P_SpawnMissile` / `P_SpawnPlayerMissile` aiming, `P_AimLineAttack`, `P_ZMovement` for missiles | `MONSTER_MISSILE`, `FIRE_MISSILE`, `AIM_SLOPE`; 3D flight in `MONSTERS_THINK` |
-| `A_Look` / `A_Chase` / attacks, pain, death, barrels | `MONSTERS_THINK` |
+| `P_SetMobjState`, `P_MobjThinker`, `info.c`'s states | `SET_STATE`, `STATES_THINK`, `STATE_ACTION`, the `STATES` table ([src/states.js](src/states.js)) |
+| `P_SpawnMissile` / `P_SpawnPlayerMissile` aiming, `P_AimLineAttack`, `P_XYMovement` / `P_ZMovement` for missiles | `MONSTER_MISSILE`, `FIRE_MISSILE`, `AIM_SLOPE`, `MISSILES_THINK` |
+| `A_Look` / `A_Chase` / attacks, pain, death, barrels | `A_LOOK`, `A_CHASE`, `A_BULLETS`, `A_MELEE_MISSILE`, …, `DAMAGE_THING` |
 | `P_DamageMobj` retargeting, `PIT_CheckThing` species rule (infighting) | `DAMAGE_THING(..., src)`, `THINGS.TARGET_ID` / `THRESHOLD`, `HURT_TARGET` |
 | `P_NoiseAlert`, `P_RecursiveSound` (gunfire wakes monsters) | `NOISE_ALERT` flooding `SOUND_LINKS`, `SECTORS.SOUND_HEARD` |
-| `A_Tracer`, `A_SkelFist` (revenant), `A_FatAttack1/2/3` (mancubus), `A_VileTarget` / `A_Fire` / `A_VileAttack` / `A_VileChase` (arch-vile), `A_PainShootSkull` / `A_PainDie` | `MONSTERS_THINK` (the `melee`, `heal` and `raise` states, the `flame` kind), `MONSTER_MISSILE`, `PAIN_SHOOT_SKULL` |
+| `A_Tracer`, `A_SkelFist` (revenant), `A_FatAttack1/2/3` (mancubus), `A_VileTarget` / `A_Fire` / `A_VileAttack` / `A_VileChase` (arch-vile), `A_PainShootSkull` / `A_PainDie` | `A_TRACER`, `A_MELEE_MISSILE`, `A_FAT_ATTACK`, `A_VILE_TARGET`, `A_FIRE`, `A_VILE_ATTACK`, `A_VILE_CHASE`, `PAIN_SHOOT_SKULL`, `A_PAIN_DIE` |
 | `A_BossDeath`, `A_KeenDie` | `BOSS_DEATH`, `KEEN_DIE` |
-| `A_BrainSpit`, `A_SpawnFly`, `A_BrainScream` (the Icon of Sin) | the `shooter`, `cube` and `brain` kinds in `MONSTERS_THINK` |
+| `A_BrainSpit`, `A_SpawnFly`, `A_BrainScream` (the Icon of Sin) | `A_BRAIN_SPIT`, `A_SPAWN_FLY`, `A_BRAIN_SCREAM` |
 | `MF_SPAWNCEILING` (hanging bodies, Commander Keen) | `THING_TYPES.HANG`, placed in `INIT_MAP` |
 | `P_LineAttack`, `P_BulletSlope` (pistol, shotguns, chaingun, fist, chainsaw) | `HITSCAN` (in 3D, with a slope), `AIM_SLOPE` |
-| `A_Saw`, `A_FireShotgun2` (chainsaw, super shotgun) | `HITSCAN` at melee range / 20 pellets; reload sounds timed in `PLAYER_THINK` |
-| `P_SpawnPlayerMissile`, `P_RadiusAttack`, `A_BFGSpray` (rocket launcher, plasma gun, BFG) | `FIRE_MISSILE`, `RADIUS_ATTACK`, `BFG_SPRAY`; projectiles fly in `MONSTERS_THINK` |
+| `P_SetPsprite`, `P_MovePsprites`, `A_WeaponReady`, `A_Saw`, `A_FireShotgun2` and the other weapon actions | `SET_PSPRITE`, `MOVE_PSPRITES`, `PSPRITE_ACTION` (see *Weapons*) |
+| `P_SpawnPlayerMissile`, `P_RadiusAttack`, `A_BFGSpray` (rocket launcher, plasma gun, BFG) | `FIRE_MISSILE`, `RADIUS_ATTACK`, `BFG_SPRAY`; projectiles fly in `MISSILES_THINK` |
 | `P_TouchSpecialThing` | pickups in `PLAYER_THINK` |
 | light flashes, strobes, glows | `LIGHTS_THINK` |
 | `R_RenderBSPNode`, `R_CheckBBox`, `R_ClipSolidWallSegment` (solidsegs) | `RENDER_SLICES_BSP` ([sql/render.sql](sql/render.sql)) |
@@ -862,7 +863,7 @@ counts as a kill, and the lost souls, so there's nothing to kill and the intermi
 imp, cacodemon and baron fireballs at 20, no waiting between attacks; only Nightmare itself also
 takes away their reaction time when they spawn, as in `P_SpawnMobj`). They go in the start
 message with the game type and timer, and sit in `GAME` (`NOMONSTERS`, `RESPAWN`, `FAST`) for
-`INIT_MAP`, `WORLD_TIC` and `MONSTERS_THINK` to read, where Nightmare already took those paths.
+`INIT_MAP`, `WORLD_TIC` and `SET_STATE` to read, where Nightmare already took those paths.
 
 The same three are command-line options for any game in DOOM, so they're also under the view
 beside **Skill**, for a game alone. Like the Skill setting, ticking or unticking one starts a new
@@ -1234,13 +1235,19 @@ once and prints a warning, which is what a player would do.
 
 ## Simplifications
 
-Monster movement, attack timing and accuracy follow DOOM's rules, not its exact frame tables.
-That's changing, in phases ([docs/ROADMAP.md](docs/ROADMAP.md)). DOOM's state table is in Firebird now
-(`src/states.js`, see Licence), and so is the machine that runs it: `SET_STATE` is `P_SetMobjState`
-(a state's tics start, its action is called, a 0-tic state goes straight on, `S_NULL` removes the thing)
-and `STATES_THINK` moves on, each tic, only the things whose state ends then (an index on the tic it
-ends; about 5 µs a tic when none does). The monsters move onto it family by family, and the first
-families are there: the zombieman, the shotgun guy, the chaingunner, the imp, the demon, the spectre, the lost soul, the cacodemon, the Hell knight, the baron of Hell, the cyberdemon and the spider mastermind live entirely on DOOM's states: all of DOOM I's monsters, and all of DOOM II's: the SS guard, Commander Keen, the pain elemental, the mancubus, the arachnotron, the revenant, the arch-vile and the boss brain. The brain's spitter wakes as any monster does
+Every thing and every weapon runs on DOOM's own frame tables. DOOM's state table is in Firebird
+(`src/states.js`, see Licence, as a WAD's `DEHACKED` patched it), and so is the machine that runs it:
+`SET_STATE` is `P_SetMobjState` (a state's tics start, its action is called, a 0-tic state goes
+straight on, `S_NULL` removes the thing), and `STATES_THINK` moves on, each tic, only the things whose
+state ends then. It finds them through an index on the tic each state ends, and costs about 5 µs a
+tic when none does. The port's own per-mode rules, which followed DOOM's movement but not its frames,
+are gone (docs/ROADMAP.md, *DOOM's frame tables, in phases*).
+
+Every monster lives on DOOM's states: all of DOOM I's (the zombieman, the shotgun guy, the
+chaingunner, the imp, the demon, the spectre, the lost soul, the cacodemon, the Hell knight, the
+baron of Hell, the cyberdemon and the spider mastermind) and all of DOOM II's (the SS guard,
+Commander Keen, the pain elemental, the mancubus, the arachnotron, the revenant, the arch-vile and
+the boss brain). The brain's spitter wakes as any monster does
 (`A_Look`), cries (`A_BrainAwake`) and 181 tics later spits its first cube (`A_BrainSpit`, every other time on
 skills 1 and 2) at each spawn spot in turn; the cube flies through walls, its reaction time worked out from
 the y distance alone, as DOOM does (`(dy / momy) / 3`: a spot due east or west gets a cube that never lands),
@@ -1285,11 +1292,26 @@ touches something solid (a slam for 3–24, then back to its spawn state) or a w
 off floors and ceilings; shot in flight it stops dead, without its pain state. Afloat, it drifts 4
 units a tic towards its target's height (`P_ZMovement`), as the cacodemon does once it's awake; dead, a cacodemon falls. The Hell knight cries its own DOOM II sounds (`DSKNTSIT`, `DSKNTDTH`), not the baron's; Freedoom 1 has none, so a knight in a DOOM I PWAD is silent. (DOOM's thrust from a hit, which this port
 gives no monster, would set a shot skull drifting; here it stops.) A pain elemental's souls charge
-at its target the tic they appear. An old save's monsters of
-these types join the table where they were. (The imp's pain cry is DOOM's
-`DSPOPAIN` now, not the demons' `DSDMPAIN`.)
-The other monsters still run on the old rules until their families move. `npm run test:states`
-wakes, hurts, kills and gibs them and times each step.
+at its target the tic they appear. An old save's monsters join the table where they were. (The imp's pain cry is DOOM's `DSPOPAIN`,
+not the demons' `DSDMPAIN`.) `npm run test:states` wakes, hurts, kills and gibs them and times each
+step.
+
+What's still not vanilla, and why `.lmp` demos can't play yet (docs/ROADMAP.md):
+- **Arithmetic:** positions and speeds are doubles, and angles are radians, where DOOM uses 16.16
+  fixed point and 32-bit BAMs with its `finesine` tables. A thing ends up a fraction of a unit
+  from where DOOM's would, and over a demo that adds up.
+- **Random numbers:** `p_random()` is a linear congruential generator, not DOOM's 256-entry
+  `rndtable`. Its draws come in DOOM's order where the code follows DOOM's (the actions, the
+  damage, `P_SpawnMapThing`), but not everywhere.
+- **Movement:** the player's wall sliding tries each axis in turn rather than `P_SlideMove`'s
+  traced slide. Friction stops at 0.05 rather than `STOPSPEED`. A hit pushes no one: there is
+  none of `P_DamageMobj`'s thrust, for you or for monsters.
+- **Collision:** collision and sight are set-based SQL over the map's lines and things, not DOOM's
+  blockmap walk, so ties between equally near things can break differently.
+- **Crushers:** a crusher turns only corpses to gibs: not the dying, and dropped items aren't
+  removed (`PIT_ChangeSector`).
+- **Weapon keys:** they choose as the port always has, not quite as `P_PlayerThink` does (see
+  *Weapons*).
 Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods
 out from your sector through every open two-sided line. A closed door stops it, and a line flagged
 *sound block* lets it through once but never twice. Every sector it reaches remembers. Idle

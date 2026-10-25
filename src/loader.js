@@ -144,19 +144,15 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
   );
   await insertRows(
     db, 'thing_types',
-    ['thing_type', 'sprite', 'kind', 'radius', 'height', 'solid', 'hp', 'speed', 'pain_chance', 'walk_fr', 'atk_fr',
-      'pain_fr', 'death_fr', 'death_sprite', 'bright', 'atk_kind', 'missile_type', 'dmg_lo', 'dmg_hi', 'shots',
+    ['thing_type', 'sprite', 'kind', 'radius', 'height', 'solid', 'hp', 'speed', 'pain_chance', 'dmg_lo',
       'drop_type', 'pickup', 'amount', 'label', 'see_snd', 'atk_snd', 'pain_snd', 'death_snd', 'hang',
-      'melee_fr', 'melee_snd', 'melee_hit_snd', 'melee_dmg', 'melee_rolls', 'mass', 'floats', 'nogravity', 'shadow', 'active_snd',
+      'mass', 'floats', 'nogravity', 'shadow', 'active_snd',
       'count_kill', 'count_item', 'reaction_time', 'spawn_state', 'see_state', 'pain_state', 'melee_state', 'missile_state',
       'death_state', 'xdeath_state', 'raise_state', 'on_states'],
     deh.types.map((t) => [
       t.type, t.sprite, t.kind, t.radius, t.height, t.solid ?? 0, t.hp ?? null, t.speed ?? null, t.painChance ?? null,
-      t.walk ?? 'A', t.attack ?? null, t.pain ?? null, t.death ?? null, t.deathSprite ?? null, t.bright ?? 0,
-      t.atk ?? null, t.missile ?? null, t.dmgLo ?? null, t.dmgHi ?? null, t.shots ?? null, t.drop ?? null,
-      t.pickup ?? null, t.amount ?? null, itemMessage(t.sprite, strings),
+      t.dmgLo ?? null, t.drop ?? null, t.pickup ?? null, t.amount ?? null, itemMessage(t.sprite, strings),
       t.seeSnd ?? null, t.atkSnd ?? null, t.painSnd ?? null, t.deathSnd ?? null, t.hang ?? 0,
-      t.meleeFr ?? null, t.meleeSnd ?? null, t.meleeHitSnd ?? null, t.meleeDmg ?? null, t.meleeRolls ?? null,
       t.mass ?? 100, t.floats ?? 0, t.nogravity ?? 0, t.shadow ?? 0, t.activeSnd ?? null, t.countKill ?? 0, t.countItem ?? 0,
       // (mobjinfo's reaction time: 8, the player's 0; its states and whether it's on the tables
       // are the type's it was, even if an ID # patch gave it another map number)
@@ -182,7 +178,7 @@ SET TERM ; ^`);
   await db.exec(`INSERT INTO rules (id, ${rk.join(', ')}) VALUES (1, ${rk.map((k) => Math.trunc(deh.rules[k])).join(', ')})`);
   await setView(db, width, height, projy);
 
-  return { texDefs, texId, flats, flatId, dehacked: { cheats: deh.cheats, pars: deh.pars, report: deh.report, types: deh.types } };
+  return { texDefs, texId, flats, flatId, dehacked: { cheats: deh.cheats, pars: deh.pars, report: deh.report, types: deh.types, states: deh.states, mobjinfo: deh.mobjinfo } };
 }
 
 /**

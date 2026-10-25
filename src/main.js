@@ -22,7 +22,6 @@ import { captureGame, restoreGame, saveStore, exportSaves, importSaves, remember
   savePlayers, saveSetting, packSave, unpackSave, SAVE_VERSION } from './savegame.js';
 import { DemoPlayer, DemoRecorder, demoProblem, attractDemoFile, ATTRACT_DEMOS } from './demo.js';
 import { Intermission, levelOf, setParOverrides } from './intermission.js';
-import { THING_TYPES } from './thinginfo.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 import { createPresenter } from './present.js';
 import { Melt } from './wipe.js';
@@ -1231,7 +1230,7 @@ async function frameNow() {
         const { secret, fromName } = intermission;
         intermission = null;
         if (Finale.available(wad, fromName, secret)) {
-          finale = new Finale(renderer, audio, wad, THING_TYPES, fromName, secret);
+          finale = new Finale(renderer, audio, wad, res.dehacked, fromName, secret);
           finaleKey = false;
         } else {
           await nextLevel(nextMap(fromName, secret, wad.mapNames()), false);
@@ -1315,7 +1314,7 @@ async function frameNow() {
         const level = levelOf(map.name);
         if (!level.doom2 && level.map === 7 && Finale.available(wad, map.name, secret)) {
           // G_DoCompleted: DOOM I's E?M8 goes straight to the ending, no stats
-          finale = new Finale(renderer, audio, wad, THING_TYPES, map.name, secret);
+          finale = new Finale(renderer, audio, wad, res.dehacked, map.name, secret);
           finaleKey = false;
           setStatus(`The end of episode ${level.episode}. Esc for the menu: a new game, or another episode.`);
         } else {
@@ -1775,7 +1774,7 @@ async function boot() {
         intermission = null;
         title = null;
         menu?.close(true);
-        finale = new Finale(renderer, audio, wad, THING_TYPES, name, secret);
+        finale = new Finale(renderer, audio, wad, res.dehacked, name, secret);
         finaleKey = false;
         return `showing the screen after ${name}`;
       },

@@ -5,10 +5,10 @@
 // MAP31's secret exit leads to a secret level; once 50 tics have passed, fire
 // or use moves on to the next map (F_Ticker). After MAP30 the text is
 // followed by the cast call (F_StartCast) to D_EVIL: each monster in turn walks on the
-// BOSSBACK backdrop under its name, attacks every twelve frames, and dies
-// when you press a key (F_CastResponder); after its last death frame the next
-// one comes on (F_CastTicker). The cast ends with the player and starts over,
-// as in DOOM. DOOM I's episodes end differently: after E?M8 the episode's
+// BOSSBACK backdrop under its name, through its states in DOOM's frame tables (as a
+// DEHACKED lump left them), attacks every twelve frames, and dies when you press a key
+// (F_CastResponder); after its last death frame the next one comes on (F_CastTicker).
+// The cast ends with the player and starts over, as in DOOM. DOOM I's episodes end differently: after E?M8 the episode's
 // text plays to D_VICTOR and can't be skipped; TEXTWAIT tics after the last
 // character the art screen follows (F_Drawer): CREDIT (or HELP2) after E1,
 // VICTORY2 after E2, the bunny scroll after E3 (F_BunnyScroll, to D_BUNNY),
@@ -17,11 +17,11 @@
 // The words come from the WAD's DEHACKED lump (Freedoom ships its
 // own); the state machine is kept apart from the drawing so it can be tested.
 
+import { STATES, MOBJINFO } from './states.js';
+import { MOBJ_TYPE } from './thinginfo.js';
+
 const TEXTSPEED = 3;     // tics per character
 const SKIP_AFTER = 50;   // F_Ticker: no skipping before this
-const WALK_TICS = 4;     // a cast member's see-state frames
-const ATTACK_TICS = 8;   // …its attack frames
-const DEATH_TICS = 5;    // …its death frames
 const LAST_TICS = 15;    // F_CastTicker: a state lasting forever holds 15 tics
 const TEXTWAIT = 250;    // DOOM I: tics after the text before the art screen
 
@@ -54,16 +54,38 @@ export function bunnyFrame(count) {
   return { scrolled, end: `END${stage}`, stage };
 }
 
-// castorder[], by thing type; the player is "type" 0
+// castorder[], by thing type (the player is 1)
 const CAST = [
   [3004, 'CC_ZOMBIE', 'Zombieman'], [9, 'CC_SHOTGUN', 'Shotgun guy'], [65, 'CC_HEAVY', 'Heavy weapon dude'],
   [3001, 'CC_IMP', 'Imp'], [3002, 'CC_DEMON', 'Demon'], [3006, 'CC_LOST', 'Lost soul'],
   [3005, 'CC_CACO', 'Cacodemon'], [69, 'CC_HELL', 'Hell knight'], [3003, 'CC_BARON', 'Baron of hell'],
   [68, 'CC_ARACH', 'Arachnotron'], [71, 'CC_PAIN', 'Pain elemental'], [66, 'CC_REVEN', 'Revenant'],
   [67, 'CC_MANCU', 'Mancubus'], [64, 'CC_ARCH', 'Arch-vile'], [7, 'CC_SPIDER', 'Spider mastermind'],
-  [16, 'CC_CYBER', 'Cyberdemon'], [0, 'CC_HERO', 'Our hero'],
+  [16, 'CC_CYBER', 'Cyberdemon'], [1, 'CC_HERO', 'Our hero'],
 ];
-const PLAYER = { sprite: 'PLAY', walk: 'ABCD', attack: 'EF', death: 'HIJKLMN', seeSnd: null, atkSnd: 'DSDSHTGN', deathSnd: 'DSPLDETH' };
+// F_CastTicker's "sound hacks": entering these states, the cast member makes these sounds
+const CAST_SOUNDS = {
+  S_PLAY_ATK1: 'DSDSHTGN', S_POSS_ATK2: 'DSPISTOL', S_SPOS_ATK2: 'DSSHOTGN', S_VILE_ATK2: 'DSVILATK',
+  S_SKEL_FIST2: 'DSSKESWG', S_SKEL_FIST4: 'DSSKEPCH', S_SKEL_MISS2: 'DSSKEATK',
+  S_FATT_ATK8: 'DSFIRSHT', S_FATT_ATK5: 'DSFIRSHT', S_FATT_ATK2: 'DSFIRSHT',
+  S_CPOS_ATK2: 'DSSHOTGN', S_CPOS_ATK3: 'DSSHOTGN', S_CPOS_ATK4: 'DSSHOTGN', S_TROO_ATK3: 'DSCLAW',
+  S_SARG_ATK2: 'DSSGTATK', S_BOSS_ATK2: 'DSFIRSHT', S_BOS2_ATK2: 'DSFIRSHT', S_HEAD_ATK2: 'DSFIRSHT',
+  S_SKULL_ATK2: 'DSSKLATK', S_SPID_ATK2: 'DSSHOTGN', S_SPID_ATK3: 'DSSHOTGN', S_BSPI_ATK2: 'DSPLASMA',
+  S_CYBER_ATK2: 'DSRLAUNC', S_CYBER_ATK4: 'DSRLAUNC', S_CYBER_ATK6: 'DSRLAUNC', S_PAIN_ATK3: 'DSSKLATK',
+};
+const MOBJ_BY_ED = new Map(Object.entries(MOBJINFO).filter(([, m]) => m.ednum > 0).map(([k, m]) => [m.ednum, k]));
+
+/** The sprite frames a state chain shows from START until it ends or comes round: ['POSSA', …] */
+export function chainFrames(states, start) {
+  const out = [];
+  const seen = new Set();
+  for (let s = start; s > 0 && !seen.has(s); s = states[s][6]) {
+    seen.add(s);
+    out.push(states[s][1] + states[s][2]);
+    if (states[s][4] === -1) break;
+  }
+  return out;
+}
 
 /**
  * The front view (rotation 0 or 1) of a sprite frame among the WAD's lump
@@ -103,7 +125,7 @@ export function parseDehStrings(text) {
 export class FinaleState {
   /**
    * @param text   the story text (C4TEXT)
-   * @param cast   [{ name, sprite, walk, attack, melee, death, seeSnd, atkSnd, deathSnd }]
+   * @param cast   [{ name, see, missile, melee, death (its mobjinfo's states), seeSnd, deathSnd }]
    * @param sound  called with a sound lump name to play
    * @param castAfter the cast call follows the text (MAP30); otherwise the
    *                  text ends the screen (stage 'done': on to the next map)
@@ -111,9 +133,10 @@ export class FinaleState {
    *                  follows it on its own (stage 'art'). That's the end of
    *                  the game: the art stays until the menu starts another
    */
-  constructor(text, cast, sound = () => {}, castAfter = true, artAfter = false) {
+  constructor(text, cast, sound = () => {}, castAfter = true, artAfter = false, states = STATES) {
     this.text = text;
     this.cast = cast;
+    this.states = states;
     this.sound = sound;
     this.castAfter = castAfter && !artAfter;
     this.artAfter = artAfter;
@@ -147,85 +170,103 @@ export class FinaleState {
       }
       return;
     }
-    if (--this.tics > 0) return;
-    if (this.mode === 'death') {
-      if (this.frame < this.member.death.length - 1) { this.frame++; this.tics = this.frame === this.member.death.length - 1 ? LAST_TICS : DEATH_TICS; return; }
-      this.next();
-      return;
-    }
-    this.frame++;
-    this.frames++;
-    const seq = this.sequence();
-    if (this.mode !== 'see' && (this.frame >= seq.length || this.frames >= 24)) this.see();
-    else if (this.mode === 'see' && this.frames >= 12) this.attack();
-    else this.frame %= seq.length;
-    this.tics = this.mode === 'see' ? WALK_TICS : ATTACK_TICS;
+    this.castTick();
   }
 
-  /** F_CastResponder: any key kills the one on stage (once). */
+  /**
+   * F_CastTicker: when the state's tics run out, the next state; after the last of a death
+   * (tics -1, or S_NULL next) the next of the cast, announcing itself (its seesound). The 12th
+   * frame of walking starts an attack, missile and melee in turn (castonmelee; a type with only
+   * one uses it), which lasts until the chain comes back to the see state or 12 frames more;
+   * S_PLAY_ATK1 ends the player's at once ("Oh, gross hack!"). Some states make a sound as
+   * they're entered (the "sound hacks"). A state lasting for ever is held 15 tics.
+   */
+  castTick() {
+    if (--this.tics > 0) return;
+    const S = this.states;
+    let m = this.member;
+    let stop = false;
+    if (S[this.st][4] === -1 || S[this.st][6] === 0) {
+      this.castnum = (this.castnum + 1) % this.cast.length;
+      this.death = false;
+      m = this.member;
+      if (m.seeSnd) this.sound(m.seeSnd);
+      this.st = m.see;
+      this.frames = 0;
+    } else if (S[this.st][0] === 'S_PLAY_ATK1') {
+      stop = true;
+    } else {
+      this.st = S[this.st][6];
+      this.frames++;
+      const sfx = CAST_SOUNDS[S[this.st][0]];
+      if (sfx) this.sound(sfx);
+    }
+    if (!stop && this.frames === 12) {
+      this.attacking = true;
+      this.attackKind = this.onMelee ? 'melee' : 'attack';
+      this.st = this.onMelee ? m.melee : m.missile;
+      this.onMelee ^= 1;
+      if (this.st === 0) {
+        this.attackKind = this.onMelee ? 'melee' : 'attack';
+        this.st = this.onMelee ? m.melee : m.missile;
+      }
+    }
+    if (stop || (this.attacking && (this.frames === 24 || this.st === m.see))) {
+      this.attacking = false;
+      this.frames = 0;
+      this.st = m.see;
+    }
+    this.tics = S[this.st][4] === -1 ? LAST_TICS : S[this.st][4];
+  }
+
+  /** F_CastResponder: any key kills the one on stage (once): its death state and death sound. */
   press() {
-    if (this.stage !== 'cast' || this.mode === 'death') return;
-    this.mode = 'death';
-    this.frame = 0;
-    this.tics = this.member.death.length === 1 ? LAST_TICS : DEATH_TICS;
+    if (this.stage !== 'cast' || this.death) return;
+    this.death = true;
+    this.st = this.member.death;
+    this.tics = this.states[this.st][4];
+    this.frames = 0;
+    this.attacking = false;
     if (this.member.deathSnd) this.sound(this.member.deathSnd);
   }
 
+  /** F_StartCast: the first of the cast in its see state (no announcement for the first) */
   startCast() {
     this.stage = 'cast';
-    this.castnum = -1;
-    this.melee = false;
-    this.next();
+    this.castnum = 0;
+    this.st = this.member.see;
+    this.tics = this.states[this.st][4];
+    this.death = false;
+    this.frames = 0;
+    this.onMelee = 0;
+    this.attacking = false;
   }
 
   get member() { return this.cast[this.castnum]; }
 
-  /** the sprite lump frame showing now: { sprite, frame } */
+  /** where the one on stage is: 'see', 'attack' (its missile state's chain), 'melee' or 'death' */
+  get mode() { return this.death ? 'death' : this.attacking ? this.attackKind : 'see'; }
+
+  /** the sprite lump frame showing now: { sprite, frame } (F_CastDrawer: its state's) */
   get pose() {
-    const seq = this.mode === 'death' ? this.member.death : this.sequence();
-    return { sprite: this.member.sprite, frame: seq[Math.min(this.frame, seq.length - 1)] };
-  }
-
-  sequence() {
-    if (this.mode === 'see') return this.member.walk;
-    return this.mode === 'melee' ? this.member.melee : this.member.attack;
-  }
-
-  next() {
-    this.castnum = (this.castnum + 1) % this.cast.length;
-    if (this.member.seeSnd) this.sound(this.member.seeSnd);
-    this.see();
-    this.frame = 0;
-    this.tics = WALK_TICS;
-  }
-
-  see() {
-    this.mode = 'see';
-    this.frame = 0;
-    this.frames = 0;
-  }
-
-  attack() {
-    // castonmelee: those with both alternate; those with one use it
-    const m = this.member;
-    this.mode = (this.melee && m.melee) || !m.attack ? 'melee' : 'attack';
-    this.melee = !this.melee;
-    this.frame = 0;
-    this.frames = 0;
-    if (m.atkSnd) this.sound(m.atkSnd);
+    const s = this.states[this.st];
+    return { sprite: s[1], frame: s[2] };
   }
 }
 
-/** Build the cast from THING_TYPES and the WAD's strings. */
-export function buildCast(thingTypes, strings) {
-  const byType = new Map(thingTypes.map((t) => [t.type, t]));
+/**
+ * castorder[]: each member's name (the WAD's string), its mobjinfo states (see, missile,
+ * melee, death: from MOBJINFO, or a DEHACKED lump's patched copy) and its sounds (from
+ * THING_TYPES, or the patched list).
+ */
+export function buildCast(thingTypes, strings, mobjinfo = MOBJINFO) {
+  const byType = new Map(thingTypes.map((t) => [t.base ?? t.type, t]));
   return CAST.map(([type, key, fallback]) => {
-    const name = strings.get(key) ?? fallback;
-    if (type === 0) return { name, ...PLAYER, melee: null };
     const t = byType.get(type);
+    const st = mobjinfo[MOBJ_TYPE[type] ?? MOBJ_BY_ED.get(type)].states;   // (STATE_FIELDS' order)
     return {
-      name, sprite: t.sprite, walk: t.walk, attack: t.attack ?? null, melee: t.meleeFr ?? null,
-      death: t.death, seeSnd: t.seeSnd ?? null, atkSnd: t.atkSnd ?? null, deathSnd: t.deathSnd ?? null,
+      name: strings.get(key) ?? fallback, see: st[1], missile: st[4], melee: st[3], death: st[5],
+      seeSnd: t?.seeSnd ?? null, deathSnd: t?.deathSnd ?? null,
     };
   });
 }
@@ -269,7 +310,13 @@ function screenText(wad, screen) {
 }
 
 export class Finale {
-  constructor(renderer, audio, wad, thingTypes, mapName = 'MAP30', secret = false) {
+  /**
+   * TABLES: the thing types and DOOM's frame tables the cast plays from: loadResources'
+   * `dehacked` ({ types, states, mobjinfo }, as the WAD's DEHACKED patched them), or a list
+   * of thing types (then the tables as the game shipped).
+   */
+  constructor(renderer, audio, wad, tables, mapName = 'MAP30', secret = false) {
+    const { types, states = STATES, mobjinfo = MOBJINFO } = Array.isArray(tables) ? { types: tables } : tables;
     this.renderer = renderer;
     this.audio = audio;
     this.wad = wad;
@@ -279,8 +326,8 @@ export class Finale {
     const strings = wadStrings(wad);
     const { text, borrowed } = screenText(wad, screen);
     this.borrowed = borrowed;   // the words are Freedoom's, the WAD had none
-    this.state = new FinaleState(text, buildCast(thingTypes, strings),
-      (snd) => audio.playEvents([[0, snd, 0, null, null]], { x: 0, y: 0, angle: 0 }), !!screen.cast, !!screen.art);
+    this.state = new FinaleState(text, buildCast(types, strings, mobjinfo),
+      (snd) => audio.playEvents([[0, snd, 0, null, null]], { x: 0, y: 0, angle: 0 }), !!screen.cast, !!screen.art, states);
     this.flat = wad.lump(screen.flat) ? wad.data(wad.lump(screen.flat)) : null;
     // F_Drawer's art: for episode 1, CREDIT on a four-episode ("retail") WAD, else HELP2
     this.art = screen.art === 'credit' ? (wad.lump('E4M1') ? 'CREDIT' : 'HELP2') : screen.art ?? null;

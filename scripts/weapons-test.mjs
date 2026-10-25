@@ -84,6 +84,12 @@ async function lineUp() {
         await db.exec(`UPDATE things t SET x = ${x}, y = ${y}, z = ${r.FZ}, angle = ${a + Math.PI}, momx = 0, momy = 0,
                        sector_id = sector_at(${x}, ${y}) WHERE t.kind = 'player'`);
         await db.exec(`UPDATE things SET hp = 1000, st = 'idle' WHERE id = ${m.ID}`); // let it soak a few hits
+        // (every other monster back where the map put it, held in its spawn state: none wanders
+        // into the line of fire)
+        await db.exec(`UPDATE things SET x = spawn_x, y = spawn_y, sector_id = sector_at(spawn_x, spawn_y), momx = 0, momy = 0,
+                       state = (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = things.thing_type), state_tic = NULL,
+                       st = 'idle', target_id = NULL
+                       WHERE kind = 'monster' AND id <> ${m.ID} AND st NOT IN ('dying', 'dead') AND spawn_x IS NOT NULL`);
         return m.ID;
       }
     }
@@ -180,7 +186,7 @@ await db.exec(`UPDATE player SET has_launcher = 1, has_plasma = 1, has_bfg = 1, 
   assert(cg.slice(0, 4).join() === 'CHAIN1/1/49,CHAIN1/1/49,CHAIN1/1/49,CHAIN1/1/49' && cg[4] === 'CHAIN2/2/48' && s.BULLETS === 46 && refire === 1,
     `the chaingun held for 16 tics: a bullet every 4 (${cg.filter((c, i) => i % 4 === 0).join(' ')}), ${50 - s.BULLETS} in all, refire ${refire}`);
   s = await select(2);
-  if (awake.length) await db.exec(`UPDATE things SET st = 'idle', solid = 1 WHERE id IN (${awake.join()})`);
+  if (awake.length) await db.exec(`UPDATE things SET st = 'idle', solid = 1, state = (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = things.thing_type) WHERE id IN (${awake.join()})`);
 }
 
 let bfgBurst = 0;
@@ -205,7 +211,9 @@ for (const [w, name, ammoCol, sound, delay, used, ticsToHit] of [[5, 'rocket lau
     `${name}: the shot ${wait} tics after the trigger, ${before[ammoCol] - after[ammoCol]} ${ammoCol.toLowerCase()} (${before[ammoCol]} → ${after[ammoCol]})`);
   const snd = (await db.query(`SELECT COUNT(*) n FROM sound_events WHERE sound = '${sound}'`)).rows[0].N;
   assert(snd > 0, `${name}: played ${sound}`);
-  for (let i = 0; i < ticsToHit; i++) await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  for (let i = 0; i < ticsToHit; i++) {
+    await tic([1, 0, 0, 0, 0, 0, 0, 0]);
+  }
   // (sound events are kept 70 tics: count the BFG ball's burst now)
   if (w === 7) bfgBurst = (await db.query(`SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSRXPLOD'`)).rows[0].N;
   const hp1 = (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0]?.HP ?? 0;
@@ -245,8 +253,8 @@ assert(bfgBurst > 0, 'BFG ball exploded');
     const h0 = (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0].HP;
     for (let k = 0; k < n; k++) {
       for (let i = 0; i < 24; i++) {   // (S_PUNCH1–5: 22 tics, A_Punch at 4)
-        // (held in its pain state, so it stays in reach)
-        await db.exec(`UPDATE things SET st = 'pain', st_tics = 99, hp = MAXVALUE(hp, 100) WHERE id = ${target}`);
+        // (held in whatever state it's in, so it stays in reach)
+        await db.exec(`UPDATE things SET state_tic = NULL, hp = MAXVALUE(hp, 100) WHERE id = ${target}`);
         await tic([1, 0, 0, 0, i === 0 ? 1 : 0, 0, 0, 0]);
       }
     }
@@ -343,7 +351,7 @@ assert(bfgBurst > 0, 'BFG ball exploded');
     `IDBEHOLD v/s/i/r/a/l: all on (${on.INVULN_TICS}/${on.STRENGTH_TICS}/${on.INVIS_TICS}/${on.IRON_TICS}/${on.ALLMAP}/${on.INFRA_TICS}), `
     + `again all off but the map (${off.INVULN_TICS}/${off.STRENGTH_TICS}/${off.INVIS_TICS}/${off.IRON_TICS}/${off.ALLMAP}/${off.INFRA_TICS})`);
   await db.exec('UPDATE player SET health = 200');
-  if (sleepers.length) await db.exec(`UPDATE things SET st = 'idle', solid = 1 WHERE id IN (${sleepers.join()})`);
+  if (sleepers.length) await db.exec(`UPDATE things SET st = 'idle', solid = 1, state = (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = things.thing_type) WHERE id IN (${sleepers.join()})`);
 }
 
 // the super shotgun, where the WAD has its graphics (DOOM II / Phase 2)

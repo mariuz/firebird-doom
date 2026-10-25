@@ -99,7 +99,7 @@ const imp = app.types.find((t) => t.type === 3001);
 assert(zombie.hp === 55 && zombie.speed === 12 && zombie.radius === 25 && zombie.painChance === 100
     && zombie.seeSnd === 'DSBGSIT1' && zombie.activeSnd === 'DSDMACT',
   `Thing 2: the zombieman gets 55 hp, speed 12, radius 25, pain chance 100, an imp's sight sound and a demon's growl`);
-assert(fireball.dmgLo === 9 && fireball.dmgHi === 72 && fireball.speed === 20 && spectre.shadow === 0 && imp.shadow === 1,
+assert(fireball.dmgLo === 9 && fireball.speed === 20 && spectre.shadow === 0 && imp.shadow === 1,
   `Thing 32: the imp's fireball does 9–72 at speed 20; Bits by name take the spectre's shadow away, by number give it to the imp`);
 assert(spectre.countKill === 1 && imp.countKill === 1 && !spectre.countItem,
   'Bits: COUNTKILL (by name, and 0x400000 by number) keeps both in the kill tally, and no COUNTITEM keeps them out of the item tally');

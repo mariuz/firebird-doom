@@ -27,17 +27,16 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   The co-op test reloads such a page once, with a warning.
 - **Safari itself, pointer lock and touch** (Tooling): Firefox and WebKit are in CI now; a manual
   pass on a Mac and an iPhone would cover what headless engines can't.
-- **DOOM's frame tables** (Simulation): `info.c`'s states (`states[]`, each frame's sprite, tics,
-  action and next state) in a table that `MONSTERS_THINK` steps through, instead of the rules that
-  follow DOOM's movement but not its exact frame timings. DEHACKED Frame and code-pointer patches
-  would then apply (loading Freedoom 2 logs "Frame N: not applied (no state tables in this port)"
-  for its own), and monster timing would be vanilla's. The biggest gap to vanilla left, and a
-  big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
-  phases*). Phases 0 and 1 are done (the table, GPL-2 in a file of its own; the machine in SQL);
-  phase 2, the monsters family by family, is under way: the zombieman, shotgun guy and
-  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's, the boss brain last (with phase 3's cubes): phase 2 is done. Phase 3 is done too: the projectiles, the brain's cubes, the effects, barrels, items and decorations and the player's body are on the table. Phase 4 is done: the weapons in your hands. Phase 5 is done: DEHACKED's Frame, Pointer and Weapon blocks and a Thing's states apply (Freedoom's own seven frame patches among them). Next is phase 6, the cleanup.
+- **DOOM's frame tables** (Simulation): *Done.* `info.c`'s states (`states[]`, each frame's sprite,
+  tics, action and next state) in a table every thing and weapon steps through, as DOOM's do;
+  DEHACKED Frame, Pointer and Weapon patches apply. It was the biggest gap to vanilla, done in
+  seven phases (under **Simulation** below: *DOOM's frame tables, in phases*). The old per-mode
+  rules are gone.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
-  tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
+  tables above (done) and DOOM's fixed-point physics, bit for bit. What stands in the way is in the
+  README (*Simplifications*, "What's still not vanilla"): doubles and radians for 16.16 and BAMs,
+  an LCG for `rndtable` (and its draws in DOOM's order everywhere), `P_SlideMove`, the blockmap's
+  order, `P_DamageMobj`'s thrust. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
@@ -274,9 +273,32 @@ How it landed:
 - **Not supported:** Sound, Sprite and Text blocks, and BEX's [CODEPTR] (Chocolate Doom doesn't
   read it either).
 
-**Phase 6: the cleanup.** `st`, `st_tics`, `st_len`, `step`, the frame strings and the
+**Phase 6: the cleanup.** *Done.* `st`, `st_tics`, `st_len`, `step`, the frame strings and the
 per-mode code go; the README's "frame tables" deviation goes; what's still not vanilla (the
 fixed-point arithmetic, P_Random's call order) is said, for the `.lmp` item after this.
+
+How it landed:
+- **The old rules:** `MONSTERS_THINK` (some 900 lines), WORLD_TIC's chase countdown, and
+  DAMAGE_THING's and A_PainShootSkull's old-rules branches are gone; RENDER's frame-letter fallback
+  too.
+- **Old columns:** `things.st_tics`, `st_len`, `step`, `frame`, `sprite`, `think_tic` and
+  `thing_types`' frame strings and old attack fields (`walk_fr`, `atk_fr`, `pain_fr`,
+  `death_fr`, `death_sprite`, `bright`, `atk_kind`, `missile_type`, `dmg_hi`, `shots`, the
+  revenant's `melee_*`) are dropped, and so are their fields in `thinginfo.js`.
+- **Old saves:** they lose those columns as they load (`savegame.js`'s RETIRED).
+- **`ON_STATES`:** every type but the markers.
+- **`st` stays,** with a new meaning: SET_STATE's copy of the state's mode, kept for the many
+  queries that ask "can it be shot, is it a corpse" without a join. It's written only by SET_STATE,
+  SPAWN_THING and the respawns.
+- **What DOOM checks by type, now by type:** the arch-vile's rules check MT_VILE (64), not an
+  attack kind.
+- **`atkSnd` is mobjinfo's attacksound:** A_Chase plays it before a melee attack, and
+  A_SkullAttack as it charges. The shots' sounds are the actions' and the projectiles' own.
+- **The lost soul's charge** does (P_Random() % 8 + 1) × its damage (DeHackEd's Missile damage).
+- **The finale's cast call** plays from the state table: F_StartCast, F_CastTicker with its sound
+  hacks, F_CastResponder, as a WAD's DEHACKED left the tables. It used to play frame strings.
+- **A fidelity fix:** a Nightmare respawn's new body waits 18 tics (P_NightmareRespawn's
+  reactiontime), as DOOM's does.
 
 **Every phase**, because the simulation changes: the attract demos are recorded again (`npm run
 attract`) and `DEMO_VERSION`, `NET_VERSION` and the save version go up; `npm run save-fixtures`

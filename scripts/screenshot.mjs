@@ -186,7 +186,7 @@ await shoot(map, 'screenshot-e1m2.png');
     if (ok !== 1) continue;
     await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
         EXECUTE PROCEDURE spawn_thing(58, ${x}, ${y}, NULL, ${p.ANGLE + Math.PI}) RETURNING_VALUES id;
-        UPDATE things SET st = 'pain', st_tics = 99, st_len = 99, frame = 'A' WHERE id = :id;   -- (hold still for the photo)
+        UPDATE things SET state_tic = NULL WHERE id = :id;   -- (hold still for the photo: S_SARG_STND for good)
       END`);
     await shoot(map, 'screenshot-spectre.png');
     // the same view, invulnerable: COLORMAP 32 on everything but the sky

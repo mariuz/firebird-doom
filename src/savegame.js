@@ -20,10 +20,14 @@ const MOVING = {
   linedefs: ['special'],
 };
 
-// columns older saves have and this version doesn't: dropped as a save is loaded (the weapon's
-// old countdown and height, before the weapons went onto DOOM's frame tables: ADOPT_STATES
-// puts the weapon up and ready instead)
-const RETIRED = { player: ['attack_tics', 'attack_len', 'weapon_y', 'weapon_down'] };
+// columns older saves have and this version doesn't: dropped as a save is loaded – the weapon's
+// old countdown and height, before the weapons went onto DOOM's frame tables (ADOPT_STATES
+// puts the weapon up and ready instead), and the old rules' per-thing countdowns, steps and
+// frame letters, before everything did (its state's frames are drawn instead)
+const RETIRED = {
+  player: ['attack_tics', 'attack_len', 'weapon_y', 'weapon_down'],
+  things: ['st_tics', 'st_len', 'step', 'frame', 'sprite', 'think_tic'],
+};
 
 /** SAVE without its tables' RETIRED columns (a new object; the save itself is left alone) */
 function withoutRetired(save) {

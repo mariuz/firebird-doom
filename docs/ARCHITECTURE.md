@@ -21,7 +21,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | Path | What it is |
 | --- | --- |
 | `sql/schema.sql` | Every table: the WAD as rows (`vertexes`, `linedefs`, `sidedefs`, `sectors`, `segs`, `ssectors`, `nodes`, `map_things`), the resource catalogue (`textures`, `flats`, `sprite_frames`, `thing_types`), live state (`game`, `player`, `things`, `movers`), and derived acceleration structures (`line_blocks`, `sound_links`, `sound_flood`, `screen_cols`, `viewcfg`). |
-| `sql/game.sql` | The simulation, as PSQL procedures. `DOOM_TIC` is the entry point (see below). The frame tables' machine is here too: `SET_STATE` (`P_SetMobjState`), `STATE_ACTION` (the actions by name, each its own procedure: `A_LOOK`, `A_CHASE`, `A_FACE_TARGET`, `A_BULLETS`, …) and `STATES_THINK`, which `WORLD_TIC` runs after `MONSTERS_THINK`; a thing with a `state` is theirs, and `MONSTERS_THINK` leaves it alone. The types on the table (`thing_types.on_states`, from `thinginfo.js`'s `ON_STATES`: so far the zombieman, the shotgun guy, the chaingunner, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons, the cyberdemon and the spider mastermind: all of DOOM I's; then all of DOOM II's; and in phase 3 the projectiles, effects, barrels, items, decorations and the player's body: every type but the markers) spawn into it; each state's `mode` keeps `things.st` meaning what it always has. The weapon in the player's hands runs on the same table (phase 4): `SET_PSPRITE` (`P_SetPsprite`), `MOVE_PSPRITES` (`P_MovePsprites`, from `PLAYER_THINK`) and `PSPRITE_ACTION` (`A_WeaponReady`, `A_ReFire`, `A_Lower`, `A_Raise`, `A_GunFlash`, each weapon's fire action), over the player's two psprites in `player` and `weapon_info` (`weaponinfo[]`). |
+| `sql/game.sql` | The simulation, as PSQL procedures. `DOOM_TIC` is the entry point (see below). The frame tables' machine is here too: `SET_STATE` (`P_SetMobjState`), `STATE_ACTION` (the actions by name, each its own procedure: `A_LOOK`, `A_CHASE`, `A_FACE_TARGET`, `A_BULLETS`, …) and `STATES_THINK`, which `WORLD_TIC` runs every tic. Every type but the markers (`thing_types.on_states`, `thinginfo.js`'s `ON_STATES`) spawns into it; each state's `mode` is kept in `things.st` by `SET_STATE`, for the queries that ask whether a thing can be shot or is a corpse. (The old per-mode rules, `MONSTERS_THINK`, are gone: ROADMAP, phase 6.) The weapon in the player's hands runs on the same table (phase 4): `SET_PSPRITE` (`P_SetPsprite`), `MOVE_PSPRITES` (`P_MovePsprites`, from `PLAYER_THINK`) and `PSPRITE_ACTION` (`A_WeaponReady`, `A_ReFire`, `A_Lower`, `A_Raise`, `A_GunFlash`, each weapon's fire action), over the player's two psprites in `player` and `weapon_info` (`weaponinfo[]`). |
 | `sql/render.sql` | The visibility half of the renderer: `RENDER_SLICES` (brute force), `RENDER_SLICES_BSP` (BSP walk with solidsegs), `RENDER_WALLS` (clipping and visplane rows), `RENDER_SPRITES`, and the views `FRAME_WALLS`, `FRAME_WALLS_WINDOWED`, `FRAME_SPRITES`, `FRAME_SECTORS`, `FRAME_VISPLANES`. |
 | `src/main.js` | The page: boots Firebird, loads WADs and maps, reads input, runs the frame loop, and owns the intermission and finale objects, the settings and the cheats. |
 | `src/loader.js` | WAD → Firebird: `createSchema`, `loadResources` (textures, flats, sprites, thing types), `loadMap` (one level's lumps plus `INIT_MAP`), `setView`, `setRenderer`. Bulk inserts go through `execBatch`, with every value bound as a parameter. |
@@ -71,9 +71,10 @@ Per tic, `DOOM_TIC` runs:
   lookup through `LINES_IN_BOX`), walk-over lines, gravity, sector specials, use lines, weapons
   (`HITSCAN` with `AIM_SLOPE`, `FIRE_MISSILE`), noise (`NOISE_ALERT`) and pickups.
 - `MOVERS_THINK`: doors, lifts, floors, stairs and crushers (`movers` rows).
-- `MONSTERS_THINK`: one stable cursor over the live things. It handles monsters (A_Look, A_Chase,
-  attacks, pain, death, raising), missiles, effects, flames, the brain and its cubes, and vertical
-  physics (`Z_RANGE`).
+- `STATES_THINK`: the frame tables. A charging lost soul's flight (`SKULLS_THINK`) and the
+  projectiles' (`MISSILES_THINK`), the falls and floats (`P_ZMovement`), then every thing whose
+  state ends this tic goes on to its next (`SET_STATE`, which calls the next state's action:
+  A_Look, A_Chase, the attacks, …).
 - `LIGHTS_THINK` every other tic.
 - The countdowns: damage and bonus flashes, messages, power-ups.
 
@@ -82,7 +83,7 @@ Per tic, `DOOM_TIC` runs:
 calls always give the same game, which is what demos rely on. Never call `RAND()` in the game
 SQL, and never let a tic depend on wall-clock time or on the frame rate except through `tics`.
 And never let it depend on physical row order: cursors whose order matters say `ORDER BY`
-(`MONSTERS_THINK` runs in id order, like `P_RunThinkers` in spawn order), and `p_random()` is
+(`STATES_THINK` runs in id order, like `P_RunThinkers` in spawn order), and `p_random()` is
 never drawn inside a multi-row `UPDATE` (`LIGHTS_THINK` flickers one sector at a time).
 
 Sounds are rows: `PLAY_SOUND` inserts into `SOUND_EVENTS`, and the page plays whatever is newer
@@ -204,10 +205,10 @@ GitHub Pages.
 - **Name clashes.** PSQL variables and columns share a namespace in expressions: qualify columns
   (`t.x`) and prefix variables (`:x`) inside SQL statements.
 - **`FOR SELECT` cursors are stable** (Firebird 3+): they don't see rows changed after they
-  opened. `MONSTERS_THINK` re-reads each thing's live state at the top of the loop. Otherwise a
+  opened. `STATES_THINK` re-checks each thing's state is still due before it moves it on. Otherwise a
   monster killed earlier in the same tic walks on with negative health.
-- **Idle things think every 8 tics** (`MOD(tic + id, 8)`). A thing that must act every tic needs a
-  state other than `idle` (for example `burn` for the arch-vile's flame).
+- **A thing acts when its state ends** (`state_tic`, indexed): a monster asleep in A_Look looks
+  as often as its spawn state's tics say (10 for most), as in DOOM.
 - **`CHAR(n)` comes back padded**, and `IIF` over two string literals of different lengths pads
   the shorter one (`TRIM` it). `MINVALUE`/`MAXVALUE` return `NULL` if any argument is `NULL`.
 - **Evaluation order isn't guaranteed.** Guard divisions with `NULLIF` even when a `WHERE` "should"

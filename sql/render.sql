@@ -449,7 +449,6 @@ DECLARE kind VARCHAR(10);
 DECLARE fr CHAR(1);
 DECLARE spr CHAR(4);
 DECLARE sec INTEGER;
-DECLARE walk_fr VARCHAR(16);
 DECLARE bright SMALLINT;
 DECLARE r DOUBLE PRECISION;
 DECLARE rot INTEGER;
@@ -470,14 +469,15 @@ BEGIN
   ca = COS(pa);
   sa = SIN(pa);
 
-  -- (a thing on the frame tables shows its state's sprite, frame and full-bright bit)
-  FOR SELECT th.id, th.x, th.y, th.z, th.angle, th.kind, COALESCE(sx.frame, th.frame), COALESCE(sx.sprite, th.sprite, tt.sprite),
-             th.sector_id, tt.walk_fr, COALESCE(sx.bright, tt.bright), COALESCE(tt.shadow, 0), th.translation
+  -- (each thing shows its state's sprite, frame and full-bright bit: DOOM's frame tables)
+  FOR SELECT th.id, th.x, th.y, th.z, th.angle, th.kind, sx.frame, sx.sprite,
+             th.sector_id, sx.bright, COALESCE(tt.shadow, 0), th.translation
         FROM things th
-        LEFT JOIN thing_types tt ON tt.thing_type = th.thing_type
         LEFT JOIN states sx ON sx.id = th.state
+        LEFT JOIN thing_types tt ON tt.thing_type = th.thing_type
        WHERE th.kind NOT IN ('marker', 'shooter') AND th.id <> :me   -- (every player but the one looking)
-        INTO id, tx, ty, tz, tang, kind, fr, spr, sec, walk_fr, bright, fuzz, tr
+         AND th.state IS NOT NULL
+        INTO id, tx, ty, tz, tang, kind, fr, spr, sec, bright, fuzz, tr
   DO
   BEGIN
     depth = (tx - px) * ca + (ty - py) * sa;
@@ -485,8 +485,6 @@ BEGIN
     r = (tx - px) * sa - (ty - py) * ca;
     IF (ABS(r) > depth * (w / 2) / proj + 128) THEN CONTINUE;   -- well outside the view
 
-    IF (fr IS NULL) THEN
-      fr = SUBSTRING(walk_fr FROM 1 + MOD(tic / 6 + id, CHAR_LENGTH(walk_fr)) FOR 1);
     -- R_ProjectSprite: rotation 1..8 from the angle between viewer and thing
     rot = 1 + MOD(CAST(FLOOR((ATAN2(ty - py, tx - px) - tang + PI() * 9 / 8) / (PI() / 4)) AS INTEGER) + 64, 8);
     lump = NULL;

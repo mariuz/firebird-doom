@@ -6,7 +6,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Wad } from '../src/wad.js';
 import { THING_TYPES } from '../src/thinginfo.js';
-import { FinaleState, buildCast, parseDehStrings, Finale, frontLump } from '../src/finale.js';
+import { FinaleState, buildCast, parseDehStrings, Finale, frontLump, chainFrames } from '../src/finale.js';
+import { STATES } from '../src/states.js';
+
+/** every sprite frame a cast member shows (its see, missile, melee and death chains) with no front view in NAMES */
+const missingFrames = (cast, names) => cast.flatMap((c) => [...new Set([c.see, c.missile, c.melee, c.death].flatMap((st) => chainFrames(STATES, st)))]
+  .filter((f) => !frontLump(names, f.slice(0, 4), f[4])));
 import { wadFromEnv, placeholder } from './wad-arg.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -26,12 +31,11 @@ if (!fs.existsSync(wadPath)) {
   const strings = parseDehStrings(new TextDecoder('latin1').decode(wad.data(wad.lump('DEHACKED'))));
   const cast = buildCast(THING_TYPES, strings);
   const text = strings.get('C4TEXT');
-  assert(text && text.length > 100 && cast.length === 17 && cast.every((c) => c.name && c.walk && c.death),
+  assert(text && text.length > 100 && cast.length === 17 && cast.every((c) => c.name && c.see > 0 && c.death > 0),
     `the WAD's story text (${text?.length} characters) and a cast of ${cast.length}, ending with "${cast.at(-1).name}"`);
   const names = wad.lumps.map((l) => l.name);
-  const missing = cast.flatMap((c) => [...new Set([...c.walk, ...(c.attack ?? ''), ...(c.melee ?? ''), ...c.death])]
-    .filter((f) => !frontLump(names, c.sprite, f)).map((f) => c.sprite + f));
-  assert(missing.length === 0, `every cast frame has a front-facing sprite${missing.length ? ` (missing ${missing.join(' ')})` : ''}`);
+  const missing = missingFrames(cast, names);
+  assert(missing.length === 0, `every cast frame (its states' chains) has a front-facing sprite${missing.length ? ` (missing ${missing.join(' ')})` : ''}`);
   const d = frontLump(names, 'SKEL', 'D');
   assert(d?.name === 'SKELA1D1' && d.flip === true && frontLump(names, 'SKEL', 'A')?.flip === false,
     `a frame found in the second half of a name is drawn flipped (SKEL D: ${d?.name}, flip ${d?.flip})`);
@@ -45,19 +49,22 @@ if (!fs.existsSync(wadPath)) {
   assert(f.stage === 'text', 'fire does nothing before 50 tics');
   for (let i = 0; i < 10; i++) f.tick(false);
   f.tick(true);
-  assert(f.stage === 'cast' && f.castnum === 0 && sounds.includes(cast[0].seeSnd),
-    `after 50 tics fire starts the cast with ${cast[0].name}, who announces itself (${cast[0].seeSnd})`);
+  assert(f.stage === 'cast' && f.castnum === 0 && !sounds.includes(cast[0].seeSnd) && f.pose.sprite + f.pose.frame === 'POSSA',
+    `after 50 tics fire starts the cast with ${cast[0].name} in S_POSS_RUN1 (F_StartCast: the first doesn't announce itself)`);
 
-  // walks for 12 frames, then attacks
+  // walks for 12 frames (S_POSS_RUN1–8, 4 tics each), then attacks: S_POSS_ATK1 for 10, and
+  // F_CastTicker's sound hack for S_POSS_ATK2, the pistol
   const modes = new Set();
-  for (let i = 0; i < 12 * 4 + 2; i++) { f.tick(false); modes.add(f.mode); }
-  assert(modes.has('see') && modes.has('attack') && sounds.includes(cast[0].atkSnd), `it walks, then attacks (${[...modes].join(', ')})`);
+  let firstAttack = null;
+  for (let i = 1; i <= 12 * 4 + 12; i++) { f.tick(false); modes.add(f.mode); if (firstAttack === null && f.mode === 'attack') firstAttack = i; }
+  assert(modes.has('see') && modes.has('attack') && firstAttack === 48 && sounds.includes('DSPISTOL'),
+    `it walks, then attacks at tic ${firstAttack} (${[...modes].join(', ')}), with the pistol's sound`);
 
   // a key kills it: its death frames, then the next one comes on
   f.press();
   const deathFrames = [];
   for (let i = 0; i < 200 && f.castnum === 0; i++) { if (deathFrames.at(-1) !== f.pose.frame) deathFrames.push(f.pose.frame); f.tick(false); }
-  assert(deathFrames.join('') === cast[0].death && sounds.includes(cast[0].deathSnd) && f.castnum === 1,
+  assert(deathFrames.join('') === chainFrames(STATES, cast[0].death).map((x) => x[4]).join('') && sounds.includes(cast[0].deathSnd) && f.castnum === 1,
     `a key kills it (${deathFrames.join('')}, ${cast[0].deathSnd}), then ${cast[1].name} comes on`);
   f.press();
   f.press();   // (a second key while it's dying changes nothing)
@@ -219,8 +226,7 @@ else if (env && !env.doom2) {
   const c = new Finale(null, { playMusic: (m) => cm.push(m), playEvents() {} }, w, THING_TYPES, 'MAP30');
   const names = w.lumps.map((l) => l.name);
   const cast = buildCast(THING_TYPES, new Map());
-  const missing = cast.flatMap((k) => [...new Set([...k.walk, ...(k.attack ?? ''), ...(k.melee ?? ''), ...k.death])]
-    .filter((f) => !frontLump(names, k.sprite, f)).map((f) => k.sprite + f));
+  const missing = missingFrames(cast, names);
   assert(!Finale.available(w, 'MAP06') && Finale.available(w, 'MAP30') && c.state.stage === 'cast' && cm[0] === 'D_EVIL' && missing.length === 0,
     `WAD=${env.name}: without words no MAP06 screen; MAP30 goes straight to the cast, to ${cm[0]}, every frame in the WAD${missing.length ? ` (missing ${missing.join(' ')})` : ''}`);
   const d2Path = path.join(root, 'public/wads/freedoom2.wad');

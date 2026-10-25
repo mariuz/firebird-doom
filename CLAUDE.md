@@ -93,9 +93,10 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 - **Firebird:** `db.exec` splits on `;` (use `SET TERM` or `db.query` for `EXECUTE BLOCK`). About
   256 contexts per statement (an `EXECUTE BLOCK` of `INSERT`s; bulk inserts use `execBatch`). CTEs are inlined (use PSQL generators).
   Pin join order (`LEFT JOIN`/`LATERAL`). Qualify columns and use `:var`. `FOR SELECT` cursors are
-  stable, so `MONSTERS_THINK` re-reads live state per thing. Idle things think every 8 tics. `IIF`
+  stable, so `STATES_THINK` re-checks a thing's state is still due before moving it on. `IIF`
   over two literals of different lengths pads the shorter, so `TRIM` it. `MINVALUE`/`MAXVALUE`
-  propagate `NULL`. Guard divisions with `NULLIF`. Fractional doubles written into SQL as
+  propagate `NULL`. Guard divisions with `NULLIF`. `ATAN2(0, 0)` is an error: angles go through
+  `atan2_safe` (0 there, as `R_PointToAngle2`). Fractional doubles written into SQL as
   text literals can come back one bit off (about one in ten). Bind them as parameters instead:
   since `firebird-wasm` 0.4 a number parameter is bound in binary and lands exactly. For many
   rows use `db.execBatch(sql, rows)`, one prepared statement for every row in one call
@@ -133,13 +134,13 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 
 | Task | Start here |
 | --- | --- |
-| New monster behaviour, weapon, linedef or sector special | `sql/game.sql` (`MONSTERS_THINK`, `PLAYER_THINK`, `ACTIVATE_LINE`) and `src/thinginfo.js` |
+| New monster behaviour, weapon, linedef or sector special | `sql/game.sql` (`STATE_ACTION` and the `A_*` procedures, `PSPRITE_ACTION`, `PLAYER_THINK`, `ACTIVATE_LINE`), `src/states.js` (generated) and `src/thinginfo.js` |
 | New thing type or flag | `src/thinginfo.js`, `sql/schema.sql` (`thing_types`) and the column list in `src/loader.js` |
 | Rendering bug | `sql/render.sql` (what's visible) vs `src/renderer.js` (how it's drawn); `compare-renderers.mjs` |
 | Colours, palette, upscaling | `src/present.js` |
 | Screens between levels | `src/intermission.js`, `src/finale.js`, `src/progress.js`; the hand-off is in `main.js`'s `frame()` |
 | Cheats | SQL `CHEAT` procedure; readers in `src/cheats.js`; key handling in `main.js` |
-| Save and load | `src/savegame.js` (what's saved: its `WHOLE`/`MOVING` lists; **add a column there if the simulation starts changing a new one**); after a schema change run `npm run save-fixtures`, and if an old save stops loading, migrate it in `restoreGame`; `saveToSlot`/`loadFromSlot` in `main.js` |
+| Save and load | `src/savegame.js` (what's saved: its `WHOLE`/`MOVING` lists; **add a column there if the simulation starts changing a new one**); after a schema change run `npm run save-fixtures`, and if an old save stops loading, migrate it in `restoreGame` (a dropped column goes in `RETIRED`, an old shape is mended in SQL's `ADOPT_STATES`); `saveToSlot`/`loadFromSlot` in `main.js` |
 | DOOM's frame tables (states) | `src/states.js` (GPL-2, generated), the `states` table, `SET_STATE` / `STATE_ACTION` / `STATES_THINK` in `sql/game.sql`; the phases in `docs/ROADMAP.md` (Simulation) |
 | DeHackEd, rules a patch can change | `src/dehacked.js`, the `RULES` table (SQL reads it instead of hard-coding those numbers) |
 | Demos | `src/demo.js`; recording and playback in `main.js` (`startRecording`, `playDemo`, the frame loop); the title loop's in `scripts/record-attract.mjs` (`startAttract` in `main.js`) |
