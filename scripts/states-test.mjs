@@ -36,7 +36,7 @@ assert(n.N === 967 && n.LO === 0 && n.HI === 966 && dangling.N === 0 && STATES.l
 const st = (name) => one(`SELECT s.*, (SELECT n.name FROM states n WHERE n.id = s.next_state) nxt FROM states s WHERE s.name = '${name}'`);
 const checks = [
   ['S_POSS_ATK1', 'POSS', 'E', 0, 10, 'A_FaceTarget', 'S_POSS_ATK2'],   // the zombieman takes aim…
-  ['S_POSS_ATK2', 'POSS', 'F', 0, 8, 'A_PosAttack', 'S_POSS_ATK3'],      // …fires…
+  ['S_POSS_ATK2', 'POSS', 'F', 1, 8, 'A_PosAttack', 'S_POSS_ATK3'],      // …fires (full bright: Freedoom's DEHACKED)…
   ['S_POSS_ATK3', 'POSS', 'E', 0, 8, null, 'S_POSS_RUN1'],               // …and goes back to chasing
   ['S_PISTOL1', 'PISG', 'A', 0, 4, null, 'S_PISTOL2'],
   ['S_PISTOL2', 'PISG', 'B', 0, 6, 'A_FirePistol', 'S_PISTOL3'],
@@ -51,7 +51,7 @@ for (const [name, sprite, frame, bright, tics, action, next] of checks) {
   const got = [t(s?.SPRITE), t(s?.FRAME), s?.BRIGHT, s?.TICS, t(s?.ACTION) ?? null, t(s?.NXT)];
   if (JSON.stringify(got) !== JSON.stringify([sprite, frame, bright, tics, action, next])) wrong.push(`${name}: ${JSON.stringify(got)}`);
 }
-assert(wrong.length === 0, `${checks.length} states as info.c has them (the zombieman's 10 + 8 + 8 tics to fire, the pistol, the imp, the boss brain's explosions)${wrong.length ? `; ${wrong.join('; ')}` : ''}`);
+assert(wrong.length === 0, `${checks.length} states as info.c has them, with the WAD's DEHACKED applied (the zombieman's 10 + 8 + 8 tics to fire, the pistol, the imp, the boss brain's explosions)${wrong.length ? `; ${wrong.join('; ')}` : ''}`);
 
 // the actions: every one is DOOM's (A_…), and those this port already has are named in game.sql
 const actions = (await all('SELECT DISTINCT action FROM states WHERE action IS NOT NULL ORDER BY 1')).map((r) => r.ACTION.trim());

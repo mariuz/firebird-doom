@@ -546,21 +546,38 @@ A WAD's `DEHACKED` lump is applied when the WAD loads ([src/dehacked.js](src/deh
 Chocolate Doom's `deh_*.c`):
 
 - **Thing** blocks change a monster's, item's or missile's hit points, speed, size, pain chance,
-  mass, missile damage, sounds, map number (`ID #`), and the bits the port models (solid,
-  floating, shadow, hanging from the ceiling). The patched list is what goes into `THING_TYPES`.
+  mass, missile damage, reaction time, sounds, map number (`ID #`), its eight states (`Initial
+  frame` to `Respawn frame`), and the bits the port models (solid, floating, shadow, hanging from
+  the ceiling). The patched list is what goes into `THING_TYPES`. A type given another map number
+  keeps its own states.
+- **Frame** blocks change a state in DOOM's frame tables: its sprite (`Sprite number`, one of
+  `sprnames[]`), frame and full-bright bit (`Sprite subnumber`), tics (`Duration`), next state and
+  `misc1`/`misc2` (`Unknown 1`, `Unknown 2`). Frame 966, one past the end of DOS DeHackEd's own
+  table, lands in the fist's weapon entry, as it did in DOS DeHackEd (Batman Doom's fist never
+  comes down). The patched table is what goes into Firebird's `STATES`, and every thing and
+  weapon plays from it.
+- **Pointer** blocks (`Pointer N (Frame M)`, `Codep Frame = K`) give frame M the action frame K
+  had as the game shipped. Each action does what DOOM's does whoever calls it: a zombieman given
+  `A_TroopAttack` throws an imp's fireball (the actions name their own projectile, and play its
+  sound, as `P_SpawnMissile` does).
+- **Weapon** blocks change a weapon's ammo and its five states (`Deselect frame` is the up state
+  and `Select frame` the down one, as DeHackEd names them), in `WEAPON_INFO`.
 - **Ammo** and **Misc** change the rules in the `RULES` table: starting health and bullets, the
   caps for bonuses and the soulsphere, what the soulsphere and megasphere give, the armour classes,
   IDDQD's health and IDFA's and IDKFA's armour, BFG cells per shot, max ammo and clip sizes. Every
   ammo pickup's amount follows the clip size, as `P_GiveAmmo` counts in clips.
 - **Cheat** respells the cheat codes, and BEX **[PARS]** sets par times. Freedoom's own lump has both:
   its par times show on the intermission, and in Phase 1 IDCLIP and IDSPISPOPD swap places.
-- **Frame**, **Pointer**, **Weapon**, **Sound** and **Text** blocks can't be applied yet: the state
-  tables they patch are in Firebird now, and applying them is the next phase (see the ROADMAP).
-  They're listed in the console instead. Freedoom's seven frame patches (brighter muzzle flashes, a shorter super
-  shotgun flash) are among them.
+- Freedoom's own lump has seven Frame patches, and they apply. The zombieman's, the chaingunner's
+  and the cyberdemon's firing frames are full bright, and the super shotgun's flash is 4 + 3 tics
+  instead of 5 + 4, so it ends with the shot's frame.
+- **Sound**, **Sprite** and **Text** blocks, BEX's `[CODEPTR]` and the other BEX sections aren't
+  supported. They're listed in the console instead.
 
-`npm run test:dehacked` reads Freedoom's lump and a patch with every kind of block, then plays the
-patched rules in Firebird.
+`npm run test:dehacked` reads Freedoom's lump and checks its seven frames. It reads a patch with
+every kind of block and plays the patched rules in Firebird. It also plays a patch to the frame
+tables: an imp that attacks four times as fast, a zombieman with the imp's attack, a pistol that
+fires through the shotgun's frames, a reaction time, a sprite swapped, and frame 966's overflow.
 
 ### Testing with id's WADs
 

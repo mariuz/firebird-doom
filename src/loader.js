@@ -4,11 +4,11 @@
 // (scripts/sql-smoke.mjs), so CI exercises exactly the SQL the page runs.
 
 import { THING_TYPES, MOBJ_TYPE, SPAWN_STATE, ON_STATES } from './thinginfo.js';
-import { STATES, MOBJINFO, WEAPONINFO } from './states.js';
+import { STATES, MOBJINFO } from './states.js';
 
 // each thing type's eight states (spawn … raise), from its DOOM mobj type: by the
 // map number, else MOBJ_TYPE; [] when DOOM has no such type
-const MOBJ_BY_ED = new Map(Object.values(MOBJINFO).filter((m) => m.ednum > 0).map((m) => [m.ednum, m]));
+const MOBJ_BY_ED = new Map(Object.entries(MOBJINFO).filter(([, m]) => m.ednum > 0).map(([k, m]) => [m.ednum, k]));
 const STATE_ID = new Map(STATES.map((s, i) => [s[0], i]));
 /**
  * Each state's mode, the old rules' word for that stage of a thing's life (THINGS.ST):
@@ -18,24 +18,24 @@ const STATE_ID = new Map(STATES.map((s, i) => [s[0], i]));
  * corpse's last frame is also the spawn state of the map's dead-monster
  * decorations, S_POSS_DIE5 for a dead former human, and must stay 'dead'.)
  */
-export function stateModes() {
-  const mode = new Array(STATES.length).fill(null);
+export function stateModes(states = STATES, mobjinfo = MOBJINFO) {
+  const mode = new Array(states.length).fill(null);
   const order = [[5, 'dying'], [6, 'dying'], [0, 'fly'], [0, 'idle'], [1, 'chase'], [4, 'attack'], [3, 'melee'], [2, 'pain'], [7, 'raise']];
   // (a projectile's flight is 'fly', as the old rules call it)
   const MISSILES = new Set(['MT_TROOPSHOT', 'MT_HEADSHOT', 'MT_BRUISERSHOT', 'MT_ROCKET', 'MT_PLASMA', 'MT_BFG', 'MT_TRACER',
     'MT_FATSHOT', 'MT_ARACHPLAZ', 'MT_SPAWNSHOT']);
   for (const [field, m] of order) {
-    for (const [name, mobj] of Object.entries(MOBJINFO)) {
+    for (const [name, mobj] of Object.entries(mobjinfo)) {
       if (m === 'fly' && !MISSILES.has(name)) continue;
-      for (let s = mobj.states[field], n = 0; s > 0 && mode[s] === null && n < 64; s = STATES[s][6], n++) {
-        mode[s] = m === 'dying' && STATES[s][4] === -1 ? 'dead' : m;
+      for (let s = mobj.states[field], n = 0; s > 0 && mode[s] === null && n < 64; s = states[s][6], n++) {
+        mode[s] = m === 'dying' && states[s][4] === -1 ? 'dead' : m;
       }
     }
   }
   return mode;
 }
-export function typeStates(type) {
-  const m = MOBJ_TYPE[type] ? MOBJINFO[MOBJ_TYPE[type]] : MOBJ_BY_ED.get(type);
+export function typeStates(type, mobjinfo = MOBJINFO) {
+  const m = mobjinfo[MOBJ_TYPE[type] ?? MOBJ_BY_ED.get(type)];
   if (!m) return [0, 0, 0, 0, 0, 0, 0, 0];
   const s = [...m.states];
   if (SPAWN_STATE[type]) s[0] = STATE_ID.get(SPAWN_STATE[type]);
@@ -148,7 +148,7 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
       'pain_fr', 'death_fr', 'death_sprite', 'bright', 'atk_kind', 'missile_type', 'dmg_lo', 'dmg_hi', 'shots',
       'drop_type', 'pickup', 'amount', 'label', 'see_snd', 'atk_snd', 'pain_snd', 'death_snd', 'hang',
       'melee_fr', 'melee_snd', 'melee_hit_snd', 'melee_dmg', 'melee_rolls', 'mass', 'floats', 'nogravity', 'shadow', 'active_snd',
-      'count_kill', 'count_item', 'spawn_state', 'see_state', 'pain_state', 'melee_state', 'missile_state',
+      'count_kill', 'count_item', 'reaction_time', 'spawn_state', 'see_state', 'pain_state', 'melee_state', 'missile_state',
       'death_state', 'xdeath_state', 'raise_state', 'on_states'],
     deh.types.map((t) => [
       t.type, t.sprite, t.kind, t.radius, t.height, t.solid ?? 0, t.hp ?? null, t.speed ?? null, t.painChance ?? null,
@@ -158,19 +158,21 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
       t.seeSnd ?? null, t.atkSnd ?? null, t.painSnd ?? null, t.deathSnd ?? null, t.hang ?? 0,
       t.meleeFr ?? null, t.meleeSnd ?? null, t.meleeHitSnd ?? null, t.meleeDmg ?? null, t.meleeRolls ?? null,
       t.mass ?? 100, t.floats ?? 0, t.nogravity ?? 0, t.shadow ?? 0, t.activeSnd ?? null, t.countKill ?? 0, t.countItem ?? 0,
-      ...typeStates(t.type), ON_STATES.has(t.type) ? 1 : 0,
+      // (mobjinfo's reaction time: 8, the player's 0; its states and whether it's on the tables
+      // are the type's it was, even if an ID # patch gave it another map number)
+      t.reaction ?? (t.base === 1 ? 0 : 8), ...typeStates(t.base ?? t.type, deh.mobjinfo), ON_STATES.has(t.base ?? t.type) ? 1 : 0,
     ]),
   );
-  // DOOM's state table (src/states.js)
-  const modes = stateModes();
+  // DOOM's state table (src/states.js), as the patch left it
+  const modes = stateModes(deh.states, deh.mobjinfo);
   // (G_InitNew's -fast halves these: the demons' run, attack and pain states)
   const fastFrom = STATE_ID.get('S_SARG_RUN1');
   const fastTo = STATE_ID.get('S_SARG_PAIN2');
   await insertRows(db, 'states', ['id', 'name', 'sprite', 'frame', 'bright', 'tics', 'action', 'next_state', 'misc1', 'misc2', 'mode', 'fast'],
-    STATES.map((s, i) => [i, ...s, modes[i], i >= fastFrom && i <= fastTo ? 1 : 0]));
+    deh.states.map((s, i) => [i, ...s, modes[i], i >= fastFrom && i <= fastTo ? 1 : 0]));
   // weaponinfo[], weapon k + 1 for DOOM's weapontype_t k
   await insertRows(db, 'weapon_info', ['weapon', 'ammo', 'up_state', 'down_state', 'ready_state', 'atk_state', 'flash_state'],
-    WEAPONINFO.map((w, k) => [k + 1, w.ammo, ...w.states]));
+    deh.weapons.map((w, k) => [k + 1, w.ammo, ...w.states]));
   await db.exec(`SET TERM ^ ;
 EXECUTE BLOCK AS DECLARE i INTEGER = 0;
 BEGIN WHILE (i < 1280) DO BEGIN INSERT INTO screen_cols (x) VALUES (:i); i = i + 1; END END^

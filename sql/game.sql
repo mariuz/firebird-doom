@@ -47,6 +47,15 @@ BEGIN
   RETURN (s / 65536) / 32768e0;
 END^
 
+-- R_PointToAngle2's angle from a point to another, in radians: ATAN2, but two points in one
+-- place give 0, as DOOM's does (Firebird's ATAN2 refuses 0, 0)
+CREATE OR ALTER FUNCTION atan2_safe (dy DOUBLE PRECISION, dx DOUBLE PRECISION) RETURNS DOUBLE PRECISION
+AS
+BEGIN
+  IF (dy = 0 AND dx = 0) THEN RETURN 0;
+  RETURN ATAN2(dy, dx);
+END^
+
 -- P_Random() as DOOM uses it: 0…255 (for its % and & arithmetic)
 CREATE OR ALTER FUNCTION p_rand256 RETURNS INTEGER
 AS
@@ -352,11 +361,11 @@ BEGIN
          IIF(tt.kind = 'fx', CHAR_LENGTH(tt.walk_fr) * 4, 0),
          IIF(tt.kind IN ('fx', 'missile', 'monster'), SUBSTRING(tt.walk_fr FROM 1 FOR 1), NULL),
          -- on the frame tables: its spawn state, as P_SpawnMobj sets it (no action), and
-         -- its reaction time (mobjinfo's 8; none on Nightmare)
+         -- its reaction time (mobjinfo's: 8, the player's 0; none on Nightmare)
          IIF(tt.on_states = 1, tt.spawn_state, NULL),
          IIF(tt.on_states = 1, (SELECT IIF(s.tics < 0, NULL, g.tic + s.tics) FROM states s CROSS JOIN game g
                                  WHERE s.id = tt.spawn_state AND g.id = 1), NULL),
-         IIF(tt.on_states = 1 AND tt.kind <> 'player', (SELECT IIF(g.skill = 5, 0, 8) FROM game g WHERE g.id = 1), 0)
+         IIF(tt.on_states = 1, (SELECT IIF(g.skill = 5, 0, tt.reaction_time) FROM game g WHERE g.id = 1), 0)
     FROM thing_types tt WHERE tt.thing_type = :ttype;
 END^
 
@@ -2075,7 +2084,7 @@ BEGIN
     EXIT;
   END
   EXECUTE PROCEDURE play_sound(IIF(saw = 1, 'DSSAWHIT', 'DSPUNCH'), tid, x, y);
-  d = ATAN2(ty - y, tx - x);
+  d = atan2_safe(ty - y, tx - x);
   IF (saw = 0) THEN ang = d;
   ELSE
   BEGIN
@@ -2164,7 +2173,7 @@ BEGIN
   SELECT p.thing_id, t.x, t.y, t.z, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = :pid
     INTO tid, x, y, z, ang;
   EXECUTE PROCEDURE fire_missile(mtype, tid, x, y, z, ang);
-  IF (mtype <> 9005) THEN EXECUTE PROCEDURE play_sound(IIF(mtype = 9003, 'DSRLAUNC', 'DSPLASMA'), tid, x, y);
+  EXECUTE PROCEDURE play_sound((SELECT mt.see_snd FROM thing_types mt WHERE mt.thing_type = :mtype), tid, x, y);
 END^
 
 -- A_WeaponReady: out of the shooting frames the body stands (S_PLAY); the chainsaw idles
@@ -2544,7 +2553,7 @@ BEGIN
     -- USE – and turn to face your killer, 5° a tic; until you do, the red of the damage stays
     EXECUTE PROCEDURE move_psprites(pid, tic);
     view_h = MAXVALUE(6, view_h - 1);
-    SELECT ATAN2(a.y - :y, a.x - :x) FROM player p JOIN things a ON a.id = p.attacker_id
+    SELECT atan2_safe(a.y - :y, a.x - :x) FROM player p JOIN things a ON a.id = p.attacker_id
      WHERE p.id = :pid AND a.id <> :tid INTO killer_ang;
     IF (killer_ang IS NOT NULL) THEN
     BEGIN
@@ -3355,7 +3364,7 @@ BEGIN
     IF (check_sight(x, y, z + hgt * 0.75e0, qx, qy, qz + 41) = 0) THEN CONTINUE;
     IF (allaround = 0) THEN
     BEGIN
-      d = ATAN2(qy - y, qx - x) - ang;
+      d = atan2_safe(qy - y, qx - x) - ang;
       d = d - 2 * PI() * FLOOR(d / (2 * PI()));
       IF (d > PI() / 2 AND d < 3 * PI() / 2 AND SQRT((qx - x) * (qx - x) + (qy - y) * (qy - y)) > 64) THEN CONTINUE;
     END
@@ -3601,7 +3610,7 @@ BEGIN
           SELECT FIRST 1 t.id, t.x, t.y FROM things t WHERE t.thing_type = 87 ORDER BY p_random() INTO spot, sx, sy;
           IF (spot IS NOT NULL) THEN
           BEGIN
-            ang = ATAN2(sy - y, sx - x);
+            ang = atan2_safe(sy - y, sx - x);
             EXECUTE PROCEDURE spawn_thing(9009, x, y, z, ang) RETURNING_VALUES mid;
             UPDATE things t SET momx = COS(:ang) * 10, momy = SIN(:ang) * 10, owner_id = :spot, st = 'fly'
              WHERE t.id = :mid;
@@ -3624,7 +3633,7 @@ BEGIN
           CASE WHEN r < 50 THEN 3001 WHEN r < 90 THEN 3002 WHEN r < 120 THEN 58 WHEN r < 130 THEN 71
                WHEN r < 160 THEN 3005 WHEN r < 162 THEN 64 WHEN r < 172 THEN 66 WHEN r < 192 THEN 68
                WHEN r < 222 THEN 67 WHEN r < 246 THEN 69 ELSE 3003 END,
-          sx, sy, NULL, ATAN2(py - sy, px - sx)) RETURNING_VALUES mid;
+          sx, sy, NULL, atan2_safe(py - sy, px - sx)) RETURNING_VALUES mid;
         UPDATE things t SET st = 'chase', reaction = 2 WHERE t.id = :mid;
         EXECUTE PROCEDURE play_sound('DSTELEPT', mid, sx, sy);
       END
@@ -3751,7 +3760,7 @@ BEGIN
     BEGIN
       -- A_SkelWhoosh then A_SkelFist: swing on the second frame, hit on the third
       st_tics = st_tics - 1;
-      ang = ATAN2(py - y, px - x);
+      ang = atan2_safe(py - y, px - x);
       idx = MINVALUE(CHAR_LENGTH(melee_fr) - 1, (st_len - st_tics) / 8);
       frame = SUBSTRING(melee_fr FROM 1 + idx FOR 1);
       IF (st_len - st_tics = 8) THEN EXECUTE PROCEDURE play_sound(melee_snd, id, x, y);
@@ -3787,7 +3796,7 @@ BEGIN
         -- by at most TRACEANGLE (16.875°) and leaves a puff of smoke
         IF (ttype = 9006 AND MOD(tic, 4) = 0 AND pdead = 0) THEN
         BEGIN
-          a0 = ATAN2(py - y, px - x) - ang;
+          a0 = atan2_safe(py - y, px - x) - ang;
           a0 = a0 - 2 * PI() * FLOOR((a0 + PI()) / (2 * PI()));     -- into [-π, π)
           IF (ABS(a0) <= 0.29452e0) THEN ang = ang + a0;
           ELSE ang = ang + SIGN(a0) * 0.29452e0;
@@ -3923,7 +3932,7 @@ BEGIN
       -- P_LookForPlayers, not all around: only in front, the 180° ahead of it,
       -- unless the player is within MELEERANGE (64) behind its back
       heard = IIF(COALESCE((SELECT se.sound_heard FROM sectors se WHERE se.id = :sec), 0) > 0, 1, 0);
-      delta = ATAN2(py - y, px - x) - ang;
+      delta = atan2_safe(py - y, px - x) - ang;
       delta = delta - 2 * PI() * FLOOR(delta / (2 * PI()));
       behind = IIF(delta > PI() / 2 AND delta < 3 * PI() / 2, 1, 0);
       IF (k = 'monster' AND pdead = 0
@@ -3943,7 +3952,7 @@ BEGIN
     ELSE IF (st = 'attack') THEN
     BEGIN
       st_tics = st_tics - 1;
-      ang = ATAN2(py - y, px - x);
+      ang = atan2_safe(py - y, px - x);
       idx = MINVALUE(CHAR_LENGTH(atk_fr) - 1, (st_len - st_tics) / IIF(fast = 1 AND ttype IN (3002, 58), 4, 8));
       frame = SUBSTRING(atk_fr FROM 1 + idx FOR 1);
       -- A_FatAttack1/2/3: the mancubus fires three volleys of two fireballs,
@@ -4005,7 +4014,7 @@ BEGIN
           -- A_FaceTarget turns up to 45° wide of a shadow: then the volley
           -- only lands if that still points at the target's body
           IF (rejected(sec, psec) = 0 AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1
-              AND (shadowed = 0 OR ABS((p_random() - p_random()) * PI() / 4) < ATAN2(20, dist))) THEN
+              AND (shadowed = 0 OR ABS((p_random() - p_random()) * PI() / 4) < atan2_safe(20, dist))) THEN
           BEGIN
             -- P_LineAttack: the first other monster (or barrel) on the line of
             -- fire takes the bullets instead
@@ -4097,7 +4106,7 @@ BEGIN
           st_len = 30;
           st_tics = 30;
           frame = '[';
-          ang = ATAN2(cy - y, cx - x);
+          ang = atan2_safe(cy - y, cx - x);
           EXECUTE PROCEDURE play_sound('DSSLOP', corpse, cx, cy);
           -- …and the corpse gets up: full health, solid and shootable at once,
           -- its death animation played backwards
@@ -4159,7 +4168,7 @@ BEGIN
                     OR (atk_kind = 'skull' AND p_random() * 256 >= MINVALUE(200, MAXVALUE(0, dist - 192) / 4)))))
             AND rejected(sec, psec) = 0 AND check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41) = 1) THEN
         BEGIN
-          ang = ATAN2(py - y, px - x);
+          ang = atan2_safe(py - y, px - x);
           IF (melee_fr IS NOT NULL AND dist < melee_range) THEN
           BEGIN
             st = 'melee';
@@ -4461,7 +4470,7 @@ BEGIN
          (SELECT TRIM(s.sprite) || s.frame || '0' FROM states s WHERE s.id = p.flash_state), p.damage_count, p.bonus_count, IIF(p.msg_tics > 0, p.msg, NULL),
          p.dead, g.exit_kind, p.kills, g.total_kills, p.items, g.total_items, p.secrets, g.total_secrets,
          t.x, t.y, t.angle, p.view_z, g.sides_rev, g.map_name, p.invis_tics, p.invuln_tics, p.iron_tics, p.infra_tics, p.strength_tics, p.allmap, p.god, p.psp_sx, p.psp_sy, p.extralight,
-         (SELECT ATAN2(a.y - t.y, a.x - t.x) FROM things a WHERE a.id = p.attacker_id AND a.id <> t.id),
+         (SELECT atan2_safe(a.y - t.y, a.x - t.x) FROM things a WHERE a.id = p.attacker_id AND a.id <> t.id),
          -- ST_updateWidgets' st_fragscount: the others you killed, less the times you killed yourself
          COALESCE((SELECT SUM(IIF(f.victim = :pid, -f.n, f.n)) FROM frags f WHERE f.killer = :pid), 0), g.deathmatch
     FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g
@@ -4561,7 +4570,7 @@ DECLARE ang DOUBLE PRECISION;
 BEGIN
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL) THEN EXIT;
-  SELECT ATAN2(:py - t.y, :px - t.x) FROM things t WHERE t.id = :tid INTO ang;
+  SELECT atan2_safe(:py - t.y, :px - t.x) FROM things t WHERE t.id = :tid INTO ang;
   IF (shadow = 1) THEN ang = ang + (p_rand256() - p_rand256()) * PI() / 1024;
   UPDATE things t SET angle = :ang, flags = BIN_AND(t.flags, BIN_NOT(8)) WHERE t.id = :tid;
 END^
@@ -4606,9 +4615,12 @@ BEGIN
 END^
 
 -- A_TroopAttack, and its kin: face the target; within melee reach (P_CheckMeleeRange) a
--- blow of (P_Random() % SIDES + 1) × MULT with SND, else P_SpawnMissile: the type's
--- missile from 32 up, towards the target (at a shadow up to 22.5° astray), with its sound
-CREATE OR ALTER PROCEDURE a_melee_missile (tid INTEGER, sides INTEGER, mult INTEGER, snd VARCHAR(8), melee_only SMALLINT = 0)
+-- blow of (P_Random() % SIDES + 1) × MULT with SND, else P_SpawnMissile: the action's own
+-- missile, MTYPE (A_TroopAttack's MT_TROOPSHOT whoever calls it, as a DeHackEd Pointer may
+-- have it), from 32 up, towards the target (at a shadow up to 22.5° astray), with the
+-- missile's sound (its seesound)
+CREATE OR ALTER PROCEDURE a_melee_missile (tid INTEGER, sides INTEGER, mult INTEGER, snd VARCHAR(8), melee_only SMALLINT = 0,
+                                           mtype INTEGER = NULL)
 AS
 DECLARE tgt INTEGER;
 DECLARE tp SMALLINT;
@@ -4624,7 +4636,6 @@ DECLARE y DOUBLE PRECISION;
 DECLARE z DOUBLE PRECISION;
 DECLARE rad DOUBLE PRECISION;
 DECLARE ang DOUBLE PRECISION;
-DECLARE mtype INTEGER;
 DECLARE msnd VARCHAR(8);
 DECLARE adx DOUBLE PRECISION;
 DECLARE ady DOUBLE PRECISION;
@@ -4632,8 +4643,8 @@ BEGIN
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL) THEN EXIT;
   EXECUTE PROCEDURE a_face_target(tid);
-  SELECT t.x, t.y, t.z, t.radius, tt.missile_type, tt.atk_snd FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-   WHERE t.id = :tid INTO x, y, z, rad, mtype, msnd;
+  SELECT t.x, t.y, t.z, t.radius, (SELECT mt.see_snd FROM thing_types mt WHERE mt.thing_type = :mtype)
+    FROM things t WHERE t.id = :tid INTO x, y, z, rad, msnd;
   adx = ABS(px - x);
   ady = ABS(py - y);
   -- (SIDES NULL: A_CyberAttack, a missile and nothing else)
@@ -4644,7 +4655,7 @@ BEGIN
     EXIT;
   END
   IF (mtype IS NULL OR melee_only = 1) THEN EXIT;   -- (A_SargAttack, A_SkelFist: a blow or nothing)
-  ang = ATAN2(py - y, px - x);
+  ang = atan2_safe(py - y, px - x);
   IF (shadow = 1) THEN ang = ang + (p_rand256() - p_rand256()) * PI() / 2048;
   IF (msnd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(msnd, tid, x, y);
   EXECUTE PROCEDURE monster_missile(tid, mtype, x, y, z, rad, ang, px, py, pz);
@@ -4719,14 +4730,15 @@ BEGIN
   UPDATE things t SET angle = t.angle + :turn * :fs WHERE t.id = :tid;
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL) THEN EXIT;
-  SELECT t.x, t.y, t.z, t.radius, tt.missile_type FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-   WHERE t.id = :tid INTO x, y, z, rad, mtype;
+  -- (MT_FATSHOT, whoever fires it; its seesound as it goes)
+  mtype = 9007;
+  SELECT t.x, t.y, t.z, t.radius FROM things t WHERE t.id = :tid INTO x, y, z, rad;
   WHILE (i < 2) DO
   BEGIN
     off = IIF(i = 0, off1, off2);
-    aim = ATAN2(py - y, px - x);
+    aim = atan2_safe(py - y, px - x);
     IF (shadow = 1) THEN aim = aim + (p_rand256() - p_rand256()) * PI() / 2048;
-    EXECUTE PROCEDURE play_sound('DSFIRSHT', tid, x, y);
+    EXECUTE PROCEDURE play_sound((SELECT mt.see_snd FROM thing_types mt WHERE mt.thing_type = :mtype), tid, x, y);
     EXECUTE PROCEDURE monster_missile(tid, mtype, x, y, z, rad, aim + off * fs, px, py, pz);
     i = i + 1;
   END
@@ -4801,9 +4813,11 @@ BEGIN
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL) THEN EXIT;
   EXECUTE PROCEDURE a_face_target(tid);
-  SELECT t.x, t.y, t.z, t.radius, tt.missile_type, tt.atk_snd FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-   WHERE t.id = :tid INTO x, y, z, rad, mtype, msnd;
-  aim = ATAN2(py - y, px - x);
+  -- (MT_TRACER, whoever fires it; its seesound as it goes)
+  mtype = 9006;
+  SELECT t.x, t.y, t.z, t.radius, (SELECT mt.see_snd FROM thing_types mt WHERE mt.thing_type = 9006)
+    FROM things t WHERE t.id = :tid INTO x, y, z, rad, msnd;
+  aim = atan2_safe(py - y, px - x);
   IF (shadow = 1) THEN aim = aim + (p_rand256() - p_rand256()) * PI() / 2048;
   IF (msnd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(msnd, tid, x, y);
   before = (SELECT MAX(t.id) FROM things t);
@@ -5255,7 +5269,7 @@ BEGIN
       EXECUTE PROCEDURE check_position(cid, cx, cy, cz, crad, chgt, 1) RETURNING_VALUES ok, fz, cz2, dz, sec;
       IF (ok = 1) THEN
       BEGIN
-        UPDATE things t SET angle = ATAN2(:cy - t.y, :cx - t.x) WHERE t.id = :tid;
+        UPDATE things t SET angle = atan2_safe(:cy - t.y, :cx - t.x) WHERE t.id = :tid;
         EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_VILE_HEAL1'), tic) RETURNING_VALUES alive;
         EXECUTE PROCEDURE play_sound('DSSLOP', cid, cx, cy);
         UPDATE things t SET hp = (SELECT ct.hp FROM thing_types ct WHERE ct.thing_type = t.thing_type), solid = 1,
@@ -5308,7 +5322,7 @@ BEGIN
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL OR palive = 0) THEN EXIT;
   ta = 0.29452431127404e0;   -- TRACEANGLE, 0xc000000
-  d = ATAN2(py - y, px - x) - ang;
+  d = atan2_safe(py - y, px - x) - ang;
   d = d - 2 * PI() * FLOOR((d + PI()) / (2 * PI()));   -- (into [−π, π))
   IF (ABS(d) <= ta) THEN ang = ang + d;
   ELSE ang = ang + SIGN(d) * ta;
@@ -5350,7 +5364,7 @@ BEGIN
   SELECT FIRST 1 SKIP (:k) t.id, t.x, t.y, t.z FROM things t WHERE t.thing_type = 87 ORDER BY t.id INTO spot, sx, sy, sz;
   SELECT t.x, t.y, t.z FROM things t WHERE t.id = :tid INTO x, y, z;
   -- P_SpawnMissile
-  ang = ATAN2(sy - y, sx - x);
+  ang = atan2_safe(sy - y, sx - x);
   EXECUTE PROCEDURE spawn_thing(9009, x, y, z + 32, ang) RETURNING_VALUES mid;
   adx = ABS(sx - x);
   ady = ABS(sy - y);
@@ -5476,14 +5490,14 @@ BEGIN
   ELSE IF (act = 'A_SPosAttack') THEN EXECUTE PROCEDURE a_bullets(tid, 3, 'DSSHOTGN');
   ELSE IF (act = 'A_CPosAttack') THEN EXECUTE PROCEDURE a_bullets(tid, 1, 'DSSHOTGN');
   ELSE IF (act = 'A_CPosRefire') THEN EXECUTE PROCEDURE a_cpos_refire(tid, tic);
-  ELSE IF (act = 'A_TroopAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 8, 3, 'DSCLAW');
+  ELSE IF (act = 'A_TroopAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 8, 3, 'DSCLAW', 0, 9000);
   ELSE IF (act = 'A_SargAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 10, 4, NULL);
   ELSE IF (act = 'A_SkullAttack') THEN EXECUTE PROCEDURE a_skull_attack(tid);
-  ELSE IF (act = 'A_HeadAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 6, 10, NULL);
-  ELSE IF (act = 'A_BruisAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 8, 10, 'DSCLAW');
-  ELSE IF (act = 'A_CyberAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, NULL, NULL, NULL);
+  ELSE IF (act = 'A_HeadAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 6, 10, NULL, 0, 9001);
+  ELSE IF (act = 'A_BruisAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, 8, 10, 'DSCLAW', 0, 9002);
+  ELSE IF (act = 'A_CyberAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, NULL, NULL, NULL, 0, 9003);
   ELSE IF (act = 'A_SpidRefire') THEN EXECUTE PROCEDURE a_cpos_refire(tid, tic, 10);
-  ELSE IF (act = 'A_BspiAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, NULL, NULL, NULL);
+  ELSE IF (act = 'A_BspiAttack') THEN EXECUTE PROCEDURE a_melee_missile(tid, NULL, NULL, NULL, 0, 9008);
   ELSE IF (act = 'A_Explode') THEN
   BEGIN
     -- A_Explode: P_RadiusAttack, 128 at the centre, from whoever fired it
@@ -6147,6 +6161,7 @@ DECLARE cy INTEGER;
 DECLARE stid INTEGER;
 DECLARE sstate INTEGER;
 DECLARE stics INTEGER;
+DECLARE sreact INTEGER;
 BEGIN
   MERGE INTO linedefs l
   USING (SELECT l2.id, a.x ax, a.y ay, b.x bx, b.y bby, fs.sector_id fsec, bs.sector_id bsec
@@ -6263,13 +6278,13 @@ BEGIN
   -- the types on the frame tables: their spawn state; P_SpawnMapThing starts each
   -- partway into it (1 + P_Random() % tics), and P_SpawnMobj gives them mobjinfo's
   -- reaction time (8; on Nightmare none)
-  FOR SELECT t.id, tt.spawn_state, s.tics FROM things t
+  FOR SELECT t.id, tt.spawn_state, s.tics, tt.reaction_time FROM things t
         JOIN thing_types tt ON tt.thing_type = t.thing_type
         JOIN states s ON s.id = tt.spawn_state
        WHERE tt.on_states = 1 ORDER BY t.id
-        INTO stid, sstate, stics
+        INTO stid, sstate, stics, sreact
   DO
-    UPDATE things t SET state = :sstate, reaction = IIF(:skill = 5, 0, 8),
+    UPDATE things t SET state = :sstate, reaction = IIF(:skill = 5, 0, :sreact),
            state_tic = IIF(:stics < 0, NULL, (SELECT g.tic FROM game g WHERE g.id = 1) + IIF(:stics > 0, 1 + MOD(p_rand256(), :stics), 0))
      WHERE t.id = :stid;
   DELETE FROM respawn_queue;
@@ -6297,9 +6312,10 @@ BEGIN
       py = py + 40 * (i - 1) * SIN(pa + PI() / 2);
     END
     tid = NEXT VALUE FOR thing_seq;
-    INSERT INTO things (id, thing_type, kind, x, y, angle, hp, radius, height, solid, st, frame, translation, state)
+    INSERT INTO things (id, thing_type, kind, x, y, angle, hp, radius, height, solid, st, frame, translation, state, reaction)
     VALUES (:tid, 1, 'player', :px, :py, :pa, 100, 16, 56, 1, 'idle', 'A', :i - 1,
-            (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1));
+            (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1),
+            (SELECT IIF(:skill = 5, 0, tt.reaction_time) FROM thing_types tt WHERE tt.thing_type = 1));
     UPDATE player SET thing_id = :tid WHERE id = :i;
     i = i + 1;
   END

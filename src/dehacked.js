@@ -3,9 +3,16 @@
 //
 // What this port can take from a patch:
 //   Thing N   hit points, speed, width, height, pain chance, mass, missile
-//             damage, the five sounds, the map number (ID #) and the bits it
+//             damage, reaction time, the five sounds, the map number (ID #),
+//             its eight states (Initial frame … Respawn frame) and the bits it
 //             models (solid, float, shadow, spawn on the ceiling, and whether
 //             it counts as a kill or an item)
+//   Frame N   a state's sprite, frame (and full-bright bit), tics, next state
+//             and misc1/misc2 (deh_frame.c; frame 966 overflows into the
+//             fist's weaponinfo, as DOS DeHackEd's table did)
+//   Pointer   a state's action, taken from another state's as the game
+//             shipped (deh_ptr.c: "Pointer N (Frame M)", "Codep Frame = K")
+//   Weapon N  a weapon's ammo and its five states (deh_weapon.c)
 //   Ammo N    max ammo and the clip size (which sets every pickup's amount)
 //   Misc      starting health and bullets, the health and armour caps, the
 //             armour classes, soulsphere and megasphere, the cheats' health
@@ -13,9 +20,9 @@
 //   Cheat     the cheat codes
 //   [PARS]    par times
 //   [STRINGS] text (read by finale.js)
-// What it can't: Frame, Pointer, Weapon (it only re-points frames), Sound and
-// Text blocks – the port has no state tables (each thing type is a state
-// machine with frame letters), so they're listed in the report and skipped.
+// What it can't: Sound and Sprite blocks, Text blocks and the other BEX
+// sections – they're listed in the report and skipped.
+import { STATES, MOBJINFO, WEAPONINFO, SPRITES } from './states.js';
 
 /** mobjinfo's order (info.h mobjtype_t, 1-based as DeHackEd counts) → this port's thing types. */
 export const MOBJ_TYPES = [
@@ -67,6 +74,14 @@ const MISC_FIELDS = {
   'idkfa armor': 'idkfa_armor', 'idkfa armor class': 'idkfa_class', 'bfg cells/shot': 'bfg_cells',
 };
 const AMMO = ['bullets', 'shells', 'cells', 'rockets'];   // am_clip, am_shell, am_cell, am_misl
+// a Weapon block's "Ammo type": ammotype_t (4 is NUMAMMO, which no weapon has) → weaponinfo's names
+const AMMO_TYPES = ['clip', 'shell', 'cell', 'misl', null, 'noammo'];
+// the fields that name states: a Thing block's eight (mobjinfo's, in STATE_FIELDS order) and a
+// Weapon block's five (weaponinfo's, in WEAPON_FIELDS order)
+const THING_STATES = ['initial frame', 'first moving frame', 'injury frame', 'close attack frame', 'far attack frame',
+  'death frame', 'exploding frame', 'respawn frame'];
+const WEAPON_STATES = ['deselect frame', 'select frame', 'bobbing frame', 'shooting frame', 'firing frame'];
+const MOBJ_NAMES = Object.keys(MOBJINFO);   // (mobjtype_t's order: Thing N is MOBJ_NAMES[N - 1])
 
 // mobjflag_t bits the port models (by number, or by BEX name)
 const BITS = { SOLID: 0x2, SPAWNCEILING: 0x100, FLOAT: 0x4000, SHADOW: 0x40000, COUNTKILL: 0x400000, COUNTITEM: 0x800000 };
@@ -82,7 +97,8 @@ const BIT_NAMES = ['SPECIAL', 'SOLID', 'SHOOTABLE', 'NOSECTOR', 'NOBLOCKMAP', 'A
  * can't be applied, one line each.
  */
 export function parseDehacked(text) {
-  const out = { things: new Map(), ammo: new Map(), misc: {}, cheats: {}, pars: new Map(), skipped: [] };
+  const out = { things: new Map(), ammo: new Map(), frames: new Map(), pointers: new Map(), weapons: new Map(),
+    misc: {}, cheats: {}, pars: new Map(), skipped: [] };
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   let block = null;
   for (let i = 0; i < lines.length; i++) {
@@ -95,11 +111,16 @@ export function parseDehacked(text) {
       if (!['STRINGS', 'PARS'].includes(block.kind)) out.skipped.push(`[${block.kind}]`);
       continue;
     }
+    // (deh_ptr.c: "Pointer N (Frame M)" – the frame is the one changed)
+    if ((m = /^Pointer\s+-?\d+\s*\(\s*\w+\s+(\d+)\s*\)/i.exec(line))) {
+      block = { kind: 'pointer', n: Number(m[1]) };
+      continue;
+    }
     if ((m = /^(Thing|Frame|Weapon|Ammo|Sound|Sprite|Pointer)\s+(\d+)/i.exec(line))) {
       block = { kind: m[1].toLowerCase(), n: Number(m[2]) };
-      if (block.kind === 'thing' && !out.things.has(block.n)) out.things.set(block.n, {});
-      if (block.kind === 'ammo' && !out.ammo.has(block.n)) out.ammo.set(block.n, {});
-      if (!['thing', 'ammo'].includes(block.kind)) out.skipped.push(`${m[1]} ${m[2]}`);
+      const into = { thing: out.things, ammo: out.ammo, frame: out.frames, weapon: out.weapons }[block.kind];
+      if (into && !into.has(block.n)) into.set(block.n, {});
+      if (!into) out.skipped.push(`${m[1]} ${m[2]}`);
       continue;
     }
     if ((m = /^Text\s+(\d+)\s+(\d+)/i.exec(line))) {
@@ -129,6 +150,12 @@ export function parseDehacked(text) {
     const value = line.slice(eq + 1).trim();
     if (block.kind === 'thing') out.things.get(block.n)[key] = value;
     else if (block.kind === 'ammo') out.ammo.get(block.n)[key] = value;
+    else if (block.kind === 'frame') out.frames.get(block.n)[key] = value;
+    else if (block.kind === 'weapon') out.weapons.get(block.n)[key] = value;
+    else if (block.kind === 'pointer') {
+      if (key === 'codep frame') out.pointers.set(block.n, Number.parseInt(value, 10));
+      else out.skipped.push(`Pointer (Frame ${block.n}): ${key}`);
+    }
     else if (block.kind === 'misc') out.misc[key] = value;
     else if (block.kind === 'cheat') out.cheats[key] = value;
   }
@@ -144,18 +171,92 @@ function bitsOf(value) {
   }, 0);
 }
 
+// atoi(): the leading integer of a value, as DeHackEd reads every field
+const atoi = (v) => { const m = /^\s*[-+]?\d+/.exec(String(v)); return m ? Number(m[0]) : 0; };
+
 /**
- * Apply a parsed patch to THING_TYPES (copied, not changed) and to the rules.
- * Returns { types, rules, cheats: { code: typed }, pars, report: [lines] }.
+ * A patch's Frame, Pointer and Weapon blocks, and its Things' state fields, applied to copies
+ * of DOOM's tables (src/states.js, left alone). Returns { states, weapons, mobjinfo } and
+ * adds what it couldn't apply to REPORT.
+ */
+function applyTables(patch, report) {
+  const states = STATES.map((s) => [...s]);
+  const weapons = WEAPONINFO.map((w) => ({ ...w, states: [...w.states] }));
+  const mobjinfo = Object.fromEntries(Object.entries(MOBJINFO).map(([k, m]) => [k, { ...m, states: [...m.states] }]));
+  const stateNum = (v) => { const n = atoi(v); return n >= 0 && n < STATES.length ? n : null; };
+  const last = STATES.length - 1;
+  for (const [n, f] of patch.frames) {
+    if (n < 0 || n > last) { report.push(`Frame ${n}: no such frame`); continue; }
+    const bad = [];
+    for (const [k, v] of Object.entries(f)) {
+      const i = atoi(v);
+      if (n === last) {
+        // DOS DeHackEd kept 966 frames: the last one's fields land in weaponinfo[0], the fist's
+        // (deh_frame.c's DEH_FrameOverflow; Batman Doom's fist never comes down)
+        if (k === 'duration') weapons[0].ammo = AMMO_TYPES[i] ?? 'noammo';
+        else if (k === 'codep frame') weapons[0].states[0] = i;
+        else if (k === 'next frame') weapons[0].states[1] = i;
+        else if (k === 'unknown 1') weapons[0].states[2] = i;
+        else if (k === 'unknown 2') weapons[0].states[3] = i;
+        else bad.push(k);
+        continue;
+      }
+      const s = states[n];
+      if (k === 'sprite number' && i >= 0 && i < SPRITES.length) s[1] = SPRITES[i];
+      else if (k === 'sprite subnumber' && i >= 0) { s[2] = String.fromCharCode(65 + (i & 0x7fff)); s[3] = i & 0x8000 ? 1 : 0; }
+      else if (k === 'duration') s[4] = i;
+      else if (k === 'next frame' && stateNum(v) !== null) s[6] = i;
+      else if (k === 'unknown 1') s[7] = i;
+      else if (k === 'unknown 2') s[8] = i;
+      else bad.push(k);
+    }
+    if (bad.length) report.push(`Frame ${n}: ${bad.join(', ')} not applied`);
+  }
+  // Pointer: the frame takes the action another frame had as the game shipped (codeptrs[])
+  for (const [n, from] of patch.pointers) {
+    if (n < 0 || n > last || !(from >= 0 && from <= last)) { report.push(`Pointer (Frame ${n}): no such frame`); continue; }
+    states[n][5] = STATES[from][5];
+  }
+  for (const [n, f] of patch.weapons) {
+    const w = weapons[n];
+    if (!w) { report.push(`Weapon ${n}: no such weapon`); continue; }
+    const bad = [];
+    for (const [k, v] of Object.entries(f)) {
+      const at = WEAPON_STATES.indexOf(k);
+      if (at >= 0 && stateNum(v) !== null) w.states[at] = atoi(v);
+      else if (k === 'ammo type' && AMMO_TYPES[atoi(v)]) w.ammo = AMMO_TYPES[atoi(v)];
+      else bad.push(k);
+    }
+    if (bad.length) report.push(`Weapon ${n}: ${bad.join(', ')} not applied`);
+  }
+  for (const [n, f] of patch.things) {
+    const m = mobjinfo[MOBJ_NAMES[n - 1]];
+    if (!m) continue;
+    THING_STATES.forEach((k, at) => { if (k in f && stateNum(f[k]) !== null) m.states[at] = atoi(f[k]); });
+  }
+  return { states, weapons, mobjinfo };
+}
+
+/**
+ * Apply a parsed patch to THING_TYPES (copied, not changed), DOOM's tables and the rules.
+ * Returns { types, rules, cheats: { code: typed }, pars, states, weapons, mobjinfo, report: [lines] }:
+ * each type keeps the type it was (BASE: an ID # moves TYPE, its states stay its own), and
+ * REACTION when the patch sets its reaction time.
  */
 export function applyDehacked(baseTypes, patch) {
-  const types = baseTypes.map((t) => ({ ...t }));
+  const types = baseTypes.map((t) => ({ ...t, base: t.type }));
   const byType = new Map(types.map((t) => [t.type, t]));
   const rules = { ...DEFAULT_RULES };
   const report = [];
+  const tables = applyTables({ frames: new Map(), pointers: new Map(), weapons: new Map(), ...patch }, report);
   for (const [n, f] of patch.things) {
     const t = byType.get(MOBJ_TYPES[n] ?? NaN);
-    if (!t) { report.push(`Thing ${n}: not one this port has`); continue; }
+    if (!t) {
+      // (its states still go into mobjinfo: other types' chains may run through them)
+      const left = Object.keys(f).filter((k) => !THING_STATES.includes(k));
+      if (left.length) report.push(`Thing ${n}: not one this port has`);
+      continue;
+    }
     const num = (k) => Number(f[k]);
     const fixed = (k) => num(k) / 65536;
     const done = [];
@@ -166,6 +267,8 @@ export function applyDehacked(baseTypes, patch) {
     set('height', 'height', fixed('height'));
     set('pain chance', 'painChance', num('pain chance'));
     set('mass', 'mass', num('mass'));
+    set('reaction time', 'reaction', num('reaction time'));
+    for (const k of THING_STATES) if (k in f) done.push(k);   // (applyTables put them in mobjinfo)
     if ('missile damage' in f) { t.dmgLo = num('missile damage'); t.dmgHi = 8 * num('missile damage'); done.push('missile damage'); }
     for (const [k, field] of [['alert sound', 'seeSnd'], ['attack sound', 'atkSnd'], ['pain sound', 'painSnd'],
       ['death sound', 'deathSnd'], ['action sound', 'activeSnd']]) {
@@ -215,6 +318,6 @@ export function applyDehacked(baseTypes, patch) {
     if (CHEAT_NAMES[k] && v) cheats[CHEAT_NAMES[k]] = v.toLowerCase();
     else report.push(`Cheat: ${k} not applied`);
   }
-  for (const s of patch.skipped) report.push(`${s}: not applied (no state tables in this port)`);
-  return { types, rules, cheats, pars: patch.pars, report };
+  for (const s of patch.skipped) report.push(`${s}: not applied (not supported)`);
+  return { types, rules, cheats, pars: patch.pars, ...tables, report };
 }

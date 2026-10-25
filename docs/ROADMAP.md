@@ -35,7 +35,7 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   big job: the plan, in seven phases, is under **Simulation** below (*DOOM's frame tables, in
   phases*). Phases 0 and 1 are done (the table, GPL-2 in a file of its own; the machine in SQL);
   phase 2, the monsters family by family, is under way: the zombieman, shotgun guy and
-  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's, the boss brain last (with phase 3's cubes): phase 2 is done. Phase 3 is done too: the projectiles, the brain's cubes, the effects, barrels, items and decorations and the player's body are on the table. Phase 4 is done: the weapons in your hands. Next is phase 5, DEHACKED's Frame, Pointer and Weapon blocks.
+  chaingunner are on the table, the imp, the demon, the spectre, the lost soul, the cacodemon, the barons and the bosses (all of DOOM I's), and DOOM II's, the boss brain last (with phase 3's cubes): phase 2 is done. Phase 3 is done too: the projectiles, the brain's cubes, the effects, barrels, items and decorations and the player's body are on the table. Phase 4 is done: the weapons in your hands. Phase 5 is done: DEHACKED's Frame, Pointer and Weapon blocks and a Thing's states apply (Freedoom's own seven frame patches among them). Next is phase 6, the cleanup.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above and DOOM's fixed-point physics, bit for bit. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation).
@@ -246,11 +246,33 @@ How it landed:
   3 picks the super shotgun only with 2 shells). DOOM's own rules in `P_PlayerThink` differ
   slightly and could follow.
 
-**Phase 5: DEHACKED.** Frame blocks (sprite, frame, tics, next state, bright), Pointer blocks
+**Phase 5: DEHACKED.** *Done.* Frame blocks (sprite, frame, tics, next state, bright), Pointer blocks
 (an action moved to another frame), Weapon blocks' states and Thing blocks' state fields, in
 `dehacked.js`, into the same tables. Freedoom's own Frame patches then apply (the log's "not
 applied (no state tables in this port)" lines go). Test: `dehacked-test` gains a patch that
 gives the imp a faster attack and another that moves an action, and checks both play out.
+
+How it landed:
+- **Applying:** `applyDehacked` patches copies of `src/states.js`'s tables (`STATES`,
+  `WEAPONINFO`, `MOBJINFO`'s state columns) and returns them. The loader writes them into
+  `states`, `weapon_info` and `thing_types`, and works out the states' modes from the patched
+  chains.
+- **What's read:**
+  - Frame: Sprite number (`SPRITES`, now generated too), Sprite subnumber, Duration, Next
+    frame, Unknown 1/2, and frame 966's overflow into weaponinfo[0];
+  - Pointer: Codep Frame, from the actions as the game shipped;
+  - Weapon: Ammo type and the five frames;
+  - Thing: the eight frames and Reaction time (a new `thing_types.reaction_time`, which
+    `SPAWN_THING` and `INIT_MAP` now read).
+- **Map numbers:** a type moved by `ID #` keeps its base type's states.
+- **Moved actions:** so they play as DOOM's, A_TroopAttack, A_HeadAttack, A_BruisAttack,
+  A_CyberAttack, A_BspiAttack, A_SkelMissile and A_FatAttack1–3 name their own projectile
+  (no longer the caller's type's), and play its seesound (`seeSnd` on the projectile types). The
+  player's rocket and plasma do the same.
+- **A fix it found:** two things in one spot made Firebird's ATAN2 refuse (0, 0). `ATAN2_SAFE`
+  gives 0 there, as R_PointToAngle2 does, and every angle in `game.sql` goes through it.
+- **Not supported:** Sound, Sprite and Text blocks, and BEX's [CODEPTR] (Chocolate Doom doesn't
+  read it either).
 
 **Phase 6: the cleanup.** `st`, `st_tics`, `st_len`, `step`, the frame strings and the
 per-mode code go; the README's "frame tables" deviation goes; what's still not vanilla (the

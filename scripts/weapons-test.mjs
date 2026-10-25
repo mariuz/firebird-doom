@@ -361,7 +361,8 @@ if (wad.lump('SHT2A0')) {
   assert(s.SHELLS === 18, `super shotgun: two shells per shot (${s.SHELLS} left)`);
   assert(hp1 < hp0, `super shotgun: 20 pellets did ${hp0 - hp1} damage`);
   assert(ssg.trace === '0:S_DSGUN1 3:S_DSGUN2 10:S_DSGUN3 17:S_DSGUN4 24:S_DSGUN5 31:S_DSGUN6 38:S_DSGUN7 45:S_DSGUN8 51:S_DSGUN9 57:S_DSGUN10 62:S_DSGUN'
-    && ssg.flash === '3:S_DSGUNFLASH1 7:S_DSGUNFLASH2 11:null',
+    // (its flash 4 + 3 tics, not info.c's 5 + 4: Freedoom 2's DEHACKED shortens it to end with the shot's frame)
+    && ssg.flash === '3:S_DSGUNFLASH1 6:S_DSGUNFLASH2 9:null',
     `super shotgun's cycle: ${ssg.trace}; its flash ${ssg.flash}`);
   const snd = (await db.query("SELECT LIST(DISTINCT sound) l FROM sound_events WHERE sound IN ('DSDSHTGN', 'DSDBOPN', 'DSDBLOAD', 'DSDBCLS')")).rows[0].L ?? '';
   assert(['DSDSHTGN', 'DSDBOPN', 'DSDBLOAD', 'DSDBCLS'].every((n) => snd.includes(n)), `super shotgun: fire and reload sounds (${snd})`);

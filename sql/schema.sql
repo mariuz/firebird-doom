@@ -141,6 +141,7 @@ CREATE TABLE thing_types (
   mass         INTEGER DEFAULT 100 NOT NULL, -- how hard it is to toss (momz = 1000 / mass)
   floats       SMALLINT DEFAULT 0 NOT NULL,  -- MF_FLOAT | MF_NOGRAVITY: flies
   nogravity    SMALLINT DEFAULT 0 NOT NULL,  -- MF_NOGRAVITY: hangs in the air (a puff, fog, fire; a flier)
+  reaction_time INTEGER DEFAULT 8 NOT NULL,   -- mobjinfo's reactiontime: 8, the player's 0 (DeHackEd's Reaction time)
   shadow       SMALLINT DEFAULT 0 NOT NULL,  -- MF_SHADOW: drawn as fuzz (the spectre)
   -- a separate close-range attack (the revenant's fist)
   melee_fr      VARCHAR(8),

@@ -13,18 +13,20 @@ const I = (type, sprite, pickup, amount, o = {}) => ({ type, sprite, kind: 'item
 export const THING_TYPES = [
   // player start + projectiles + effects (spawned by SQL, never by maps)
   { type: 1, sprite: 'PLAY', kind: 'player', radius: 16, height: 56, solid: 1, hp: 100, walk: 'ABCD', pain: 'G', death: 'HIJKLMN', painSnd: 'DSPLPAIN', deathSnd: 'DSPLDETH' },
-  { type: 9000, sprite: 'BAL1', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 3, dmgHi: 24, deathSnd: 'DSFIRXPL' },
-  { type: 9001, sprite: 'BAL2', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL' },
-  { type: 9002, sprite: 'BAL7', kind: 'missile', radius: 6, height: 16, speed: 15, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 8, dmgHi: 64, deathSnd: 'DSFIRXPL' },
+  // (the projectiles' seeSnd is mobjinfo's seesound: the sound P_SpawnMissile and
+  // P_SpawnPlayerMissile make as they fire it – the BFG's ball has none)
+  { type: 9000, sprite: 'BAL1', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 3, dmgHi: 24, deathSnd: 'DSFIRXPL', seeSnd: 'DSFIRSHT' },
+  { type: 9001, sprite: 'BAL2', kind: 'missile', radius: 6, height: 8, speed: 10, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL', seeSnd: 'DSFIRSHT' },
+  { type: 9002, sprite: 'BAL7', kind: 'missile', radius: 6, height: 16, speed: 15, walk: 'AB', death: 'CDE', bright: 1, dmgLo: 8, dmgHi: 64, deathSnd: 'DSFIRXPL', seeSnd: 'DSFIRSHT' },
   { type: 14, sprite: 'TFOG', kind: 'marker', radius: 1, height: 1, walk: 'A' }, // teleport destination
   // the player's projectiles: damage is dmgLo × (1..8), like DOOM's ((P_Random()%8)+1)*damage
-  { type: 9003, sprite: 'MISL', kind: 'missile', radius: 11, height: 8, speed: 20, walk: 'A', death: 'BCD', bright: 1, dmgLo: 20, dmgHi: 160, deathSnd: 'DSBAREXP' },
-  { type: 9004, sprite: 'PLSS', kind: 'missile', radius: 13, height: 8, speed: 25, walk: 'AB', death: 'ABCDE', deathSprite: 'PLSE', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL' },
+  { type: 9003, sprite: 'MISL', kind: 'missile', radius: 11, height: 8, speed: 20, walk: 'A', death: 'BCD', bright: 1, dmgLo: 20, dmgHi: 160, deathSnd: 'DSBAREXP', seeSnd: 'DSRLAUNC' },
+  { type: 9004, sprite: 'PLSS', kind: 'missile', radius: 13, height: 8, speed: 25, walk: 'AB', death: 'ABCDE', deathSprite: 'PLSE', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL', seeSnd: 'DSPLASMA' },
   { type: 9005, sprite: 'BFS1', kind: 'missile', radius: 13, height: 8, speed: 25, walk: 'AB', death: 'ABCDEF', deathSprite: 'BFE1', bright: 1, dmgLo: 100, dmgHi: 800, deathSnd: 'DSRXPLOD' },
   // DOOM II monsters' projectiles
-  { type: 9006, sprite: 'FATB', kind: 'missile', radius: 11, height: 8, speed: 10, walk: 'AB', death: 'ABC', deathSprite: 'FBXP', bright: 1, dmgLo: 10, dmgHi: 80, deathSnd: 'DSBAREXP' },
-  { type: 9007, sprite: 'MANF', kind: 'missile', radius: 6, height: 8, speed: 20, walk: 'AB', death: 'BCD', deathSprite: 'MISL', bright: 1, dmgLo: 8, dmgHi: 64, deathSnd: 'DSFIRXPL' },
-  { type: 9008, sprite: 'APLS', kind: 'missile', radius: 13, height: 8, speed: 25, walk: 'AB', death: 'ABCDE', deathSprite: 'APBX', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL' },
+  { type: 9006, sprite: 'FATB', kind: 'missile', radius: 11, height: 8, speed: 10, walk: 'AB', death: 'ABC', deathSprite: 'FBXP', bright: 1, dmgLo: 10, dmgHi: 80, deathSnd: 'DSBAREXP', seeSnd: 'DSSKEATK' },
+  { type: 9007, sprite: 'MANF', kind: 'missile', radius: 6, height: 8, speed: 20, walk: 'AB', death: 'BCD', deathSprite: 'MISL', bright: 1, dmgLo: 8, dmgHi: 64, deathSnd: 'DSFIRXPL', seeSnd: 'DSFIRSHT' },
+  { type: 9008, sprite: 'APLS', kind: 'missile', radius: 13, height: 8, speed: 25, walk: 'AB', death: 'ABCDE', deathSprite: 'APBX', bright: 1, dmgLo: 5, dmgHi: 40, deathSnd: 'DSFIRXPL', seeSnd: 'DSPLASMA' },
   // the arch-vile's fire (A_VileTarget / A_Fire)
   { type: 9015, sprite: 'FIRE', kind: 'flame', radius: 1, height: 1, walk: 'ABCDEFGH', bright: 1 },
   { type: 9012, sprite: 'BFE2', kind: 'fx', radius: 1, height: 1, walk: 'ABCD', bright: 1 },
