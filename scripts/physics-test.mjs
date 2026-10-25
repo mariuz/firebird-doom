@@ -1009,10 +1009,11 @@ if (slimeMap) {
   assert(done.CEIL_H === done.FLOOR_H && done.DIR === null, '…and that one goes on as a normal door: up, a wait, and down again');
 
   // the hurting floor 4 strobes too, fast, like 2
-  await db.exec(`UPDATE sectors SET special = 4, min_light = 0, base_light = 200, light = 200 WHERE id = ${a.ID}`);
+  // (P_SpawnStrobeFlash(sector, FASTDARK, 0): 200 and black, from the next tic)
+  await db.exec(`UPDATE sectors SET special = 4, light = 200, lfx = 'strobe', lfx_max = 200, lfx_min = 0, lfx_dark = 15, lfx_count = 1 WHERE id = ${a.ID}`);
   const lights = new Set();
   for (let i = 0; i < 24; i++) { await tic(); lights.add((await one(`SELECT light FROM sectors WHERE id = ${a.ID}`)).LIGHT); }
-  await db.exec(`UPDATE sectors SET special = 0 WHERE id = ${a.ID}`);
+  await db.exec(`UPDATE sectors SET special = 0, lfx = NULL WHERE id = ${a.ID}`);
   assert(lights.has(0) && lights.has(200) && lights.size === 2, `sector 4 strobes between ${[...lights].join(' and ')}, like 2`);
 
   // E1M8's floor: IDDQD off, 20 damage every 32 tics, and at 10 or less the level ends
@@ -1046,13 +1047,13 @@ if (slimeMap) {
       ORDER BY s.id`);
   const L = await one(`SELECT FIRST 1 l.id, l.front_sector f FROM linedefs l WHERE l.front_sector <> ${X.ID} AND l.back_sector IS NULL ORDER BY l.id`);
   await db.exec(`UPDATE sectors SET tag = 999 WHERE id = ${X.ID}`);
-  const state = () => one(`SELECT s.floor_h, s.ceil_h, s.floor_flat, s.light, s.special, s.base_light, s.min_light,
+  const state = () => one(`SELECT s.floor_h, s.ceil_h, s.floor_flat, s.light, s.special, s.lfx, s.lfx_min, s.lfx_max, s.lfx_dark,
       m.kind, m.dir, m.speed, m.top_h, m.bottom_h, m.wait_left, m.stay, m.new_flat, m.new_special
       FROM sectors s LEFT JOIN movers m ON m.sector_id = s.id WHERE s.id = ${X.ID}`);
   const reset = async () => {
     await db.exec(`DELETE FROM movers`);
     await db.exec(`UPDATE sectors SET floor_h = ${X.FLOOR_H}, ceil_h = ${X.CEIL_H}, floor_flat = ${X.FLOOR_FLAT},
-        light = ${X.LIGHT}, base_light = ${X.LIGHT}, special = 0 WHERE id = ${X.ID}`);
+        light = ${X.LIGHT}, lfx = NULL, lfx_count = 0, special = 0 WHERE id = ${X.ID}`);
   };
   const fire = async (sp, how = 'walk') => {
     await db.exec(`UPDATE linedefs SET special = ${sp}, tag = 999 WHERE id = ${L.ID}`);
@@ -1079,8 +1080,8 @@ if (slimeMap) {
   const strobe = await fire(17);
   const seen = new Set();
   for (let i = 0; i < 44; i++) { await tic(); seen.add((await state()).LIGHT); }
-  assert(strobe.SPECIAL === 3 && strobe.BASE_LIGHT === 200 && seen.has(200) && seen.has(strobe.MIN_LIGHT) && seen.size === 2,
-    `17 starts a slow strobe between 200 and ${strobe.MIN_LIGHT} (light type 3)`);
+  assert(strobe.LFX === 'strobe' && strobe.LFX_MAX === 200 && strobe.LFX_DARK === 35 && strobe.SPECIAL === 0 && seen.has(200) && seen.has(strobe.LFX_MIN) && seen.size === 2,
+    `17 starts a slow strobe between 200 and ${strobe.LFX_MIN} (EV_StartLightStrobing: P_SpawnStrobeFlash, SLOWDARK, the special cleared)`);
 
   // a door that closes for thirty seconds
   await reset();

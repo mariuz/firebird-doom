@@ -33,20 +33,6 @@ BEGIN
   RETURN s;
 END^
 
--- Lowest/highest heights and light among a sector's neighbours.
--- P_Random: the game's one source of chance, seeded and repeatable, so the
--- same inputs from the same start always play out the same (demos; a save
--- restores the state too). DOOM steps through a 256-entry table; this is a
--- linear congruential generator in BIGINT arithmetic (no overflow below 2^62),
--- returning the upper 15 bits of its 31 as a number in [0, 1).
-CREATE OR ALTER FUNCTION p_random RETURNS DOUBLE PRECISION
-AS
-DECLARE s BIGINT;
-BEGIN
-  UPDATE game g SET rng = MOD(g.rng * 1103515245 + 12345, 2147483648) WHERE g.id = 1 RETURNING g.rng INTO s;
-  RETURN (s / 65536) / 32768e0;
-END^
-
 -- R_PointToAngle2's angle from a point to another, in radians: ATAN2, but two points in one
 -- place give 0, as DOOM's does (Firebird's ATAN2 refuses 0, 0)
 CREATE OR ALTER FUNCTION atan2_safe (dy DOUBLE PRECISION, dx DOUBLE PRECISION) RETURNS DOUBLE PRECISION
@@ -56,11 +42,33 @@ BEGIN
   RETURN ATAN2(dy, dx);
 END^
 
--- P_Random() as DOOM uses it: 0…255 (for its % and & arithmetic)
+-- P_Random (m_random.c): the next of rndtable's 256 numbers (RNDTABLE, src/states.js), as
+-- DOOM steps through them: GAME.RNG is prndindex, moved on before each draw and wrapping at
+-- 256. M_ClearRandom (G_InitNew) sets it to 0: loadMap's seed.
 CREATE OR ALTER FUNCTION p_rand256 RETURNS INTEGER
 AS
+DECLARE i INTEGER;
 BEGIN
-  RETURN CAST(FLOOR(p_random() * 256) AS INTEGER);
+  UPDATE game g SET rng = MOD(g.rng + 1, 256) WHERE g.id = 1 RETURNING g.rng INTO i;
+  RETURN (SELECT r.v FROM rndtable r WHERE r.i = :i);
+END^
+
+-- P_Random() & MASK, one draw. (Firebird's BIN_AND evaluates its argument twice, so
+-- BIN_AND(p_rand256(), 64) would use up two of rndtable's numbers: the draw goes in a variable.)
+CREATE OR ALTER FUNCTION p_rand_and (mask INTEGER) RETURNS INTEGER
+AS
+DECLARE r INTEGER;
+BEGIN
+  r = p_rand256();
+  RETURN BIN_AND(r, mask);
+END^
+
+-- P_Random as a fraction, [0, 1): the same draw, divided by 256 (for the code that thinks
+-- in fractions: p_random() * 256 < 5 is P_Random() < 5)
+CREATE OR ALTER FUNCTION p_random RETURNS DOUBLE PRECISION
+AS
+BEGIN
+  RETURN p_rand256() / 256e0;
 END^
 
 CREATE OR ALTER FUNCTION neighbor_h (sec INTEGER, what VARCHAR(12))
@@ -82,6 +90,35 @@ BEGIN
      AND l.back_sector IS NOT NULL AND s.id <> :sec
     INTO r;
   RETURN r;
+END^
+
+-- p_lights.c's spawners, for sector special SPECIAL (or a line's EV_StartLightStrobing: 3):
+-- P_SpawnLightFlash (1: between its light and the darkest of it and its neighbours,
+-- P_FindMinSurroundingLight; the first change in (P_Random() & 64) + 1 tics), P_SpawnStrobeFlash
+-- (2, 4, 13: FASTDARK 15 dark tics; 3, 12: SLOWDARK 35; 5 bright; black if no neighbour is
+-- darker; in sync, 12 and 13, from the next tic, else in (P_Random() & 7) + 1), P_SpawnGlowingLight
+-- (8: down and up 8 a tic between the darkest neighbour and its own) and P_SpawnFireFlicker (17:
+-- 16 above the darkest neighbour, every 4 tics). Each zeroes the sector's special (but 4's, which
+-- also hurts). The thinker lives in the sector's LFX columns.
+CREATE OR ALTER PROCEDURE spawn_light (sec INTEGER, special INTEGER)
+AS
+DECLARE lt INTEGER;
+DECLARE mn INTEGER;
+BEGIN
+  SELECT s.light FROM sectors s WHERE s.id = :sec INTO lt;
+  mn = MINVALUE(lt, COALESCE(neighbor_h(sec, 'min_light'), lt));
+  IF (special = 1) THEN
+    UPDATE sectors s SET lfx = 'flash', lfx_max = :lt, lfx_min = :mn, lfx_count = p_rand_and(64) + 1, special = 0
+     WHERE s.id = :sec;
+  ELSE IF (special IN (2, 3, 4, 12, 13)) THEN
+    UPDATE sectors s
+       SET lfx = 'strobe', lfx_max = :lt, lfx_min = IIF(:mn = :lt, 0, :mn), lfx_dark = IIF(:special IN (3, 12), 35, 15),
+           lfx_count = IIF(:special IN (12, 13), 1, p_rand_and(7) + 1), special = IIF(:special = 4, 4, 0)
+     WHERE s.id = :sec;
+  ELSE IF (special = 8) THEN
+    UPDATE sectors s SET lfx = 'glow', lfx_max = :lt, lfx_min = :mn, lfx_dir = -1, special = 0 WHERE s.id = :sec;
+  ELSE IF (special = 17) THEN
+    UPDATE sectors s SET lfx = 'flicker', lfx_max = :lt, lfx_min = :mn + 16, lfx_count = 4, special = 0 WHERE s.id = :sec;
 END^
 
 -- BLOCKMAP lookup: every linedef in the cells overlapping a box.
@@ -348,7 +385,11 @@ CREATE OR ALTER PROCEDURE spawn_thing (
 RETURNS (new_id INTEGER)
 AS
 DECLARE sec INTEGER;
+DECLARE lastlook INTEGER;
 BEGIN
+  -- P_SpawnMobj: mobj->lastlook = P_Random () % MAXPLAYERS (A_Look's first player to try; one
+  -- player here, so only the draw counts)
+  lastlook = p_rand256();
   new_id = NEXT VALUE FOR thing_seq;
   sec = sector_at(px, py);
   INSERT INTO things (id, thing_type, kind, x, y, z, angle, hp, radius, height, solid, sector_id,
@@ -423,7 +464,7 @@ BEGIN
     SELECT IIF(:hp < -100, tt.xdeath_state, tt.death_state) FROM thing_types tt WHERE tt.thing_type = 1 INTO nst;
     UPDATE things t SET solid = 0, hp = :hp WHERE t.id = :ptid;
     EXECUTE PROCEDURE set_state(ptid, nst, tic) RETURNING_VALUES alive;
-    UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3))
+    UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3))
      WHERE t.id = :ptid AND t.state_tic IS NOT NULL;
   END
   ELSE
@@ -520,7 +561,7 @@ BEGIN
       -- first frame 0–3 tics shorter (at least 1). The cry is A_Scream's, in those frames.
       EXECUTE PROCEDURE set_state(tid, IIF(hp < -spawn_hp AND xdeath_state > 0, xdeath_state, death_state), tic)
         RETURNING_VALUES alive;
-      UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3))
+      UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3))
        WHERE t.id = :tid AND t.state_tic IS NOT NULL;
       IF (drop_type IS NOT NULL) THEN
       BEGIN
@@ -831,11 +872,7 @@ BEGIN
       ELSE IF (act = 'strobe') THEN
       BEGIN
         IF (NOT EXISTS (SELECT 1 FROM movers WHERE sector_id = :sec)) THEN
-          UPDATE sectors s
-             SET base_light = s.light,
-                 min_light = IIF(COALESCE(neighbor_h(s.id, 'min_light'), s.light) < s.light, neighbor_h(s.id, 'min_light'), 0),
-                 special = IIF(s.special = 0, 3, s.special)
-           WHERE s.id = :sec;
+          EXECUTE PROCEDURE spawn_light(sec, 3);
         did = 1;
       END
       -- EV_StopPlat: a perpetual lift stops where it is (in stasis)…
@@ -1336,7 +1373,7 @@ BEGIN
   z = z + (p_rand256() - p_rand256()) / 64e0;
   EXECUTE PROCEDURE spawn_thing(9010, x, y, z, 0) RETURNING_VALUES mid;
   UPDATE things t SET momz = 1 WHERE t.id = :mid;
-  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3)) WHERE t.id = :mid;
+  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3)) WHERE t.id = :mid;
   IF (melee = 1) THEN
     EXECUTE PROCEDURE set_state(mid, (SELECT s.id FROM states s WHERE s.name = 'S_PUFF3'), tic) RETURNING_VALUES alive;
 END^
@@ -1353,7 +1390,7 @@ BEGIN
   z = z + (p_rand256() - p_rand256()) / 64e0;
   EXECUTE PROCEDURE spawn_thing(9011, x, y, z, 0) RETURNING_VALUES mid;
   UPDATE things t SET momz = 2 WHERE t.id = :mid;
-  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3)) WHERE t.id = :mid;
+  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3)) WHERE t.id = :mid;
   IF (dmg <= 12 AND dmg >= 9) THEN
     EXECUTE PROCEDURE set_state(mid, (SELECT s.id FROM states s WHERE s.name = 'S_BLOOD2'), tic) RETURNING_VALUES alive;
   ELSE IF (dmg < 9) THEN
@@ -1580,7 +1617,7 @@ BEGIN
   UPDATE things t SET momx = 0, momy = 0, momz = 0 WHERE t.id = :tid;
   EXECUTE PROCEDURE set_state(tid, dstate, tic) RETURNING_VALUES alive;
   IF (alive = 0) THEN EXIT;
-  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3))
+  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3))
    WHERE t.id = :tid AND t.state_tic IS NOT NULL;
   IF (snd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(snd, tid, x, y);
 END^
@@ -1669,7 +1706,7 @@ DECLARE nx DOUBLE PRECISION;
 DECLARE ny DOUBLE PRECISION;
 BEGIN
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
-  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3)),
+  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3)),
                       x = t.x + t.momx / 2, y = t.y + t.momy / 2, z = t.z + t.momz / 2
    WHERE t.id = :mid AND t.state_tic IS NOT NULL;
   SELECT t.x, t.y FROM things t WHERE t.id = :mid INTO nx, ny;
@@ -2103,7 +2140,7 @@ BEGIN
   EXECUTE PROCEDURE decrease_ammo(pid, IIF(mtype = 9005, (SELECT r.bfg_cells FROM rules r WHERE r.id = 1), 1));
   IF (mtype = 9004) THEN
     EXECUTE PROCEDURE set_psprite(pid, 1, (SELECT wi.flash_state FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon
-                                            WHERE p.id = :pid) + BIN_AND(p_rand256(), 1), tic);
+                                            WHERE p.id = :pid) + p_rand_and(1), tic);
   SELECT p.thing_id, t.x, t.y, t.z, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = :pid
     INTO tid, x, y, z, ang;
   EXECUTE PROCEDURE fire_missile(mtype, tid, x, y, z, ang);
@@ -3342,6 +3379,7 @@ BEGIN
     EXECUTE PROCEDURE spawn_thing(9016, x, y, NULL, 0) RETURNING_VALUES mid;
     EXECUTE PROCEDURE spawn_thing(9016, sx, sy, NULL, 0) RETURNING_VALUES mid;
     EXECUTE PROCEDURE play_sound('DSTELEPT', mid, sx, sy);
+    mid = p_rand256();   -- (P_SpawnMobj for the new body: its lastlook)
     UPDATE things t
        SET x = :sx, y = :sy, angle = :sa, z = :fz, sector_id = :sec, momx = 0, momy = 0, momz = 0,
            hp = (SELECT tt.hp FROM thing_types tt WHERE tt.thing_type = t.thing_type),
@@ -3358,29 +3396,47 @@ BEGIN
   END
 END^
 
--- Light specials: T_LightFlash, T_StrobeFlash, T_Glow, T_FireFlicker.
+-- The light thinkers, every tic: T_LightFlash, T_StrobeFlash and T_FireFlicker count down
+-- (if (--count) return) and, at 0, change – the flash to its other level for (P_Random() & 7) + 1
+-- tics dark or (P_Random() & 64) + 1 bright, the strobe for its dark or bright time, the flicker
+-- 0–3 × 16 below its brightest (P_Random() & 3; no lower than its floor) for 4 more; T_Glow
+-- steps 8 a tic, turning at either end. Those that draw do so one at a time, in sector order,
+-- as their thinkers were made.
 CREATE OR ALTER PROCEDURE lights_think (tic INTEGER)
 AS
 DECLARE sec INTEGER;
+DECLARE k VARCHAR(8);
+DECLARE lt INTEGER;
+DECLARE mn INTEGER;
+DECLARE mx INTEGER;
+DECLARE dark INTEGER;
+DECLARE amount INTEGER;
 BEGIN
-  UPDATE sectors
-     SET light = CASE special
-                   WHEN 1  THEN IIF(MOD(:tic + id * 13, 71) < 7, min_light, base_light)
-                   -- 4 strobes like 2 as well as hurting (P_SpawnStrobeFlash(sector, FASTDARK, 0))
-                   WHEN 2  THEN IIF(MOD(:tic + id * 7, 20) < 5, base_light, min_light)
-                   WHEN 4  THEN IIF(MOD(:tic + id * 7, 20) < 5, base_light, min_light)
-                   WHEN 12 THEN IIF(MOD(:tic, 20) < 5, base_light, min_light)
-                   WHEN 3  THEN IIF(MOD(:tic + id * 7, 40) < 5, base_light, min_light)
-                   WHEN 13 THEN IIF(MOD(:tic, 40) < 5, base_light, min_light)
-                   WHEN 8  THEN min_light + ABS(MOD(:tic * 8, 2 * (base_light - min_light) + 1) - (base_light - min_light))
-                   ELSE light
-                 END
-   WHERE special IN (1, 2, 3, 4, 8, 12, 13);
-  -- T_FireFlicker draws P_RANDOM per sector, so one at a time, in sector order
-  -- (a set-based UPDATE would draw in whatever order the rows happen to lie)
-  IF (MOD(tic, 4) = 0) THEN
-    FOR SELECT id FROM sectors WHERE special = 17 ORDER BY id INTO sec DO
-      UPDATE sectors SET light = base_light - 16 * CAST(FLOOR(p_random() * 4) AS INTEGER) WHERE id = :sec;
+  UPDATE sectors s
+     SET light = IIF(s.lfx_dir = -1, IIF(s.light - 8 <= s.lfx_min, s.light, s.light - 8),
+                                     IIF(s.light + 8 >= s.lfx_max, s.light, s.light + 8)),
+         lfx_dir = IIF(s.lfx_dir = -1, IIF(s.light - 8 <= s.lfx_min, 1, -1), IIF(s.light + 8 >= s.lfx_max, -1, 1))
+   WHERE s.lfx = 'glow';
+  UPDATE sectors s SET lfx_count = s.lfx_count - 1 WHERE s.lfx IN ('flash', 'strobe', 'flicker');
+  FOR SELECT s.id, s.lfx, s.light, s.lfx_min, s.lfx_max, s.lfx_dark FROM sectors s
+       WHERE s.lfx IN ('flash', 'strobe', 'flicker') AND s.lfx_count = 0
+       ORDER BY s.id
+        INTO sec, k, lt, mn, mx, dark
+  DO
+  BEGIN
+    IF (k = 'flash') THEN
+    BEGIN
+      IF (lt = mx) THEN UPDATE sectors s SET light = :mn, lfx_count = p_rand_and(7) + 1 WHERE s.id = :sec;
+      ELSE UPDATE sectors s SET light = :mx, lfx_count = p_rand_and(64) + 1 WHERE s.id = :sec;
+    END
+    ELSE IF (k = 'strobe') THEN
+      UPDATE sectors s SET light = IIF(:lt = :mn, :mx, :mn), lfx_count = IIF(:lt = :mn, 5, :dark) WHERE s.id = :sec;
+    ELSE
+    BEGIN
+      amount = p_rand_and(3) * 16;
+      UPDATE sectors s SET light = IIF(:lt - :amount < :mn, :mn, :mx - :amount), lfx_count = 4 WHERE s.id = :sec;
+    END
+  END
 END^
 
 -- ── the tic ───────────────────────────────────────────────────────────────
@@ -4344,7 +4400,7 @@ BEGIN
    WHERE t.id = :tid INTO x, y, z, momx, momy, momz, ang, spd;
   EXECUTE PROCEDURE spawn_puff(x, y, z) RETURNING_VALUES mid;
   EXECUTE PROCEDURE spawn_thing(9018, x - momx, y - momy, z, 0) RETURNING_VALUES mid;
-  UPDATE things t SET momz = 1, state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3)) WHERE t.id = :mid;
+  UPDATE things t SET momz = 1, state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3)) WHERE t.id = :mid;
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL OR palive = 0) THEN EXIT;
   ta = 0.29452431127404e0;   -- TRACEANGLE, 0xc000000
@@ -4399,7 +4455,7 @@ BEGIN
   UPDATE things t SET momx = COS(:ang) * 10, momy = :momy, momz = (:sz - :z) / :flight, owner_id = :spot,
          reaction = IIF(ABS(:momy) < 1e-9, 0, TRUNC(TRUNC((:sy - :y) / :momy) / 3)),
          -- (P_CheckMissileSpawn: through walls, it's never stopped)
-         state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 3)),
+         state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3)),
          x = t.x + COS(:ang) * 5, y = t.y + :momy / 2, z = t.z + (:sz - :z) / :flight / 2
    WHERE t.id = :mid;
   EXECUTE PROCEDURE play_sound('DSBOSPIT', mid, x, y);
@@ -4481,7 +4537,7 @@ BEGIN
   z = 128 + p_rand256() * 2;
   EXECUTE PROCEDURE spawn_thing(9013, x, y, z, 0) RETURNING_VALUES mid;
   UPDATE things t SET momz = p_rand256() / 128e0 WHERE t.id = :mid;
-  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - BIN_AND(p_rand256(), 7)) WHERE t.id = :mid;
+  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(7)) WHERE t.id = :mid;
 END^
 
 CREATE OR ALTER PROCEDURE a_brain_scream (tid INTEGER, tic INTEGER)
@@ -5021,7 +5077,7 @@ BEGIN
   -- (G_InitNew: respawnmonsters on Nightmare, or with -respawn)
   IF (MOD(tic, 32) = 0 AND EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND (g.skill = 5 OR g.respawn = 1))) THEN
     EXECUTE PROCEDURE nightmare_respawn(tic);
-  IF (MOD(tic, 2) = 0) THEN EXECUTE PROCEDURE lights_think(tic);
+  EXECUTE PROCEDURE lights_think(tic);
   IF ((SELECT g.deathmatch FROM game g WHERE g.id = 1) = 2) THEN EXECUTE PROCEDURE respawn_specials(tic);
   -- -timer: the level ends after that many minutes
   UPDATE game g SET exit_kind = 1
@@ -5186,6 +5242,12 @@ DECLARE stid INTEGER;
 DECLARE sstate INTEGER;
 DECLARE stics INTEGER;
 DECLARE sreact INTEGER;
+DECLARE son SMALLINT;
+DECLARE mid INTEGER;
+DECLARE mtype INTEGER;
+DECLARE lastlook INTEGER;
+DECLARE lsec INTEGER;
+DECLARE lspec INTEGER;
 BEGIN
   MERGE INTO linedefs l
   USING (SELECT l2.id, a.x ax, a.y ay, b.x bx, b.y bby, fs.sector_id fsec, bs.sector_id bsec
@@ -5266,14 +5328,7 @@ BEGIN
    WHERE id = 1;
 
   UPDATE sectors s SET sky = IIF(EXISTS (SELECT 1 FROM flats f WHERE f.id = s.ceil_flat AND f.is_sky = 1), 1, 0);
-  UPDATE sectors s
-     SET min_light = (SELECT MIN(n.base_light)
-                        FROM linedefs l
-                        JOIN sectors n ON n.id = IIF(l.front_sector = s.id, l.back_sector, l.front_sector)
-                       WHERE (l.front_sector = s.id OR l.back_sector = s.id)
-                         AND l.back_sector IS NOT NULL AND n.id <> s.id);
-  UPDATE sectors SET min_light = IIF(special IN (2, 3, 4, 12, 13), 0, base_light)
-   WHERE min_light IS NULL OR min_light >= base_light;
+  UPDATE sectors s SET lfx = NULL, lfx_count = 0;
   EXECUTE PROCEDURE spawn_door_specials;
 
   -- the players in the game: rows 1…GAME.PLAYERS
@@ -5287,27 +5342,39 @@ BEGIN
   END
   -- things for this skill level, minus multiplayer-only ones (unless it's a netgame)
   INSERT INTO things (id, thing_type, kind, x, y, angle, flags, hp, radius, height, solid, st,
-                      spawn_x, spawn_y, spawn_angle)
+                      spawn_x, spawn_y, spawn_angle, mthing)
   SELECT NEXT VALUE FOR thing_seq, m.ttype, tt.kind, m.x, m.y, m.angle * PI() / 180, m.flags,
          tt.hp, tt.radius, tt.height, tt.solid, 'idle',
-         m.x, m.y, m.angle * PI() / 180
+         m.x, m.y, m.angle * PI() / 180, m.id
     FROM map_things m JOIN thing_types tt ON tt.thing_type = m.ttype
    WHERE (BIN_AND(m.flags, 16) = 0 OR :np > 1) AND BIN_AND(m.flags, :skill_bit) <> 0 AND tt.kind <> 'player'
      AND NOT (:dm > 0 AND tt.pickup = 'key')            -- (MF_NOTDMATCH: no keys in deathmatch)
      AND NOT (:nomon = 1 AND (tt.count_kill = 1 OR m.ttype = 3006))   -- (-nomonsters: P_SpawnMapThing skips MF_COUNTKILL and the lost soul)
    ORDER BY m.id;                                       -- (the same ids on every load)
-  -- the types on the frame tables: their spawn state; P_SpawnMapThing starts each
-  -- partway into it (1 + P_Random() % tics), and P_SpawnMobj gives them mobjinfo's
-  -- reaction time (8; on Nightmare none)
-  FOR SELECT t.id, tt.spawn_state, s.tics, tt.reaction_time FROM things t
-        JOIN thing_types tt ON tt.thing_type = t.thing_type
-        JOIN states s ON s.id = tt.spawn_state
-       WHERE tt.on_states = 1 ORDER BY t.id
-        INTO stid, sstate, stics, sreact
+  -- P_LoadThings, in the map's order: each thing's P_SpawnMobj draws (lastlook), then
+  -- P_SpawnMapThing starts it partway into its spawn state (1 + P_Random() % tics); a player's
+  -- start draws for its P_SpawnMobj where it lies among them (not in deathmatch: those come
+  -- after). P_SpawnMobj gives each mobjinfo's reaction time (8; on Nightmare none).
+  FOR SELECT m.id, m.ttype, t.id, tt.spawn_state, s.tics, tt.reaction_time, tt.on_states
+        FROM map_things m
+        LEFT JOIN things t ON t.mthing = m.id
+        LEFT JOIN thing_types tt ON tt.thing_type = t.thing_type
+        LEFT JOIN states s ON s.id = tt.spawn_state
+       ORDER BY m.id
+        INTO mid, mtype, stid, sstate, stics, sreact, son
   DO
-    UPDATE things t SET state = :sstate, reaction = IIF(:skill = 5, 0, :sreact),
-           state_tic = IIF(:stics < 0, NULL, (SELECT g.tic FROM game g WHERE g.id = 1) + IIF(:stics > 0, 1 + MOD(p_rand256(), :stics), 0))
-     WHERE t.id = :stid;
+  BEGIN
+    IF (stid IS NULL) THEN
+    BEGIN
+      IF (mtype BETWEEN 1 AND 4 AND mtype <= np AND dm = 0) THEN lastlook = p_rand256();
+      CONTINUE;
+    END
+    lastlook = p_rand256();
+    IF (son = 1) THEN
+      UPDATE things t SET state = :sstate, reaction = IIF(:skill = 5, 0, :sreact),
+             state_tic = IIF(:stics < 0, NULL, (SELECT g.tic FROM game g WHERE g.id = 1) + IIF(:stics > 0, 1 + MOD(p_rand256(), :stics), 0))
+       WHERE t.id = :stid;
+  END
   DELETE FROM respawn_queue;
   -- G_DoLoadLevel: the frags start over with the level
   DELETE FROM frags;
@@ -5332,6 +5399,8 @@ BEGIN
       px = px + 40 * (i - 1) * COS(pa + PI() / 2);
       py = py + 40 * (i - 1) * SIN(pa + PI() / 2);
     END
+    -- (in deathmatch, G_DeathMatchSpawnPlayer's P_SpawnPlayer: its P_SpawnMobj's draw)
+    IF (dm > 0) THEN lastlook = p_rand256();
     tid = NEXT VALUE FOR thing_seq;
     INSERT INTO things (id, thing_type, kind, x, y, angle, hp, radius, height, solid, st, translation, state, reaction)
     VALUES (:tid, 1, 'player', :px, :py, :pa, 100, 16, 56, 1, 'idle', :i - 1,
@@ -5340,6 +5409,13 @@ BEGIN
     UPDATE player SET thing_id = :tid WHERE id = :i;
     i = i + 1;
   END
+
+  -- P_SpawnSpecials: the light specials' thinkers, in sector order (after the things: their
+  -- draws come after the things')
+  FOR SELECT s.id, s.special FROM sectors s WHERE s.special IN (1, 2, 3, 4, 8, 12, 13, 17) ORDER BY s.id
+      INTO lsec, lspec
+  DO
+    EXECUTE PROCEDURE spawn_light(lsec, lspec);
 
   -- Every thing's sector in one set-based pass: a recursive CTE walks the BSP
   -- tree for all of them at once.

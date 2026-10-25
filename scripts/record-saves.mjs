@@ -36,7 +36,7 @@ await createSchema(db, sql);
 const wad = new Wad(fs.readFileSync('public/wads/freedoom1.wad'));
 const res = await loadResources(db, wad);
 await loadMap(db, wad, res, 'E1M1', { skill: 4 });
-await db.query('UPDATE game SET rng = 4321 WHERE id = 1').catch(() => {});   // (no P_RANDOM state before demos)
+await db.query('UPDATE game SET rng = 225 WHERE id = 1').catch(() => {});   // (no P_RANDOM state before demos)
 await db.exec('UPDATE player SET health = 1000');
 const tic = (fwd, turn, fire, use) => db.query('SELECT * FROM doom_tic(1, ' + fwd + ', 0, ' + turn + ', ' + fire + ', ' + use + ', 0, 0)');
 for (let i = 0; i < 70; i++) await tic(1, i % 20 < 10 ? 0.05 : -0.05, i % 7 === 0 ? 1 : 0, i % 15 === 0 ? 1 : 0);

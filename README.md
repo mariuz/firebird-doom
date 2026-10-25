@@ -743,12 +743,12 @@ and says what's wrong.
 ### Demos
 
 A demo is the input of a game (after `G_RecordDemo`/`G_DoPlayDemo`, in this port's own format,
-[src/demo.js](src/demo.js)). **● Record** under the view restarts the current map with a fresh
-random seed and records every `DOOM_TIC` call: `[tics, fwd, side, turn, fire, use, weapon, run]`.
+[src/demo.js](src/demo.js)). **● Record** under the view restarts the current map as a new game
+and records every `DOOM_TIC` call: `[tics, fwd, side, turn, fire, use, weapon, run]`.
 As in DOOM, a demo goes on from level to level. Through an exit it records the intermission's
 frames (`['wi', tics, buttons]`, the presses that hurry it along), a text screen's
 (`['fin', tics, held, pressed]`), and each level start (`['map', name, seed, newGame]`). That
-includes the restart after a death, which starts with a fresh seed the demo keeps. It stops with
+includes the restart after a death. It stops with
 **■ Stop**, or when you start something else yourself (a new game, the **Map** selector, a load).
 **▶ Play** loads the same map at the same skill with the same seed and makes the same calls, and
 the same game unfolds, screens and all. If the game ever takes a different turn from the
@@ -758,8 +758,10 @@ The last demo of each WAD is kept in the browser. Playback runs in the game's ow
 of the recorded calls as the tics gone by cover, whatever frame rate the recording was made at.
 
 That works because the game is deterministic. Every chance in `sql/game.sql` goes through
-`P_RANDOM()`, a linear congruential generator whose state is the `GAME.RNG` column (so a save
-keeps it too), and every load numbers the things from 1. Cheats are switched off while recording
+`P_Random`, DOOM's own: the next of the 256 numbers in `rndtable` (m_random.c), from an index
+kept in the `GAME.RNG` column (so a save keeps it too). A new game starts it at 0, as
+`G_InitNew`'s `M_ClearRandom` does; the next level and the restart after a death carry on. And
+every load numbers the things from 1. Cheats are switched off while recording
 or playing, because they aren't inputs and would desync the demo. DOOM's own `.lmp` demos can't be
 played yet: they need DOOM's exact fixed-point simulation and random table, and this is a
 re-implementation in SQL. `npm run test:demo` replays a busy 531-tic recording and compares every
@@ -777,8 +779,15 @@ measured against vanilla itself:
   vanilla's trace of each, in `scripts/fixtures/lmp/`.
 - **The ratchet:** `npm run test:lmp` plays them in the port and reports the first tic each
   quantity differs. A change may bring the port closer, never further (`baseline.json`).
-- **Where it stands:** standing still on E1M1 it keeps step for all 350 tics. Anything that
-  moves differs from the first tic, in the last bit of DOOM's fixed-point rounding.
+- **Random numbers (phase L1, done):** `P_Random` is DOOM's table and index. As the map is set up
+  the port draws what vanilla draws, in its order: each thing's `P_SpawnMobj`, the random tics
+  `P_SpawnMapThing` starts it with, the player's start, then the flashing and strobing lights'
+  first counts. The lights then run on DOOM's timers (`P_SpawnLightFlash`, `P_SpawnStrobeFlash`,
+  `P_SpawnFireFlicker`, `P_SpawnGlowingLight`), drawing as theirs do.
+- **Where it stands:** standing still on E1M1 it keeps step for all 350 tics: the player, the
+  things' states and the random index, from the level's setup on. Anything that moves differs
+  from the first tic, in the last bit of DOOM's fixed-point rounding (phase L2), and the
+  random index follows some 40–57 tics later, once a monster wakes.
 
 ### Co-op and deathmatch over the network
 
@@ -793,7 +802,7 @@ That makes a WebRTC data channel between the two browsers: the codes are the SDP
 complete with their ICE candidates, found through a public STUN server. The host can invite up to
 three players this way, picks **Co-op**, **Deathmatch** or **Deathmatch 2** and a **Timer**, then presses
 **Start**. Everyone loads the host's map at the host's skill,
-with the host's random seed. Everyone must have the same WAD loaded: a guest with another one is
+with the random index at 0. Everyone must have the same WAD loaded: a guest with another one is
 told which.
 
 With a **relay** ([worker/relay.js](worker/relay.js), a small Cloudflare Worker) it gets simpler. The
@@ -1315,9 +1324,9 @@ What's still not vanilla, and why `.lmp` demos can't play yet (docs/ROADMAP.md):
 - **Arithmetic:** positions and speeds are doubles, and angles are radians, where DOOM uses 16.16
   fixed point and 32-bit BAMs with its `finesine` tables. A thing ends up a fraction of a unit
   from where DOOM's would, and over a demo that adds up.
-- **Random numbers:** `p_random()` is a linear congruential generator, not DOOM's 256-entry
-  `rndtable`. Its draws come in DOOM's order where the code follows DOOM's (the actions, the
-  damage, `P_SpawnMapThing`), but not everywhere.
+- **Random numbers:** `P_Random` is DOOM's `rndtable`, but its draws come in DOOM's order only
+  where the code follows DOOM's (the map's setup, the lights, the actions, the damage), not yet
+  everywhere.
 - **Movement:** the player's wall sliding tries each axis in turn rather than `P_SlideMove`'s
   traced slide. Friction stops at 0.05 rather than `STOPSPEED`. A hit pushes no one: there is
   none of `P_DamageMobj`'s thrust, for you or for monsters.

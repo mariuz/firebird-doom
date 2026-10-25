@@ -35,11 +35,11 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above (done) and DOOM's fixed-point physics, bit for bit. What stands in the way is in the
   README (*Simplifications*, "What's still not vanilla"): doubles and radians for 16.16 and BAMs,
-  an LCG for `rndtable` (and its draws in DOOM's order everywhere), `P_SlideMove`, the blockmap's
+  `rndtable`'s draws in DOOM's order everywhere, `P_SlideMove`, the blockmap's
   order, `P_DamageMobj`'s thrust. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation). *Under way*, in phases
-  (under **Simulation** below: *Original `.lmp` demos, in phases*): phase L0, the yardstick, is
-  done.
+  (under **Simulation** below: *Original `.lmp` demos, in phases*): phases L0, the yardstick,
+  and L1, DOOM's random numbers, are done.
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
@@ -105,7 +105,7 @@ Everything else below is done.
   from the menu. A save is a JSON snapshot of the live tables. Quicksave and quickload
   (F6/F9) too, and exporting and importing a WAD's saves as a file.
 - ~~**Demos.**~~ Done ([src/demo.js](../src/demo.js)): record a level, play it back, download it
-  or load it as a JSON file. The simulation is deterministic: `P_RANDOM` is seeded from
+  or load it as a JSON file. The simulation is deterministic: `P_Random` is DOOM's table, from the index in
   `GAME.RNG`, and thing ids restart on every load. Not possible: DOOM's own `.lmp` demos. They
   need a bit-identical simulation (fixed point, the 256-entry random table consumed in the same
   order), and this is a re-implementation. The title loop plays the port's own demos instead.
@@ -347,11 +347,27 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   - Things' z, their health (an item's is 1000) and their states (P_SpawnMapThing's random
     tics) differ from tic 1.
 
-**Phase L1: DOOM's random numbers.** `rndtable` and `prndindex` for P_Random, and M_Random's own
-index for what doesn't touch the game. M_ClearRandom at G_InitNew. Then every draw in DOOM's
-order: P_SpawnMapThing's tics, A_Look's sight-sound choice, P_SubRandom's left-then-right, the
-damage rolls. The trace's prndindex column becomes comparable, and diverges exactly where a draw
-is missing or extra. Test: the idle demo keeps prndindex in step.
+**Phase L1: DOOM's random numbers.** *Done.*
+- **The table:** `rndtable` (generated into `src/states.js` from m_random.c, loaded into the
+  `RNDTABLE` table) and `prndindex` (`GAME.RNG`). `P_RAND256` is P_Random; `P_RANDOM` is the
+  same draw over 256 and `P_RAND_AND(mask)` is `P_Random() & mask` in one draw (Firebird's
+  `BIN_AND` evaluates its argument twice). The page's own randomness (wipes, quit messages,
+  the intermission) never touches it, as M_Random's doesn't.
+- **M_ClearRandom:** a new game starts at 0 (`loadMap`'s `seed`); the next level and the
+  restart after a death carry on. A netgame starts at 0 for everyone.
+- **The setup in DOOM's order:** `INIT_MAP` walks the map's things in order (`THINGS.MTHING`):
+  each spawned thing's `P_SpawnMobj` draw (lastlook), then its random start into the spawn
+  state, and a player start's draw where it lies among them (in deathmatch, after). Then
+  P_SpawnSpecials: the light thinkers in sector order, each with its first count drawn.
+- **The lights as DOOM's thinkers:** `LIGHTS_THINK` every tic, from the sector's `LFX` columns:
+  `T_LightFlash`, `T_StrobeFlash`, `T_Glow`, `T_FireFlicker`, each drawing when DOOM's does.
+- **The trace:** `dump.c` also writes the level as P_SetupLevel leaves it (leveltime 0), and the
+  sync compares it before the first tic.
+- **Where it stands:** on the idle E1M1 demo the random index agrees from the setup through all
+  350 tics. The moving demos keep it 40–57 tics, until the first monster acts on a position that
+  is already off (phase L2). Left for later phases: the things' z and health at spawn (L3), and
+  the draws of actions the demos haven't reached yet (A_Look's sight-sound choice, P_SubRandom's
+  order, the damage rolls) as L4 and L5 bring them over.
 
 **Phase L2: the player in fixed point.** The ticcmd as DOOM's: forwardmove, sidemove and
 angleturn in its units, angles as BAMs. P_Thrust with `finesine`/`finecosine` (the tables in

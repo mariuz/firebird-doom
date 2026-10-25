@@ -121,7 +121,9 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   until a game starts. Browser-driven checks must start a game first: any key, then Enter
   through the menus, or `startMap` via the **Map** selector. Menus remember their cursor
   (`lastOn`), so scripted key sequences must allow for it.
-- **Determinism:** use `p_random()`, never `RAND()`, in game SQL. Anything random or
+- **Determinism:** use `p_rand256()` (DOOM's P_Random: `rndtable` from `GAME.RNG`, the index) or
+  `p_random()` (the same over 256), never `RAND()`, in game SQL. `P_Random() & n` is
+  `p_rand_and(n)`: `BIN_AND(p_rand256(), n)` evaluates the call twice, two draws. Anything random or
   time-dependent outside `DOOM_TIC`'s inputs breaks demos (`npm run test:demo` catches it).
   `INIT_MAP` draws on `p_random()` too (deathmatch starts), so a seed goes in through `loadMap`'s
   `seed`, before the map loads, never with an `UPDATE` after it: two peers once spawned apart.

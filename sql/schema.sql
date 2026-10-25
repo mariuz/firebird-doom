@@ -18,7 +18,7 @@ CREATE TABLE game (
   total_kills   INTEGER DEFAULT 0 NOT NULL,
   total_items   INTEGER DEFAULT 0 NOT NULL,
   total_secrets INTEGER DEFAULT 0 NOT NULL,
-  rng           BIGINT DEFAULT 1 NOT NULL,      -- P_RANDOM's state: the same seed, the same game
+  rng           BIGINT DEFAULT 0 NOT NULL,      -- P_Random's prndindex (0–255): the same seed, the same game
   skill         SMALLINT DEFAULT 3 NOT NULL,    -- 1 (easiest) … 5 (nightmare: fast, respawning)
   players       SMALLINT DEFAULT 1 NOT NULL,    -- players in the game (netgame: more than 1); ids 1…players
   deathmatch    SMALLINT DEFAULT 0 NOT NULL,    -- 0 single player or co-op, 1 deathmatch, 2 -altdeath (items respawn)
@@ -151,6 +151,12 @@ CREATE TABLE thing_types (
 -- DOOM's state table, info.c's states[] (src/states.js, GPL-2, as a DEHACKED lump patched
 -- it): a frame of a thing's or a weapon's animation, how long it lasts, the action called when
 -- it's entered, and the state after it. The id is DOOM's statenum.
+-- m_random.c's rndtable (src/states.js's RNDTABLE): P_Random's 256 numbers, I 0–255
+CREATE TABLE rndtable (
+  i SMALLINT NOT NULL PRIMARY KEY,
+  v SMALLINT NOT NULL
+);
+
 CREATE TABLE states (
   id         INTEGER NOT NULL PRIMARY KEY,
   name       VARCHAR(24) NOT NULL,          -- S_POSS_ATK1 …
@@ -205,9 +211,16 @@ CREATE TABLE sectors (
   floor_flat INTEGER,
   ceil_flat  INTEGER,
   light      INTEGER NOT NULL,          -- current (animated) light level
-  base_light INTEGER NOT NULL,          -- as authored
-  min_light  INTEGER,                   -- darkest neighbour, for strobes/glows
   special    INTEGER NOT NULL,
+  -- its light thinker, if it has one (p_lights.c, made by SPAWN_LIGHT): flash, strobe, glow or
+  -- flicker; the tics until it next changes; its darkest and brightest levels; a strobe's dark
+  -- time; a glow's direction (-1 down, 1 up)
+  lfx        VARCHAR(8),
+  lfx_count  INTEGER DEFAULT 0 NOT NULL,
+  lfx_min    INTEGER,
+  lfx_max    INTEGER,
+  lfx_dark   INTEGER,
+  lfx_dir    SMALLINT,
   tag        INTEGER NOT NULL,
   sky        SMALLINT DEFAULT 0 NOT NULL,
   sound_heard SMALLINT DEFAULT 0 NOT NULL     -- soundtarget: the player whose gunfire reached this sector (0: none)
@@ -321,6 +334,7 @@ CREATE TABLE things (
   spawn_x    DOUBLE PRECISION,                 -- where the map put it (P_NightmareRespawn)
   spawn_y    DOUBLE PRECISION,
   spawn_angle DOUBLE PRECISION,
+  mthing      INTEGER,                          -- the map thing it was spawned from (MAP_THINGS.ID; P_LoadThings' order)
   movedir     SMALLINT DEFAULT 8 NOT NULL,      -- P_NewChaseDir's heading: 0 east … 7 south-east (45° steps), 8 none
   movecount   INTEGER DEFAULT 0 NOT NULL,       -- chase steps before it picks a new heading
   just_attacked SMALLINT DEFAULT 0 NOT NULL,    -- MF_JUSTATTACKED

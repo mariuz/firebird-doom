@@ -670,7 +670,7 @@ function startMap(name, newGame, opts) {
   return run;
 }
 
-async function startMapNow(name, newGame, { skill = settings.skill, seed = null, keepDemo = false, netgame = false, attract: forTitle = false, fromFrame = false, restore = null, options = null } = {}) {
+async function startMapNow(name, newGame, { skill = settings.skill, seed = null, reborn = false, keepDemo = false, netgame = false, attract: forTitle = false, fromFrame = false, restore = null, options = null } = {}) {
   if (net && !netgame) leaveNet('you started another game');
   running = false;
   // (a start from outside the loop – the menu, the panel, a message – waits for
@@ -695,8 +695,9 @@ async function startMapNow(name, newGame, { skill = settings.skill, seed = null,
   if (newGame) didSecret.clear();
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
-  // P_RANDOM's seed: a demo's own, or a fresh one for a new game (a new level carries on)
-  const s = seed ?? (newGame ? 1 + Math.floor(Math.random() * 2147483646) : null);
+  // P_Random's index: a demo's own seed, or 0 for a new game as G_InitNew's M_ClearRandom
+  // sets it (a new level, and the restart after a death, G_DoReborn, carry on)
+  const s = seed ?? (newGame && !reborn ? 0 : null);
   // the launch options: a demo's own, a netgame's, the game's as it goes from level to
   // level (G_DoLoadLevel keeps them), or the checkboxes' for a game starting now
   gameOptions = options ?? (net ? { nomonsters: net.nomonsters, respawn: net.respawn, fast: net.fast }
@@ -739,7 +740,7 @@ async function startMapNow(name, newGame, { skill = settings.skill, seed = null,
  * death. A demo goes on through it: recording notes the level and its seed,
  * playing takes them from the recording (a restart's seed is a new one).
  */
-async function nextLevel(name, newGame) {
+async function nextLevel(name, newGame, reborn = false) {
   let seed = null;
   if (demoPlayer) {
     const c = demoPlayer.take('map');
@@ -749,7 +750,7 @@ async function nextLevel(name, newGame) {
   const rec = recorder;
   frameStarting = true;
   try {
-    await startMap(name, newGame, { seed, keepDemo: true, netgame: !!net, fromFrame: true });
+    await startMap(name, newGame, { seed, reborn, keepDemo: true, netgame: !!net, fromFrame: true });
   } finally { frameStarting = false; }
   rec?.push(['map', name, lastSeed, newGame ? 1 : 0]);
 }
@@ -1073,7 +1074,7 @@ $('net-start').addEventListener('click', async () => {
   const players = lobby.links.length + 1;
   let mapName = $('map').value;
   let skill = settings.skill;
-  const seed = 1 + Math.floor(Math.random() * 2147483646);
+  const seed = 0;   // (G_InitNew's M_ClearRandom: every game starts at the table's beginning)
   let dm = Number($('net-mode').value) || 0;
   let timer = Math.max(0, Math.min(999, Number($('net-timer').value) || 0));
   let opts = Object.fromEntries(NET_OPTIONS.map((o) => [o, $(`net-${o}`).checked ? 1 : 0]));
@@ -1308,7 +1309,7 @@ async function frameNow() {
       const kind = hud.EXIT_KIND;
       const secret = kind === 2;
       // (a demo goes on: through the intermission to the next level, or the restart after a death)
-      if (kind === 3) await nextLevel(map.name, true);
+      if (kind === 3) await nextLevel(map.name, true, true);
       else {
         await db.exec('UPDATE game SET exit_kind = 0 WHERE id = 1');
         const level = levelOf(map.name);

@@ -3,7 +3,7 @@
 // A demo plays through DOOM_TIC (src/lmp.js turns its ticcmds into the port's), and after each
 // tic the port's state is read in DOOM's units (16.16 fixed point, BAM angles) and set against
 // the oracle's trace of the same demo (scripts/oracle: Chocolate Doom, tic by tic). What it
-// compares, a line per tic:
+// compares, a line per tic (and one for the level as it's set up, tic 0):
 //
 //   leveltime prndindex  the player's x y z angle momx momy health  count of mobjs, and the
 //   sums of their x, y, z, health and state
@@ -35,10 +35,10 @@ const bam = (rad) => {
   return Math.round((turns - Math.floor(turns)) * 4294967296) % 4294967296;
 };
 
-/** The port's state now, in the trace's terms (prndindex: the port's LCG has none, so null) */
+/** The port's state now, in the trace's terms (prndindex: GAME.RNG) */
 export async function portRow(db) {
   const one = async (q) => (await db.query(q)).rows[0];
-  const p = await one(`SELECT g.tic, t.x, t.y, t.z, t.angle, t.momx, t.momy, p.health
+  const p = await one(`SELECT g.tic, g.rng, t.x, t.y, t.z, t.angle, t.momx, t.momy, p.health
       FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g WHERE p.id = 1 AND g.id = 1`);
   const all = (await db.query('SELECT t.x, t.y, t.z, t.hp, t.state FROM things t', [], { rowMode: 'array' })).rows;
   let sx = 0n; let sy = 0n; let sz = 0n; let shp = 0n; let sst = 0n;
@@ -47,7 +47,7 @@ export async function portRow(db) {
     shp += BigInt(hp ?? 0); sst += BigInt(st ?? 0);
   }
   return {
-    leveltime: p.TIC, prndindex: null, x: fixed(p.X), y: fixed(p.Y), z: fixed(p.Z), angle: bam(p.ANGLE),
+    leveltime: p.TIC, prndindex: Number(p.RNG), x: fixed(p.X), y: fixed(p.Y), z: fixed(p.Z), angle: bam(p.ANGLE),
     momx: fixed(p.MOMX), momy: fixed(p.MOMY), health: p.HEALTH,
     mobjs: BigInt(all.length), sumx: sx, sumy: sy, sumz: sz, sumhealth: shp, sumstate: sst,
   };
@@ -60,19 +60,24 @@ export async function portRow(db) {
  */
 export async function playAgainst(db, demo, trace, { limit = Infinity } = {}) {
   const first = Object.fromEntries(FIELDS.map((f) => [f, null]));
-  const n = Math.min(demo.tics.length, trace.length, limit);
+  // the trace's first line is the level as P_SetupLevel left it (leveltime 0), before any tic
+  const setup = trace[0]?.leveltime === 0 ? 1 : 0;
+  const n = Math.min(demo.tics.length, trace.length - setup, limit);
   let synced = null;
-  for (let t = 0; t < n; t++) {
-    const [fwd, side, turn, fire, use, weapon, run] = portCmd(demo.tics[t][demo.consoleplayer] ?? demo.tics[t][0]);
-    await db.query('SELECT * FROM doom_tic(1, ?, ?, ?, ?, ?, ?, ?)', [fwd, side, turn, fire, use, weapon, run]);
+  const compare = async (tic, theirs) => {
     const mine = await portRow(db);
-    const theirs = trace[t];
     for (const f of FIELDS) {
       if (first[f] || mine[f] === null) continue;
       // (the demo's tic: the trace's leveltime starts over if vanilla's player dies and the level restarts)
-      if (mine[f] !== theirs[f]) first[f] = { tic: t + 1, port: String(mine[f]), vanilla: String(theirs[f]) };
+      if (mine[f] !== theirs[f]) first[f] = { tic, port: String(mine[f]), vanilla: String(theirs[f]) };
     }
-    if (synced === null && PLAYER_FIELDS.some((f) => first[f])) synced = t;
+    if (synced === null && PLAYER_FIELDS.some((f) => first[f])) synced = Math.max(0, tic - 1);
+  };
+  if (setup) await compare(0, trace[0]);
+  for (let t = 0; t < n; t++) {
+    const [fwd, side, turn, fire, use, weapon, run] = portCmd(demo.tics[t][demo.consoleplayer] ?? demo.tics[t][0]);
+    await db.query('SELECT * FROM doom_tic(1, ?, ?, ?, ?, ?, ?, ?)', [fwd, side, turn, fire, use, weapon, run]);
+    await compare(t + 1, trace[t + setup]);
   }
   return { tics: n, first, synced: synced ?? n };
 }
@@ -108,7 +113,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   console.log(`${path.basename(lmpPath)}: ${r.tics} tics; the player in step for ${r.synced}`);
   for (const f of FIELDS) {
     const d = r.first[f];
-    console.log(`  ${f.padEnd(10)} ${d ? `differs at tic ${d.tic}: port ${d.port}, vanilla ${d.vanilla}` : (f === 'prndindex' ? '(the port has no rndtable yet)' : 'agrees throughout')}`);
+    console.log(`  ${f.padEnd(10)} ${d ? `differs at tic ${d.tic}: port ${d.port}, vanilla ${d.vanilla}` : 'agrees throughout'}`);
   }
   await db.close();
 }

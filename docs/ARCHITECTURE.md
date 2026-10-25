@@ -79,8 +79,9 @@ Per tic, `DOOM_TIC` runs:
 - `LIGHTS_THINK` every other tic.
 - The countdowns: damage and bonus flashes, messages, power-ups.
 
-**Determinism.** Every chance goes through `P_RANDOM()`, a linear congruential generator over
-`GAME.RNG`. `loadMap` restarts `thing_seq` at 1. So the same map, skill, seed and `DOOM_TIC`
+**Determinism.** Every chance goes through `P_RAND256()` (or `P_RANDOM()`, the same draw over 256,
+or `P_RAND_AND(mask)`): DOOM's `P_Random`, the next of `RNDTABLE`'s 256 numbers after the index
+`GAME.RNG`. Never `BIN_AND(p_rand256(), …)`: Firebird evaluates the argument twice, two draws. `loadMap` restarts `thing_seq` at 1. So the same map, skill, seed and `DOOM_TIC`
 calls always give the same game, which is what demos rely on. Never call `RAND()` in the game
 SQL, and never let a tic depend on wall-clock time or on the frame rate except through `tics`.
 And never let it depend on physical row order: cursors whose order matters say `ORDER BY`
@@ -183,7 +184,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `automap-test.mjs` | The automap's window: opening scale and limits, following, zoom per tic, panning within the level, the whole-level view, ten marks, the grid on BLOCKMAP cells, the messages. |
 | `pwad-test.mjs` | A PWAD built in memory (map, flat, sprite, music, DEHACKED) over Freedoom: what replaces what, in the directory and in Firebird; loading twice into one database. |
 | `dehacked-test.mjs` | Freedoom's lump (pars, cheats, its seven frame patches applied), a patch with every kind of block (patched things and pickups, the Misc rules in play, respelt cheats, par times), and a patch to the frame tables played out: a faster imp, a moved action, a weapon's frames, a reaction time, frame 966's overflow. |
-| `demo-test.mjs` | A recorded demo (through JSON) replays into the same game, row for row; a third run too; another seed diverges; `P_RANDOM` is repeatable and even; thing ids repeat across loads. |
+| `demo-test.mjs` | A recorded demo (through JSON) replays into the same game, row for row; a third run too; another seed diverges; `P_Random` walks rndtable from its index, one draw for `P_Random() & n`; thing ids repeat across loads. |
 | `lmp-test.mjs` | DOOM's `.lmp` format read and written (v1.9, v1.2, longtics); each demo in `scripts/fixtures/lmp` played against vanilla's trace (from the oracle, `scripts/oracle`), ratcheted by `baseline.json`: no demo may fall out of step earlier than it did. |
 | `menu-test.mjs` | The title loop; menu navigation, remembered cursors, New Game → episode → skill, Nightmare's question, options and sliders, Load/Save, Quit, Read This!, coordinates, and every graphic present in both WADs. |
 | `compare-renderers.mjs` | BSP and brute-force renderers agree, column by column. |

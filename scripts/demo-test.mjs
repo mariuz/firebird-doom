@@ -9,6 +9,7 @@ import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
 import { captureGame } from '../src/savegame.js';
 import { DemoPlayer, DemoRecorder, demoProblem } from '../src/demo.js';
+import { RNDTABLE } from '../src/states.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -69,19 +70,19 @@ assert(drift === 0, `four more runs, other maps loaded in between, land on the s
 const d = await play(999, inputs);
 assert(d !== a, 'a different seed plays out differently');
 
-// P_RANDOM itself: repeatable, in [0, 1), and spread out
+// P_Random itself: rndtable in order from prndindex, round and round (m_random.c)
 await db.exec('UPDATE game SET rng = 42 WHERE id = 1');
 const draw = async (n) => (await db.query(`EXECUTE BLOCK RETURNS (v DOUBLE PRECISION) AS DECLARE i INTEGER = 0;
   BEGIN WHILE (i < ${n}) DO BEGIN v = p_random(); SUSPEND; i = i + 1; END END`)).rows.map((r) => r.V);
 const r1 = await draw(2000);
 await db.exec('UPDATE game SET rng = 42 WHERE id = 1');
 const r2 = await draw(2000);
-const mean = r1.reduce((x, y) => x + y, 0) / r1.length;
-const buckets = Array(8).fill(0);
-for (const v of r1) buckets[Math.floor(v * 8)]++;
-assert(JSON.stringify(r1) === JSON.stringify(r2) && r1.every((v) => v >= 0 && v < 1) && Math.abs(mean - 0.5) < 0.03
-  && buckets.every((n) => n > 180 && n < 320),
-  `P_RANDOM: the same seed, the same 2000 numbers, all in [0, 1), mean ${mean.toFixed(3)}, eighths ${buckets.join('/')}`);
+const wanted = Array.from({ length: 2000 }, (_, k) => RNDTABLE[(43 + k) % 256] / 256);
+const index = (await db.query('SELECT rng FROM game WHERE id = 1')).rows[0].RNG;
+assert(JSON.stringify(r1) === JSON.stringify(r2) && JSON.stringify(r1) === JSON.stringify(wanted) && index === (42 + 2000) % 256,
+  `P_Random: from prndindex 42, 2000 draws are rndtable[43], [44], … round the table (${r1.slice(0, 4).map((v) => v * 256).join(', ')}, …), the same both times; the index ends at ${index}`);
+const masked = (await db.query(`EXECUTE BLOCK RETURNS (v INTEGER, i BIGINT) AS BEGIN UPDATE game SET rng = 0 WHERE id = 1; v = p_rand_and(7); SELECT rng FROM game WHERE id = 1 INTO i; SUSPEND; END`)).rows[0];
+assert(masked.V === (RNDTABLE[1] & 7) && Number(masked.I) === 1, `P_Random() & 7 is one draw (${masked.V}, the index at ${masked.I}): Firebird's BIN_AND would evaluate p_rand256() twice`);
 
 // thing ids start over on every load
 await loadMap(db, wad, res, map, { skill: 3 });

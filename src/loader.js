@@ -4,7 +4,7 @@
 // (scripts/sql-smoke.mjs), so CI exercises exactly the SQL the page runs.
 
 import { THING_TYPES, MOBJ_TYPE, SPAWN_STATE, ON_STATES } from './thinginfo.js';
-import { STATES, MOBJINFO } from './states.js';
+import { STATES, MOBJINFO, RNDTABLE } from './states.js';
 
 // each thing type's eight states (spawn … raise), from its DOOM mobj type: by the
 // map number, else MOBJ_TYPE; [] when DOOM has no such type
@@ -135,7 +135,7 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
   const frames = new Map();
   for (const f of wad.spriteFrames()) frames.set(`${f.sprite}${f.frame}${f.rot}`, f);
 
-  await db.exec('DELETE FROM textures; DELETE FROM flats; DELETE FROM sprite_frames; DELETE FROM thing_types; DELETE FROM states; DELETE FROM weapon_info; DELETE FROM screen_cols; DELETE FROM game; DELETE FROM player; DELETE FROM viewcfg; DELETE FROM rules');
+  await db.exec('DELETE FROM textures; DELETE FROM flats; DELETE FROM sprite_frames; DELETE FROM thing_types; DELETE FROM states; DELETE FROM weapon_info; DELETE FROM rndtable; DELETE FROM screen_cols; DELETE FROM game; DELETE FROM player; DELETE FROM viewcfg; DELETE FROM rules');
   await insertRows(db, 'textures', ['id', 'name', 'w', 'h'], texDefs.map((d, i) => [i + 1, d.name, d.w, d.h]));
   await insertRows(db, 'flats', ['id', 'name', 'is_sky'], flats.map((l, i) => [i + 1, l.name, l.name === 'F_SKY1' ? 1 : 0]));
   await insertRows(
@@ -166,6 +166,7 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
   const fastTo = STATE_ID.get('S_SARG_PAIN2');
   await insertRows(db, 'states', ['id', 'name', 'sprite', 'frame', 'bright', 'tics', 'action', 'next_state', 'misc1', 'misc2', 'mode', 'fast'],
     deh.states.map((s, i) => [i, ...s, modes[i], i >= fastFrom && i <= fastTo ? 1 : 0]));
+  await insertRows(db, 'rndtable', ['i', 'v'], RNDTABLE.map((v, i) => [i, v]));
   // weaponinfo[], weapon k + 1 for DOOM's weapontype_t k
   await insertRows(db, 'weapon_info', ['weapon', 'ammo', 'up_state', 'down_state', 'ready_state', 'atk_state', 'flash_state'],
     deh.weapons.map((w, k) => [k + 1, w.ammo, ...w.states]));
@@ -225,8 +226,8 @@ export async function loadMap(db, wad, res, name, {
   await insertRows(db, 'vertexes', ['id', 'x', 'y'], m.vertexes.map((v) => [v.id, v.x, v.y]));
   await insertRows(db, 'reject', ['sector_id', 'bits'], rejectRows(m.reject, m.sectors.length));
   await insertRows(
-    db, 'sectors', ['id', 'floor_h', 'ceil_h', 'floor_flat', 'ceil_flat', 'light', 'base_light', 'special', 'tag'],
-    m.sectors.map((s) => [s.id, s.floor, s.ceil, flat(s.floorTex), flat(s.ceilTex), s.light, s.light, s.special, s.tag]),
+    db, 'sectors', ['id', 'floor_h', 'ceil_h', 'floor_flat', 'ceil_flat', 'light', 'special', 'tag'],
+    m.sectors.map((s) => [s.id, s.floor, s.ceil, flat(s.floorTex), flat(s.ceilTex), s.light, s.special, s.tag]),
   );
   await insertRows(
     db, 'sidedefs', ['id', 'xoff', 'yoff', 'upper_tex', 'lower_tex', 'mid_tex', 'sector_id'],
@@ -251,9 +252,9 @@ export async function loadMap(db, wad, res, name, {
   const skillBit = skill <= 2 ? 1 : skill === 3 ? 2 : 4;
   // the same thing ids on every load, so a level always starts identical (demos)
   await db.exec('ALTER SEQUENCE thing_seq RESTART WITH 1');   // (from 1: origin 0 means the player's own sounds)
-  // P_RANDOM's seed goes in first (G_InitNew's M_ClearRandom comes before the
-  // level): a deathmatch's starts are drawn from it as the map loads
-  if (seed != null) await db.exec(`UPDATE game SET rng = ${seed} WHERE id = 1`);
+  // P_Random's index goes in first (G_InitNew's M_ClearRandom, 0, comes before the level): the
+  // map's things draw from it as they spawn. A seed is where in rndtable to start (mod 256).
+  if (seed != null) await db.exec(`UPDATE game SET rng = ${((Number(seed) % 256) + 256) % 256} WHERE id = 1`);
   await db.exec(`EXECUTE PROCEDURE init_map('${name}', ${skillBit}, ${newGame ? 1 : 0}, ${skill})`);
   return m;
 }

@@ -15,7 +15,7 @@ export const SLOTS = 6;
 // tables saved whole, and the columns that change in the rest
 const WHOLE = ['game', 'player', 'things', 'movers', 'frags', 'respawn_queue'];
 const MOVING = {
-  sectors: ['floor_h', 'ceil_h', 'light', 'special', 'sound_heard', 'floor_flat', 'base_light', 'min_light'],
+  sectors: ['floor_h', 'ceil_h', 'light', 'special', 'sound_heard', 'floor_flat', 'lfx', 'lfx_count', 'lfx_min', 'lfx_max', 'lfx_dark', 'lfx_dir'],
   sidedefs: ['upper_tex', 'mid_tex', 'lower_tex'],
   linedefs: ['special'],
 };
@@ -27,6 +27,8 @@ const MOVING = {
 const RETIRED = {
   player: ['attack_tics', 'attack_len', 'weapon_y', 'weapon_down'],
   things: ['st_tics', 'st_len', 'step', 'frame', 'sprite', 'think_tic'],
+  // (and the old lights' levels, before the light thinkers were DOOM's)
+  sectors: ['base_light', 'min_light'],
 };
 
 /** SAVE without its tables' RETIRED columns (a new object; the save itself is left alone) */
