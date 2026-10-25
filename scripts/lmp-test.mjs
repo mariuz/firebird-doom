@@ -1,0 +1,104 @@
+// lmp-test.mjs – DOOM's .lmp demos (src/lmp.js), and how long the port keeps step with
+// vanilla on them (docs/ROADMAP.md, "Original .lmp demos").
+//
+// The format: v1.9 headers and ticcmds written and read back, angleturn's high byte as
+// G_WriteDemoTiccmd rounds it, a v1.2 header, Chocolate Doom's longtics, the 0x80 end.
+//
+// The sync: each demo in scripts/fixtures/lmp plays in the port against vanilla's trace of it
+// (npm run lmp-fixtures, from the oracle). It isn't in sync yet; this is a ratchet: for every
+// demo and every field compared, the first tic the port differs mustn't come earlier than
+// scripts/fixtures/lmp/baseline.json says. When a change brings the port closer, the test says
+// so: `npm run test:lmp -- --update` writes the new baseline.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
+import { Wad } from '../src/wad.js';
+import { createSchema, loadResources, loadMap } from '../src/loader.js';
+import { parseLmp, writeLmp, portCmd, lmpMapName, BT_ATTACK, BT_USE, BT_CHANGE } from '../src/lmp.js';
+import { FIELDS, parseTrace, playAgainst, startDemo } from './lmp-sync.mjs';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+let failures = 0;
+const assert = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) failures++; };
+
+// ── the format ──
+{
+  const demo = { skill: 4, episode: 2, map: 3, deathmatch: 0, respawn: 1, fast: 1, nomonsters: 0, consoleplayer: 0,
+    players: [true, false, false, false], tics: [[[25, -10, -640, BT_ATTACK]], [[-127, 127, 32767, BT_USE | BT_CHANGE | (3 << 3)]], [[0, 0, 0, 0]]] };
+  const b = writeLmp(demo);
+  const back = parseLmp(b);
+  assert(b.length === 13 + 3 * 4 + 1 && b[0] === 109 && b[1] === 3 && b.at(-1) === 0x80
+    && back.skill === 4 && back.episode === 2 && back.map === 3 && back.respawn === 1 && back.fast === 1 && back.tics.length === 3,
+    `a v1.9 demo: a 13-byte header (version 109, skill ${b[1]} for the menu's ${demo.skill}), 4 bytes a tic, 0x80 at the end`);
+  // G_WriteDemoTiccmd keeps (angleturn + 128) >> 8: -640 goes as -512, 32767 as -32768 (it wraps)
+  assert(JSON.stringify(back.tics.map((t) => t[0])) === JSON.stringify([[25, -10, -512, 1], [-127, 127, -32768, 2 | 4 | 24], [0, 0, 0, 0]]),
+    `ticcmds read back as G_ReadDemoTiccmd reads them: ${JSON.stringify(back.tics.map((t) => t[0]))}`);
+  const old = parseLmp(Uint8Array.from([2, 1, 5, 1, 0, 0, 0, 10, 0, 0, 0, 0x80]));
+  assert(old.version === 0 && old.skill === 3 && old.episode === 1 && old.map === 5 && old.tics.length === 1 && old.tics[0][0][0] === 10,
+    'a v1.2 demo (no version byte): skill 3, E1M5, one tic');
+  const long = parseLmp(writeLmp({ ...demo, longtics: true }));
+  assert(long.version === 111 && long.tics[0][0][2] === -640, `Chocolate Doom's longtics (version 111): angleturn whole (${long.tics[0][0][2]})`);
+  const [fwd, side, turn, fire, use, weapon] = portCmd([50, -25, 16384, BT_ATTACK | BT_CHANGE | (8 << 3)]);
+  assert(fwd === 2 && side === -1 && Math.abs(turn - Math.PI / 2) < 1e-12 && fire === 1 && use === 0 && weapon === 1
+    && lmpMapName({ episode: 1, map: 9 }, false) === 'E1M9' && lmpMapName({ map: 7 }, true) === 'MAP07',
+    'as the port\'s ticcmd: forwardmove 50 is a run (2 × 25), angleturn 16384 a quarter turn; E1M9, MAP07');
+  let threw = '';
+  try { parseLmp(Uint8Array.from([200, 0, 1, 1])); } catch (e) { threw = e.message; }
+  assert(/not a demo|version/.test(threw), `not a demo is refused ("${threw}")`);
+}
+
+// ── the sync, against vanilla's traces ──
+const dir = path.join(root, 'scripts/fixtures/lmp');
+const basePath = path.join(dir, 'baseline.json');
+const update = process.argv.includes('--update');
+const baseline = fs.existsSync(basePath) ? JSON.parse(fs.readFileSync(basePath, 'utf8')) : {};
+const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
+const db = new FirebirdBrowser('memory://lmp', { transport: new DirectTransport({ threads: false }) });
+await createSchema(db, sql);
+const wads = new Map();
+const results = {};
+let better = 0;
+for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.lmp')).sort()) {
+  const name = file.replace(/\.lmp$/, '');
+  const demo = parseLmp(fs.readFileSync(path.join(dir, file)));
+  const trace = parseTrace(fs.readFileSync(path.join(dir, `${name}.trace`), 'utf8'));
+  const wadFile = name.startsWith('map') ? 'freedoom2.wad' : 'freedoom1.wad';
+  if (!wads.has(wadFile)) {
+    const wad = new Wad(fs.readFileSync(path.join(root, 'public/wads', wadFile)));
+    wads.set(wadFile, { wad, res: null });
+  }
+  const w = wads.get(wadFile);
+  w.res = await loadResources(db, w.wad);   // (each WAD's resources again: they share one database)
+  await startDemo(db, w.wad, w.res, demo, loadMap);
+  const r = await playAgainst(db, demo, trace);
+  const firsts = Object.fromEntries(FIELDS.map((f) => [f, r.first[f]?.tic ?? null]));
+  results[name] = { tics: r.tics, synced: r.synced, first: firsts };
+  const was = baseline[name];
+  const worse = [];
+  const gained = [];
+  if (was) {
+    if (r.synced < was.synced) worse.push(`in step ${r.synced} tics, was ${was.synced}`);
+    if (r.synced > was.synced) gained.push(`in step ${r.synced} tics, was ${was.synced}`);
+    for (const f of FIELDS) {
+      const a = firsts[f] ?? Infinity;
+      const b = was.first[f] ?? Infinity;
+      if (a < b) worse.push(`${f} now differs at tic ${a}${b === Infinity ? '' : `, was ${b}`} (port ${r.first[f].port}, vanilla ${r.first[f].vanilla})`);
+      if (a > b) gained.push(`${f} ${a === Infinity ? 'agrees throughout' : `differs from tic ${a}`}, was ${b}`);
+    }
+  }
+  if (gained.length) better++;
+  const where = FIELDS.filter((f) => r.first[f]).map((f) => `${f}@${r.first[f].tic}`).join(' ');
+  assert(update || (was && worse.length === 0),
+    `${name} (${lmpMapName(demo, wadFile === 'freedoom2.wad')}, ${r.tics} tics): the player in step for ${r.synced}; first differences ${where || 'none'}`
+    + `${!was && !update ? ' – no baseline yet (npm run test:lmp -- --update)' : ''}${worse.length ? `; worse than the baseline: ${worse.join('; ')}` : ''}${gained.length ? `; closer than the baseline: ${gained.join('; ')}` : ''}`);
+}
+if (update) {
+  fs.writeFileSync(basePath, `${JSON.stringify(results, null, 2)}\n`);
+  console.log(`(wrote ${path.relative(root, basePath)})`);
+} else if (better) {
+  console.log(`(${better} demo(s) closer to vanilla than the baseline: npm run test:lmp -- --update to keep it)`);
+}
+await db.close();
+console.log(failures ? `${failures} failure(s)` : 'lmp ok');
+process.exit(failures ? 1 : 0);

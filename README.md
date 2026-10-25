@@ -761,9 +761,24 @@ That works because the game is deterministic. Every chance in `sql/game.sql` goe
 `P_RANDOM()`, a linear congruential generator whose state is the `GAME.RNG` column (so a save
 keeps it too), and every load numbers the things from 1. Cheats are switched off while recording
 or playing, because they aren't inputs and would desync the demo. DOOM's own `.lmp` demos can't be
-played: they need DOOM's exact fixed-point simulation and random table, and this is a
+played yet: they need DOOM's exact fixed-point simulation and random table, and this is a
 re-implementation in SQL. `npm run test:demo` replays a busy 531-tic recording and compares every
 row of the resulting game, on both WADs.
+
+Getting there is the roadmap's stretch goal, in phases (docs/ROADMAP.md, *Original `.lmp` demos*),
+measured against vanilla itself:
+- **Reading demos:** `src/lmp.js` reads and writes DOOM's demo format: v1.9, the old v1.2
+  header, and Chocolate Doom's longtics.
+- **The reference:** `npm run oracle` builds Chocolate Doom 3.1.0 headless. It's unmodified:
+  one small file of ours, `scripts/oracle/dump.c`, is linked in around `G_Ticker`. After every
+  tic it writes down the random index, where the player is, how fast they're moving, their
+  health, and sums over every thing on the map.
+- **The demos:** `npm run lmp-fixtures` makes a few demos on Freedoom's maps and records
+  vanilla's trace of each, in `scripts/fixtures/lmp/`.
+- **The ratchet:** `npm run test:lmp` plays them in the port and reports the first tic each
+  quantity differs. A change may bring the port closer, never further (`baseline.json`).
+- **Where it stands:** standing still on E1M1 it keeps step for all 350 tics. Anything that
+  moves differs from the first tic, in the last bit of DOOM's fixed-point rounding.
 
 ### Co-op and deathmatch over the network
 

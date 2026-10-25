@@ -37,7 +37,9 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   README (*Simplifications*, "What's still not vanilla"): doubles and radians for 16.16 and BAMs,
   an LCG for `rndtable` (and its draws in DOOM's order everywhere), `P_SlideMove`, the blockmap's
   order, `P_DamageMobj`'s thrust. A stretch goal; it marks where full
-  fidelity ends (the README lists "no `.lmp` demos" as a deviation).
+  fidelity ends (the README lists "no `.lmp` demos" as a deviation). *Under way*, in phases
+  (under **Simulation** below: *Original `.lmp` demos, in phases*): phase L0, the yardstick, is
+  done.
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
@@ -307,6 +309,79 @@ the type's spawn, see or death state). `p_random()` only, and an `ORDER BY` on e
 whose order counts (CLAUDE.md, *Determinism*). The visual test's pictures change in phase 3
 (the walking frames), and are taken again then.
 
+### Original `.lmp` demos, in phases
+
+A `.lmp` demo is only the ticcmds: it plays back right only if every tic comes out as vanilla's,
+bit for bit, or the player walks into a wall a few seconds in and never recovers. So the port has
+to compute what DOOM computes, the way DOOM computes it. Each phase brings one part of the
+simulation over, and a yardstick measures how far into each demo the port stays in step.
+
+**Phase L0: the yardstick.** *Done.*
+- **The format:** `src/lmp.js` reads and writes demos. It reads the v1.9 header, the old v1.2
+  one and Chocolate Doom's longtics. It writes angleturn's high byte as G_WriteDemoTiccmd rounds
+  it, and turns a ticcmd into the port's (`portCmd`: forwardmove / 25 is the port's walk,
+  angleturn << 16 a BAM).
+- **The oracle:** vanilla itself, as Chocolate Doom 3.1.0 built headless (`npm run oracle`:
+  `scripts/oracle/build.sh` fetches and builds it, never into this repo). It's unmodified: one
+  MIT file of ours, `scripts/oracle/dump.c`, wraps G_Ticker at link time (`-Wl,--wrap`).
+  After each tic it writes a line: leveltime, prndindex, the player's x, y, z, angle, momx,
+  momy, health (16.16, BAM), the number of mobjs, and the sums of their x, y, z, health and
+  state.
+- **The fixtures:** `npm run lmp-fixtures` writes our own demos on Freedoom's maps (standing
+  still on E1M1, a scripted walk, and the first 700 tics of each attract demo turned into
+  ticcmds) and the oracle's trace of each, into `scripts/fixtures/lmp/`. CI needs neither
+  Chocolate Doom nor SDL: the traces are committed.
+- **The measure:** `scripts/lmp-sync.mjs` plays a demo through DOOM_TIC and reads the port's
+  state in DOOM's units after every tic. For each field it finds the first tic it differs from
+  vanilla's, and how long the player stays in step (x, y, z, angle, momentum and health all
+  agreeing).
+- **The ratchet:** `npm run test:lmp` fails if any demo falls out of step earlier than
+  `scripts/fixtures/lmp/baseline.json` says. It reports when one stays in step longer, and
+  `npm run test:lmp -- --update` raises the bar.
+- **Where it starts:**
+  - Standing still on E1M1, the port keeps step for all 350 tics, the player and the count of
+    things alike. The monsters sleep, and nothing draws a random number that shows.
+  - Every demo that moves falls out at tic 1. The momentum is 46400/65536 for vanilla's 46399
+    (FixedMul truncates), and a sideways 17/65536 where the port has 0: `finesine[0]` isn't 0,
+    since DOOM's tables are sampled half a step off.
+  - Things' z, their health (an item's is 1000) and their states (P_SpawnMapThing's random
+    tics) differ from tic 1.
+
+**Phase L1: DOOM's random numbers.** `rndtable` and `prndindex` for P_Random, and M_Random's own
+index for what doesn't touch the game. M_ClearRandom at G_InitNew. Then every draw in DOOM's
+order: P_SpawnMapThing's tics, A_Look's sight-sound choice, P_SubRandom's left-then-right, the
+damage rolls. The trace's prndindex column becomes comparable, and diverges exactly where a draw
+is missing or extra. Test: the idle demo keeps prndindex in step.
+
+**Phase L2: the player in fixed point.** The ticcmd as DOOM's: forwardmove, sidemove and
+angleturn in its units, angles as BAMs. P_Thrust with `finesine`/`finecosine` (the tables in
+SQL), P_XYMovement's friction (FRICTION 0xe800, FixedMul) and STOPSPEED, MAXMOVE, P_SlideMove's
+traced slide, P_ZMovement and gravity, P_CalcHeight's bob and view height, P_PlayerThink's
+order. Positions as 16.16 integers (BIGINT), so every step rounds as DOOM's does. Test: the
+scripted walk stays in step until it meets something with a random number in it.
+
+**Phase L3: the map as DOOM spawns it.** P_LoadThings' order (the players among the map's
+things, where their starts are), MT_ flags, spawnhealth, z on the ceiling or floor, P_SpawnMapThing's
+skill and options; thinker order as P_RunThinkers runs it. Test: the idle demos agree in every
+column.
+
+**Phase L4: the monsters' movement and sight.** P_Move, P_TryMove, P_CheckPosition through the
+blockmap in its order (PIT_CheckLine, PIT_CheckThing), P_NewChaseDir, P_CheckSight (its BSP
+walk, P_CrossBSPNode), P_AproxDistance; all in fixed point. Test: the attract demos stay in step
+until the first shot.
+
+**Phase L5: attacks.** P_AimLineAttack and P_LineAttack through P_PathTraverse's intercepts,
+P_SpawnMissile and missiles in fixed point, P_RadiusAttack over the blockmap, P_DamageMobj's
+thrust. Test: the attract demos stay in step through the fighting.
+
+**Phase L6: the world.** Movers at DOOM's speeds and in its order (T_MoveFloor/T_MoveCeiling,
+the crushers and PIT_ChangeSector's gibs and dropped items), sector specials, lights, switches;
+the weapon keys as P_PlayerThink chooses. Test: whole demos in step, level end included.
+
+**Phase L7: playing them.** The page plays a `.lmp` (a file, or an IWAD's DEMO1–4) and the
+title loop shows a WAD's own demos, once they keep step. Test: id's demos where a user has the
+WAD (test:lmp with WAD=, like the id-style finale tests).
+
 - ~~**Armour types.**~~ Done: green armour (type 1) absorbs ⅓, and blue armour, the megasphere
   and IDKFA (type 2) absorb ½. Bonuses keep the type, and used-up armour loses it.
 - ~~**Weapon raise and lower.**~~ Done: `pendingweapon`, `A_Lower` and `A_Raise` at 6 units a tic
@@ -340,15 +415,15 @@ whose order counts (CLAUDE.md, *Determinism*). The visual test's pictures change
   behind strict NATs; tested locally (`npm run test:relay`, and the co-op test through
   `scripts/relay-dev.mjs`), deployed once someone has the Cloudflare account.
 - ~~**DEHACKED beyond `[STRINGS]`.**~~ Done ([src/dehacked.js](../src/dehacked.js)): Thing, Ammo,
-  Misc, Cheat and BEX [PARS]. Not possible: Frame, Pointer, Weapon, Sound and Text blocks need
-  state tables the port doesn't have. Loading a `.deh` file comes with PWADs (the loader already
+  Misc, Cheat and BEX [PARS]; Frame, Pointer and Weapon with the frame tables (phase 5). Sound and
+  Text blocks aren't supported. Loading a `.deh` file comes with PWADs (the loader already
   takes the text: `loadResources(db, wad, { dehacked })`).
 - ~~**PWADs.**~~ Done: PWADs on top of the main WAD (`-file`, with flats and sprites merged as
   `-merge` does), and a `.deh` patch (`-deh`). They're remembered across reloads too (IndexedDB, with
   their main WAD).
 - ~~**Netgame launch options.**~~ Done: `-nomonsters`, `-respawn` and `-fast` as three checkboxes
   in the panel, sent in the start message like the game type and timer, kept in `GAME` for
-  `INIT_MAP` (no monsters), `WORLD_TIC` (the respawns) and `MONSTERS_THINK` (the Nightmare
+  `INIT_MAP` (no monsters), `WORLD_TIC` (the respawns) and `SET_STATE` (the Nightmare
   speed, which `-fast` now shares) to read.
 
 ## Rendering

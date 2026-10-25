@@ -37,6 +37,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `src/progress.js` | `G_DoCompleted`'s next-map rules, secret exits included. |
 | `src/savegame.js` | Save and load: `captureGame` (the live tables as JSON), `restoreGame` (written back over a freshly loaded map, `thing_seq` moved on), `saveStore` (IndexedDB, or memory). |
 | `src/demo.js` | Demos: `DemoRecorder` (start + every `DOOM_TIC` call), `DemoPlayer`, `demoProblem`. Recording, playback and the buttons are wired in `main.js`. |
+| `src/lmp.js` | DOOM's demo files: `parseLmp`, `writeLmp`, `portCmd` (a vanilla ticcmd as the port's DOOM_TIC arguments). `scripts/lmp-sync.mjs` plays one against the oracle's trace; `scripts/oracle/` builds the oracle (Chocolate Doom, headless, with `dump.c` wrapping G_Ticker). |
 | `src/menu.js` | The title loop (`D_DoAdvanceDemo`) and the menus (`m_menu.c`): `Menu` (menus, cursor, messages, sliders; actions are callbacks) and `TitleLoop`. |
 | `src/dehacked.js` | DeHackEd: `parseDehacked`, `applyDehacked` (a patched copy of `THING_TYPES`, of DOOM's frame tables (`STATES`, `WEAPONINFO`, `MOBJINFO`'s states: Frame, Pointer, Weapon and Thing blocks), the `RULES` row, cheat spellings, par times, a report of what can't apply), `MOBJ_TYPES`, `SFX`. Applied in `loadResources`. |
 | `src/cheats.js` | `cht_CheckCheat`: readers for fixed cheats, IDCLEV/IDMUS digits, `clevMap`, `idmusMap`. |
@@ -183,6 +184,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `pwad-test.mjs` | A PWAD built in memory (map, flat, sprite, music, DEHACKED) over Freedoom: what replaces what, in the directory and in Firebird; loading twice into one database. |
 | `dehacked-test.mjs` | Freedoom's lump (pars, cheats, its seven frame patches applied), a patch with every kind of block (patched things and pickups, the Misc rules in play, respelt cheats, par times), and a patch to the frame tables played out: a faster imp, a moved action, a weapon's frames, a reaction time, frame 966's overflow. |
 | `demo-test.mjs` | A recorded demo (through JSON) replays into the same game, row for row; a third run too; another seed diverges; `P_RANDOM` is repeatable and even; thing ids repeat across loads. |
+| `lmp-test.mjs` | DOOM's `.lmp` format read and written (v1.9, v1.2, longtics); each demo in `scripts/fixtures/lmp` played against vanilla's trace (from the oracle, `scripts/oracle`), ratcheted by `baseline.json`: no demo may fall out of step earlier than it did. |
 | `menu-test.mjs` | The title loop; menu navigation, remembered cursors, New Game → episode → skill, Nightmare's question, options and sliders, Load/Save, Quit, Read This!, coordinates, and every graphic present in both WADs. |
 | `compare-renderers.mjs` | BSP and brute-force renderers agree, column by column. |
 | `frame-bench.mjs [maps]` | Times `FRAME_WALLS`, `FRAME_SPRITES`, `FRAME_SECTORS` and `DOOM_TIC` with every monster awake, from eight spots per map looking four ways (`WAD=`, `VIEWS=`, `REPS=`). Not a test. |

@@ -27,6 +27,9 @@ npm run save-fixtures      # after a schema change: a save in the new shape (git
 npm run test:demo      # determinism (and without WAD=)
 npm run test:attract       # the title loop's demos (public/demos/) replay to their checksums; npm run attract records them
 npm run test:dehacked      # DeHackEd patches
+npm run test:lmp           # .lmp demos: the format, and how long the port keeps step with vanilla (a ratchet: -- --update)
+npm run oracle             # vanilla as a reference: Chocolate Doom built headless into oracle-build/ (needs SDL2 -dev packages)
+npm run lmp-fixtures       # the .lmp fixtures and vanilla's trace of each (needs the oracle)
 npm run test:pwad          # PWADs over the IWAD
 npm run test:automap       # the automap's zoom, follow, grid, marks
 npm run test:light         # light diminishing vs DOOM's fixed point
