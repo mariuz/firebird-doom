@@ -27,7 +27,7 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 | `src/loader.js` | WAD → Firebird: `createSchema`, `loadResources` (textures, flats, sprites, thing types), `loadMap` (one level's lumps plus `INIT_MAP`), `setView`, `setRenderer`. Bulk inserts go through `execBatch`, with every value bound as a parameter. |
 | `src/wad.js` | The WAD reader: lumps, maps, pictures (column-major `pix` plus `alpha`), texture composition, `COLORMAP`. `new Wad(iwad, ...pwads)` merges files like `W_AddFile` (each lump knows its `file`); `dehacked()` is every file's patch in order. |
 | `src/thinginfo.js` | DOOM's `mobjinfo`, trimmed: every thing type's sprite, size, health, speed, frames, attacks, sounds, flags (`hang`, `floats`, `shadow`, `mass`). Loaded into `THING_TYPES`. |
-| `src/states.js` | DOOM's state table, info.c's `states[]`, mobjinfo's state columns and d_items.c's `weaponinfo[]`, as data: the one GPL-2 file (made by `scripts/gen-states.mjs`, never edited by hand). Loaded into the `states` table and `thing_types`' eight state columns; played from for the types in `ON_STATES` (phase 2 of the frame tables, ROADMAP). `thinginfo.js`'s `MOBJ_TYPE` ties the types a map doesn't place to theirs. |
+| `src/states.js` | DOOM's state table, info.c's `states[]`, mobjinfo's state columns and d_items.c's `weaponinfo[]`, and m_random.c's `rndtable` and tables.c's `finesine` and `tantoangle`, as data: the one GPL-2 file (made by `scripts/gen-states.mjs`, never edited by hand). Loaded into the `states` table and `thing_types`' eight state columns; played from for the types in `ON_STATES` (phase 2 of the frame tables, ROADMAP). `thinginfo.js`'s `MOBJ_TYPE` ties the types a map doesn't place to theirs. |
 | `src/renderer.js` | The rasteriser: walls, visplanes (`R_MakeSpans`/`R_MapPlane`), sky, masked middles and sprites, fuzz, HUD patches, automap lines. **Works in palette indices.** |
 | `src/present.js` | The last step: palette indices → colours. `WebGLPresenter` (a fragment shader over a 256×14 palette texture) or `Canvas2DPresenter`. Smooth upscaling. |
 | `src/hud.js` | The status bar, the weapon sprite (with fuzz and fixed colormaps), messages. |
@@ -68,10 +68,17 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 tics (1–6, catching up to 35 Hz) and returns one row: everything the HUD needs, plus `exit_kind`.
 Per tic, `DOOM_TIC` runs:
 
-- `PLAYER_THINK`: turning, thrust and friction, wall sliding through `CHECK_POSITION` (blockmap
-  lookup through `LINES_IN_BOX`), walk-over lines, gravity, sector specials, use lines, weapons
-  (`HITSCAN` with `AIM_SLOPE`, `FIRE_MISSILE`), noise (`NOISE_ALERT`) and pickups.
-- `MOVERS_THINK`: doors, lifts, floors, stairs and crushers (`movers` rows).
+- `PLAYER_THINK`: `P_PlayerThink` in its order. The turn and thrust (`P_MovePlayer`) and the view
+  (`P_CalcHeight`), sector specials, use lines, weapons (`HITSCAN` with `AIM_SLOPE`,
+  `FIRE_MISSILE`), noise (`NOISE_ALERT`); then the body's own thinker, in 16.16 fixed point:
+  `XY_MOVEMENT_FX` (friction, `TRY_MOVE_FX` through `CHECK_POSITION_FX` over the map's own
+  `BLOCKMAP` rows, walk-over lines from its spechit list, `SLIDE_MOVE_FX`'s traced slide),
+  `Z_MOVEMENT_FX` (gravity, steps); then pickups. The fixed-point sums are PSQL functions next
+  to `P_RANDOM` (`FX_MUL`, `FX_DIV`, `POINT_ON_LINE_SIDE`, `POINT_TO_ANGLE2`, …) over the
+  `FINESINE` and `TANTOANGLE` tables; positions stay DOUBLE columns, each a whole number of
+  1/65536ths, so they go to 16.16 and back exactly.
+- `MOVERS_THINK`: doors, lifts, floors, stairs and crushers (`movers` rows). Each one that moves
+  has the players look again at their floor and ceiling (`HEIGHT_CLIP_FX`, `P_ThingHeightClip`).
 - `STATES_THINK`: the frame tables. A charging lost soul's flight (`SKULLS_THINK`) and the
   projectiles' (`MISSILES_THINK`), the falls and floats (`P_ZMovement`), then every thing whose
   state ends this tic goes on to its next (`SET_STATE`, which calls the next state's action:
@@ -185,7 +192,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `pwad-test.mjs` | A PWAD built in memory (map, flat, sprite, music, DEHACKED) over Freedoom: what replaces what, in the directory and in Firebird; loading twice into one database. |
 | `dehacked-test.mjs` | Freedoom's lump (pars, cheats, its seven frame patches applied), a patch with every kind of block (patched things and pickups, the Misc rules in play, respelt cheats, par times), and a patch to the frame tables played out: a faster imp, a moved action, a weapon's frames, a reaction time, frame 966's overflow. |
 | `demo-test.mjs` | A recorded demo (through JSON) replays into the same game, row for row; a third run too; another seed diverges; `P_Random` walks rndtable from its index, one draw for `P_Random() & n`; thing ids repeat across loads. |
-| `lmp-test.mjs` | DOOM's `.lmp` format read and written (v1.9, v1.2, longtics); each demo in `scripts/fixtures/lmp` played against vanilla's trace (from the oracle, `scripts/oracle`), ratcheted by `baseline.json`: no demo may fall out of step earlier than it did. |
+| `lmp-test.mjs` | DOOM's `.lmp` format read and written (v1.9, v1.2, longtics); each demo in `scripts/fixtures/lmp` played against vanilla's trace (from the oracle, `scripts/oracle`), ratcheted by `baseline.json`: no demo may fall out of step earlier than it did; the scripted walk keeps the player in step throughout; the fixed-point functions (FixedMul, FixedDiv, R_PointToAngle2, the side tests) against known values; R_PointInSubsector in 16.16 and the BLOCKMAP lump as loaded. |
 | `menu-test.mjs` | The title loop; menu navigation, remembered cursors, New Game → episode → skill, Nightmare's question, options and sliders, Load/Save, Quit, Read This!, coordinates, and every graphic present in both WADs. |
 | `compare-renderers.mjs` | BSP and brute-force renderers agree, column by column. |
 | `frame-bench.mjs [maps]` | Times `FRAME_WALLS`, `FRAME_SPRITES`, `FRAME_SECTORS` and `DOOM_TIC` with every monster awake, from eight spots per map looking four ways (`WAD=`, `VIEWS=`, `REPS=`). Not a test. |

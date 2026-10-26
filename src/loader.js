@@ -4,7 +4,7 @@
 // (scripts/sql-smoke.mjs), so CI exercises exactly the SQL the page runs.
 
 import { THING_TYPES, MOBJ_TYPE, SPAWN_STATE, ON_STATES } from './thinginfo.js';
-import { STATES, MOBJINFO, RNDTABLE } from './states.js';
+import { STATES, MOBJINFO, RNDTABLE, FINESINE, TANTOANGLE } from './states.js';
 
 // each thing type's eight states (spawn … raise), from its DOOM mobj type: by the
 // map number, else MOBJ_TYPE; [] when DOOM has no such type
@@ -135,7 +135,7 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
   const frames = new Map();
   for (const f of wad.spriteFrames()) frames.set(`${f.sprite}${f.frame}${f.rot}`, f);
 
-  await db.exec('DELETE FROM textures; DELETE FROM flats; DELETE FROM sprite_frames; DELETE FROM thing_types; DELETE FROM states; DELETE FROM weapon_info; DELETE FROM rndtable; DELETE FROM screen_cols; DELETE FROM game; DELETE FROM player; DELETE FROM viewcfg; DELETE FROM rules');
+  await db.exec('DELETE FROM textures; DELETE FROM flats; DELETE FROM sprite_frames; DELETE FROM thing_types; DELETE FROM states; DELETE FROM weapon_info; DELETE FROM rndtable; DELETE FROM finesine; DELETE FROM tantoangle; DELETE FROM screen_cols; DELETE FROM game; DELETE FROM player; DELETE FROM viewcfg; DELETE FROM rules');
   await insertRows(db, 'textures', ['id', 'name', 'w', 'h'], texDefs.map((d, i) => [i + 1, d.name, d.w, d.h]));
   await insertRows(db, 'flats', ['id', 'name', 'is_sky'], flats.map((l, i) => [i + 1, l.name, l.name === 'F_SKY1' ? 1 : 0]));
   await insertRows(
@@ -167,6 +167,8 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
   await insertRows(db, 'states', ['id', 'name', 'sprite', 'frame', 'bright', 'tics', 'action', 'next_state', 'misc1', 'misc2', 'mode', 'fast'],
     deh.states.map((s, i) => [i, ...s, modes[i], i >= fastFrom && i <= fastTo ? 1 : 0]));
   await insertRows(db, 'rndtable', ['i', 'v'], RNDTABLE.map((v, i) => [i, v]));
+  await insertRows(db, 'finesine', ['i', 'v'], FINESINE.map((v, i) => [i, v]));
+  await insertRows(db, 'tantoangle', ['i', 'v'], TANTOANGLE.map((v, i) => [i, v]));
   // weaponinfo[], weapon k + 1 for DOOM's weapontype_t k
   await insertRows(db, 'weapon_info', ['weapon', 'ammo', 'up_state', 'down_state', 'ready_state', 'atk_state', 'flash_state'],
     deh.weapons.map((w, k) => [k + 1, w.ammo, ...w.states]));
@@ -206,6 +208,33 @@ export async function setRenderer(db, useBsp) {
  * the launch options NOMONSTERS, RESPAWN and FAST (0 or 1).
  * SEED sets P_RANDOM's state before the map loads (left out: it carries on).
  */
+/**
+ * A BLOCKMAP for a map without one, as a node builder makes it: 128-unit blocks from 8 below
+ * and left of the lowest vertex, each list starting with 0 and then every linedef whose box
+ * overlaps the block's, in linedef order.
+ */
+function buildBlockmap(m) {
+  const xs = m.vertexes.map((v) => v.x);
+  const ys = m.vertexes.map((v) => v.y);
+  const orgX = Math.min(...xs) - 8;
+  const orgY = Math.min(...ys) - 8;
+  const w = Math.floor((Math.max(...xs) - orgX) / 128) + 1;
+  const h = Math.floor((Math.max(...ys) - orgY) / 128) + 1;
+  const lists = Array.from({ length: w * h }, () => [0]);
+  for (const l of m.linedefs) {
+    const a = m.vertexes[l.v1];
+    const b = m.vertexes[l.v2];
+    const x0 = Math.floor((Math.min(a.x, b.x) - orgX) / 128);
+    const x1 = Math.floor((Math.max(a.x, b.x) - orgX) / 128);
+    const y0 = Math.floor((Math.min(a.y, b.y) - orgY) / 128);
+    const y1 = Math.floor((Math.max(a.y, b.y) - orgY) / 128);
+    for (let by = y0; by <= y1; by++) for (let bx = x0; bx <= x1; bx++) if (l.id !== 0) lists[by * w + bx].push(l.id);
+  }
+  const blocks = [];
+  lists.forEach((list, k) => list.forEach((line, seq) => blocks.push([k % w, Math.floor(k / w), seq, line])));
+  return { orgX, orgY, w, h, blocks };
+}
+
 export async function loadMap(db, wad, res, name, {
   skill = 3, newGame = true, players = null, deathmatch = null, timer = null, nomonsters = null, respawn = null, fast = null, seed = null,
 } = {}) {
@@ -220,7 +249,7 @@ export async function loadMap(db, wad, res, name, {
   const flat = (n) => res.flatId.get(n) ?? null;
 
   await db.exec(
-    'DELETE FROM sound_events; DELETE FROM movers; DELETE FROM line_blocks; DELETE FROM things; DELETE FROM map_things; DELETE FROM nodes; DELETE FROM ssectors; ' +
+    'DELETE FROM sound_events; DELETE FROM movers; DELETE FROM line_blocks; DELETE FROM blockmap; DELETE FROM blockmap_info; DELETE FROM things; DELETE FROM map_things; DELETE FROM nodes; DELETE FROM ssectors; ' +
       'DELETE FROM segs; DELETE FROM linedefs; DELETE FROM sidedefs; DELETE FROM sectors; DELETE FROM vertexes; DELETE FROM reject',
   );
   await insertRows(db, 'vertexes', ['id', 'x', 'y'], m.vertexes.map((v) => [v.id, v.x, v.y]));
@@ -248,6 +277,11 @@ export async function loadMap(db, wad, res, name, {
   );
   await insertRows(db, 'map_things', ['id', 'x', 'y', 'angle', 'ttype', 'flags'],
     m.things.map((t) => [t.id, t.x, t.y, t.angle, t.type, t.flags]));
+  // the map's BLOCKMAP lump (or one built here for a map without), for P_CheckPosition's and
+  // P_PathTraverse's order
+  const bm = m.blockmap ?? buildBlockmap(m);
+  await db.exec(`INSERT INTO blockmap_info (id, org_x, org_y, w, h) VALUES (1, ${bm.orgX}, ${bm.orgY}, ${bm.w}, ${bm.h})`);
+  await insertRows(db, 'blockmap', ['bx', 'by_', 'seq', 'line_id'], bm.blocks);
 
   const skillBit = skill <= 2 ? 1 : skill === 3 ? 2 : 4;
   // the same thing ids on every load, so a level always starts identical (demos)

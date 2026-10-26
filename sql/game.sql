@@ -71,6 +71,244 @@ BEGIN
   RETURN p_rand256() / 256e0;
 END^
 
+-- ── DOOM's fixed point ────────────────────────────────────────────────────
+-- What moves as DOOM moves it (the player, P_MovePlayer and P_XYMovement) does its sums in
+-- 16.16 fixed point, as BIGINTs that wrap as DOOM's 32-bit ints do (m_fixed.c, tables.c,
+-- p_maputl.c, r_main.c). A position or a speed in a DOUBLE column is then a whole number of
+-- 1/65536ths, so it goes to 16.16 and back exactly (FX_OF, / 65536); an angle in radians is a
+-- whole BAM (BAM_OF, RAD_OF).
+
+-- a 32-bit int's wrap-around
+CREATE OR ALTER FUNCTION fx32 (a BIGINT) RETURNS BIGINT
+AS
+BEGIN
+  RETURN BIN_AND(a + 2147483648, 4294967295) - 2147483648;
+END^
+
+-- FixedMul: (a × b) >> 16, rounding down
+CREATE OR ALTER FUNCTION fx_mul (a BIGINT, b BIGINT) RETURNS BIGINT
+AS
+BEGIN
+  RETURN fx32(BIN_SHR(a * b, 16));
+END^
+
+-- FixedDiv: (a << 16) / b, rounding towards 0, or the largest number of a's sign over b's
+-- when the answer wouldn't fit
+CREATE OR ALTER FUNCTION fx_div (a BIGINT, b BIGINT) RETURNS BIGINT
+AS
+BEGIN
+  IF (BIN_SHR(ABS(a), 14) >= ABS(b)) THEN
+    RETURN IIF((a < 0 AND b >= 0) OR (a >= 0 AND b < 0), -2147483648, 2147483647);
+  RETURN fx32((a * 65536) / b);
+END^
+
+-- map units (a DOUBLE) to 16.16, and radians to a BAM (0 … 2^32 - 1) and back
+CREATE OR ALTER FUNCTION fx_of (d DOUBLE PRECISION) RETURNS BIGINT
+AS
+BEGIN
+  RETURN CAST(ROUND(d * 65536) AS BIGINT);
+END^
+
+CREATE OR ALTER FUNCTION bam_of (rad DOUBLE PRECISION) RETURNS BIGINT
+AS
+DECLARE r BIGINT;
+BEGIN
+  r = CAST(ROUND(rad * 4294967296e0 / (2 * PI())) AS BIGINT);
+  RETURN BIN_AND(r, 4294967295);
+END^
+
+CREATE OR ALTER FUNCTION rad_of (b BIGINT) RETURNS DOUBLE PRECISION
+AS
+BEGIN
+  RETURN b * (2 * PI()) / 4294967296e0;
+END^
+
+-- finesine[i], and finecosine[i] = finesine[i + FINEANGLES / 4]
+CREATE OR ALTER FUNCTION fine_sine (i INTEGER) RETURNS BIGINT
+AS
+BEGIN
+  RETURN (SELECT f.v FROM finesine f WHERE f.i = :i);
+END^
+
+CREATE OR ALTER FUNCTION fine_cosine (i INTEGER) RETURNS BIGINT
+AS
+BEGIN
+  RETURN (SELECT f.v FROM finesine f WHERE f.i = :i + 2048);
+END^
+
+-- P_AproxDistance: the octagonal guess at a length
+CREATE OR ALTER FUNCTION aprox_distance (dx BIGINT, dy BIGINT) RETURNS BIGINT
+AS
+BEGIN
+  dx = ABS(dx);
+  dy = ABS(dy);
+  IF (dx < dy) THEN RETURN fx32(dx + dy - BIN_SHR(dx, 1));
+  RETURN fx32(dx + dy - BIN_SHR(dy, 1));
+END^
+
+-- P_PointOnLineSide: 0 in front of the line from (LX, LY) along (LDX, LDY), 1 behind
+-- (the line's own length in whole units: line->dy >> FRACBITS)
+CREATE OR ALTER FUNCTION point_on_line_side (
+  x BIGINT, y BIGINT, lx BIGINT, ly BIGINT, ldx BIGINT, ldy BIGINT) RETURNS SMALLINT
+AS
+DECLARE dx BIGINT;
+DECLARE dy BIGINT;
+BEGIN
+  IF (ldx = 0) THEN RETURN IIF(x <= lx, IIF(ldy > 0, 1, 0), IIF(ldy < 0, 1, 0));
+  IF (ldy = 0) THEN RETURN IIF(y <= ly, IIF(ldx < 0, 1, 0), IIF(ldx > 0, 1, 0));
+  dx = fx32(x - lx);
+  dy = fx32(y - ly);
+  RETURN IIF(fx_mul(dy, BIN_SHR(ldx, 16)) < fx_mul(BIN_SHR(ldy, 16), dx), 0, 1);
+END^
+
+-- P_PointOnDivlineSide: the same against a trace, deciding by the signs where it can, and
+-- else in 8.8 (both sides >> 8)
+CREATE OR ALTER FUNCTION point_on_divline_side (
+  x BIGINT, y BIGINT, lx BIGINT, ly BIGINT, ldx BIGINT, ldy BIGINT) RETURNS SMALLINT
+AS
+DECLARE dx BIGINT;
+DECLARE dy BIGINT;
+BEGIN
+  IF (ldx = 0) THEN RETURN IIF(x <= lx, IIF(ldy > 0, 1, 0), IIF(ldy < 0, 1, 0));
+  IF (ldy = 0) THEN RETURN IIF(y <= ly, IIF(ldx < 0, 1, 0), IIF(ldx > 0, 1, 0));
+  dx = fx32(x - lx);
+  dy = fx32(y - ly);
+  -- ((line->dy ^ line->dx ^ dx ^ dy) & 0x80000000): an odd number of them negative
+  IF (MOD(IIF(ldy < 0, 1, 0) + IIF(ldx < 0, 1, 0) + IIF(dx < 0, 1, 0) + IIF(dy < 0, 1, 0), 2) = 1) THEN
+    RETURN IIF(IIF(ldy < 0, 1, 0) <> IIF(dx < 0, 1, 0), 1, 0);
+  RETURN IIF(fx_mul(BIN_SHR(dy, 8), BIN_SHR(ldx, 8)) < fx_mul(BIN_SHR(ldy, 8), BIN_SHR(dx, 8)), 0, 1);
+END^
+
+-- R_PointOnSide, for R_PointInSubsector: P_PointOnLineSide's sums with the sign test first
+CREATE OR ALTER FUNCTION point_on_node_side (
+  x BIGINT, y BIGINT, nx BIGINT, ny BIGINT, ndx BIGINT, ndy BIGINT) RETURNS SMALLINT
+AS
+DECLARE dx BIGINT;
+DECLARE dy BIGINT;
+BEGIN
+  IF (ndx = 0) THEN RETURN IIF(x <= nx, IIF(ndy > 0, 1, 0), IIF(ndy < 0, 1, 0));
+  IF (ndy = 0) THEN RETURN IIF(y <= ny, IIF(ndx < 0, 1, 0), IIF(ndx > 0, 1, 0));
+  dx = fx32(x - nx);
+  dy = fx32(y - ny);
+  IF (MOD(IIF(ndy < 0, 1, 0) + IIF(ndx < 0, 1, 0) + IIF(dx < 0, 1, 0) + IIF(dy < 0, 1, 0), 2) = 1) THEN
+    RETURN IIF(IIF(ndy < 0, 1, 0) <> IIF(dx < 0, 1, 0), 1, 0);
+  RETURN IIF(fx_mul(dy, BIN_SHR(ndx, 16)) < fx_mul(BIN_SHR(ndy, 16), dx), 0, 1);
+END^
+
+-- R_PointInSubsector in 16.16: the sector of the subsector a point is in
+CREATE OR ALTER FUNCTION sector_at_fx (x BIGINT, y BIGINT) RETURNS INTEGER
+AS
+DECLARE n INTEGER;
+DECLARE nx BIGINT;
+DECLARE ny BIGINT;
+DECLARE ndx BIGINT;
+DECLARE ndy BIGINT;
+DECLARE rc INTEGER;
+DECLARE lc INTEGER;
+DECLARE s INTEGER;
+BEGIN
+  SELECT COALESCE(root_node, 32768) FROM game WHERE id = 1 INTO n;
+  WHILE (n < 32768) DO
+  BEGIN
+    SELECT CAST(x AS BIGINT) * 65536, CAST(y AS BIGINT) * 65536, CAST(dx AS BIGINT) * 65536, CAST(dy AS BIGINT) * 65536,
+           right_child, left_child
+      FROM nodes WHERE id = :n
+      INTO nx, ny, ndx, ndy, rc, lc;
+    IF (point_on_node_side(x, y, nx, ny, ndx, ndy) = 0) THEN n = rc; ELSE n = lc;
+  END
+  SELECT sector_id FROM ssectors WHERE id = :n - 32768 INTO s;
+  RETURN s;
+END^
+
+-- P_InterceptVector: how far along the trace (TX, TY, TDX, TDY) it crosses the line, as a
+-- fraction in 16.16 (0 if they're parallel)
+CREATE OR ALTER FUNCTION intercept_vector (
+  tx BIGINT, ty BIGINT, tdx BIGINT, tdy BIGINT, lx BIGINT, ly BIGINT, ldx BIGINT, ldy BIGINT) RETURNS BIGINT
+AS
+DECLARE den BIGINT;
+DECLARE num BIGINT;
+BEGIN
+  den = fx32(fx_mul(BIN_SHR(ldy, 8), tdx) - fx_mul(BIN_SHR(ldx, 8), tdy));
+  IF (den = 0) THEN RETURN 0;
+  num = fx32(fx_mul(BIN_SHR(fx32(lx - tx), 8), ldy) + fx_mul(BIN_SHR(fx32(ty - ly), 8), ldx));
+  RETURN fx_div(num, den);
+END^
+
+-- P_BoxOnLineSide: which side of the line a box (top, bottom, left, right) is on, or -1 if it
+-- straddles it (SLOPE: the line's slopetype)
+CREATE OR ALTER FUNCTION box_on_line_side (
+  top BIGINT, bottom BIGINT, lft BIGINT, rgt BIGINT,
+  lx BIGINT, ly BIGINT, ldx BIGINT, ldy BIGINT, slope SMALLINT) RETURNS SMALLINT
+AS
+DECLARE p1 SMALLINT;
+DECLARE p2 SMALLINT;
+BEGIN
+  IF (slope = 0) THEN
+  BEGIN
+    p1 = IIF(top > ly, 1, 0);
+    p2 = IIF(bottom > ly, 1, 0);
+    IF (ldx < 0) THEN BEGIN p1 = 1 - p1; p2 = 1 - p2; END
+  END
+  ELSE IF (slope = 1) THEN
+  BEGIN
+    p1 = IIF(rgt < lx, 1, 0);
+    p2 = IIF(lft < lx, 1, 0);
+    IF (ldy < 0) THEN BEGIN p1 = 1 - p1; p2 = 1 - p2; END
+  END
+  ELSE IF (slope = 2) THEN
+  BEGIN
+    p1 = point_on_line_side(lft, top, lx, ly, ldx, ldy);
+    p2 = point_on_line_side(rgt, bottom, lx, ly, ldx, ldy);
+  END
+  ELSE
+  BEGIN
+    p1 = point_on_line_side(rgt, top, lx, ly, ldx, ldy);
+    p2 = point_on_line_side(lft, bottom, lx, ly, ldx, ldy);
+  END
+  RETURN IIF(p1 = p2, p1, -1);
+END^
+
+-- SlopeDiv: tantoangle's index for NUM / DEN (unsigned, as DOOM's: NUM << 3 wraps at 32 bits)
+CREATE OR ALTER FUNCTION slope_div (num BIGINT, den BIGINT) RETURNS INTEGER
+AS
+DECLARE ans BIGINT;
+BEGIN
+  IF (den < 512) THEN RETURN 2048;
+  ans = BIN_AND(num * 8, 4294967295) / BIN_SHR(den, 8);
+  RETURN IIF(ans <= 2048, ans, 2048);
+END^
+
+-- R_PointToAngle2: the BAM angle from one point to another, by octant and tantoangle
+CREATE OR ALTER FUNCTION point_to_angle2 (x1 BIGINT, y1 BIGINT, x2 BIGINT, y2 BIGINT) RETURNS BIGINT
+AS
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE oct SMALLINT;
+DECLARE si INTEGER;
+DECLARE t BIGINT;
+DECLARE a BIGINT;
+BEGIN
+  x = fx32(x2 - x1);
+  y = fx32(y2 - y1);
+  IF (x = 0 AND y = 0) THEN RETURN 0;
+  -- the octant (r_main.c's numbering), and |x|, |y|
+  IF (x >= 0 AND y >= 0) THEN oct = IIF(x > y, 0, 1);
+  ELSE IF (x >= 0) THEN BEGIN y = -y; oct = IIF(x > y, 8, 7); END
+  ELSE IF (y >= 0) THEN BEGIN x = -x; oct = IIF(x > y, 3, 2); END
+  ELSE BEGIN x = -x; y = -y; oct = IIF(x > y, 4, 5); END
+  si = IIF(x > y, slope_div(y, x), slope_div(x, y));
+  t = (SELECT ta.v FROM tantoangle ta WHERE ta.i = :si);
+  a = CASE oct WHEN 0 THEN t
+               WHEN 1 THEN 1073741824 - 1 - t     -- ANG90 - 1 - …
+               WHEN 8 THEN -t
+               WHEN 7 THEN 3221225472 + t         -- ANG270 + …
+               WHEN 3 THEN 2147483648 - 1 - t     -- ANG180 - 1 - …
+               WHEN 2 THEN 1073741824 + t
+               WHEN 4 THEN 2147483648 + t
+               ELSE 3221225472 - 1 - t END;
+  RETURN BIN_AND(a, 4294967295);
+END^
+
 CREATE OR ALTER FUNCTION neighbor_h (sec INTEGER, what VARCHAR(12))
 RETURNS DOUBLE PRECISION
 AS
@@ -376,6 +614,13 @@ END^
 -- (SET_PSPRITE, P_SetPsprite, declared here for DAMAGE_PLAYER's P_DropWeapon; its body comes
 -- with the weapons, before PLAYER_THINK)
 CREATE OR ALTER PROCEDURE set_psprite (pid SMALLINT, pos SMALLINT, st INTEGER, tic INTEGER)
+AS
+BEGIN
+END^
+
+-- (HEIGHT_CLIP_FX, P_ThingHeightClip for a player, declared here for MOVERS_THINK; its body
+-- comes with the player's movement, before PLAYER_THINK)
+CREATE OR ALTER PROCEDURE height_clip_fx (tid INTEGER, force SMALLINT = 0)
 AS
 BEGIN
 END^
@@ -691,7 +936,8 @@ BEGIN
   SELECT floor_h FROM sectors WHERE id = :sec INTO fz;
   UPDATE things t
      SET x = :dx, y = :dy, z = :fz, angle = :da, momx = 0, momy = 0, momz = 0, sector_id = :sec,
-         reaction = IIF(t.kind = 'player', 18, t.reaction)
+         reaction = IIF(t.kind = 'player', 18, t.reaction),
+         floorz = NULL                                 -- (P_TeleportMove's, found where it lands)
    WHERE t.id = :tid;
   EXECUTE PROCEDURE spawn_thing(9016, ox, oy, oz, 0) RETURNING_VALUES fog;
   EXECUTE PROCEDURE play_sound('DSTELEPT', fog, ox, oy);
@@ -1170,6 +1416,7 @@ DECLARE crushed SMALLINT;
 DECLARE tic INTEGER;
 DECLARE new_flat INTEGER;
 DECLARE new_special INTEGER;
+DECLARE pt INTEGER;
 BEGIN
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
   FOR SELECT m.sector_id, m.kind, m.dir, m.speed, m.top_h, m.bottom_h, m.wait_tics, m.wait_left, m.stay,
@@ -1352,6 +1599,11 @@ BEGIN
       DELETE FROM movers WHERE sector_id = :sid;
     ELSE
       UPDATE movers SET dir = :dir, wait_left = :wait_left, stay = :stay WHERE sector_id = :sid;
+    -- P_ChangeSector: the players look again at the floor and ceiling they touch, there and
+    -- then (P_ThingHeightClip: one standing on a moving floor rides it)
+    FOR SELECT t.id FROM things t WHERE t.kind = 'player' ORDER BY t.id INTO pt
+    DO
+      EXECUTE PROCEDURE height_clip_fx(pt, 1);
   END
 END^
 
@@ -2420,12 +2672,631 @@ BEGIN
          max_bullets = (SELECT r.max_bullets FROM rules r WHERE r.id = 1), max_shells = (SELECT r.max_shells FROM rules r WHERE r.id = 1),
          max_rockets = (SELECT r.max_rockets FROM rules r WHERE r.id = 1), max_cells = (SELECT r.max_cells FROM rules r WHERE r.id = 1),
          keycards = IIF((SELECT g.deathmatch FROM game g WHERE g.id = 1) > 0, 7, 0),   -- (P_SpawnPlayer: every card in deathmatch)
-         damage_count = 0, bonus_count = 0, msg = NULL, msg_tics = 0, view_h = 41,
+         damage_count = 0, bonus_count = 0, msg = NULL, msg_tics = 0, view_h = 41, delta_vh = 0,
          view_z = (SELECT t.z FROM things t WHERE t.id = :nid) + 41, use_down = 1,
          invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0, strength_tics = 0, allmap = 0
    WHERE p.id = :pid;
   -- (G_PlayerReborn: attackdown, so the trigger held from before doesn't fire; P_SetupPsprites)
   EXECUTE PROCEDURE setup_psprites(pid, (SELECT g.tic FROM game g WHERE g.id = 1));
+END^
+
+-- ── the player's movement, as DOOM's ─────────────────────────────────────
+-- P_MovePlayer's thrust and P_MobjThinker's P_XYMovement / P_ZMovement for a player, in 16.16
+-- (the sums above), through the map's own BLOCKMAP in its order: P_TryMove, P_CheckPosition,
+-- P_SlideMove's traced slide. A player is 16 units round and 56 tall, and steps up 24.
+
+-- P_CheckPosition for a player at (X, Y): the floor and ceiling of the subsector it's in, then
+-- the things in the blocks around (a solid one closer than both radii stops it; PIT_CheckThing,
+-- in the blocks MAXRADIUS around, so a thing wider than that can be walked into), then the
+-- lines in the blocks its box touches, each once, in the BLOCKMAP's order (PIT_CheckLine): a
+-- one-sided or blocking line its box straddles stops it; any other narrows the floor and
+-- ceiling to the opening (P_LineOpening), and one with a special goes on SPECHIT – the list is
+-- kept last first, the order P_TryMove takes them in. NOCLIP: the subsector's floor and ceiling,
+-- and yes. THINGS 0: the lines alone (P_ThingHeightClip, a teleport's landing).
+CREATE OR ALTER PROCEDURE check_position_fx (
+  tid INTEGER, x BIGINT, y BIGINT, rad BIGINT, noclip SMALLINT, things SMALLINT = 1)
+RETURNS (ok SMALLINT, floorz BIGINT, ceilz BIGINT, dropoffz BIGINT, spechit VARCHAR(4000))
+AS
+DECLARE orgx BIGINT;
+DECLARE orgy BIGINT;
+DECLARE bw INTEGER;
+DECLARE bh INTEGER;
+DECLARE xl INTEGER;
+DECLARE xh INTEGER;
+DECLARE yl INTEGER;
+DECLARE yh INTEGER;
+DECLARE sec INTEGER;
+DECLARE lid INTEGER;
+DECLARE lx BIGINT;
+DECLARE ly BIGINT;
+DECLARE ldx BIGINT;
+DECLARE ldy BIGINT;
+DECLARE lslope SMALLINT;
+DECLARE lflags INTEGER;
+DECLARE lspecial INTEGER;
+DECLARE lback INTEGER;
+DECLARE lminx DOUBLE PRECISION;
+DECLARE lmaxx DOUBLE PRECISION;
+DECLARE lminy DOUBLE PRECISION;
+DECLARE lmaxy DOUBLE PRECISION;
+DECLARE ff DOUBLE PRECISION;
+DECLARE fc DOUBLE PRECISION;
+DECLARE bf DOUBLE PRECISION;
+DECLARE bc DOUBLE PRECISION;
+DECLARE opentop BIGINT;
+DECLARE openbottom BIGINT;
+DECLARE lowfloor BIGINT;
+BEGIN
+  ok = 1;
+  spechit = '';
+  sec = sector_at_fx(x, y);
+  SELECT fx_of(s.floor_h), fx_of(s.ceil_h) FROM sectors s WHERE s.id = :sec INTO floorz, ceilz;
+  dropoffz = floorz;
+  IF (noclip = 1) THEN EXIT;
+  SELECT CAST(b.org_x AS BIGINT) * 65536, CAST(b.org_y AS BIGINT) * 65536, b.w, b.h
+    FROM blockmap_info b WHERE b.id = 1 INTO orgx, orgy, bw, bh;
+  IF (things = 1) THEN
+  BEGIN
+    xl = BIN_SHR(x - rad - orgx - 2097152, 23);    -- (MAXRADIUS: 32 units)
+    xh = BIN_SHR(x + rad - orgx + 2097152, 23);
+    yl = BIN_SHR(y - rad - orgy - 2097152, 23);
+    yh = BIN_SHR(y + rad - orgy + 2097152, 23);
+    IF (EXISTS (SELECT 1 FROM things t
+                 WHERE t.x BETWEEN (:x - :rad) / 65536e0 - 160 AND (:x + :rad) / 65536e0 + 160
+                   AND t.solid = 1 AND t.id <> :tid
+                   AND ABS(fx_of(t.x) - :x) < fx_of(t.radius) + :rad
+                   AND ABS(fx_of(t.y) - :y) < fx_of(t.radius) + :rad
+                   AND BIN_SHR(fx_of(t.x) - :orgx, 23) BETWEEN MAXVALUE(:xl, 0) AND MINVALUE(:xh, :bw - 1)
+                   AND BIN_SHR(fx_of(t.y) - :orgy, 23) BETWEEN MAXVALUE(:yl, 0) AND MINVALUE(:yh, :bh - 1))) THEN
+    BEGIN
+      ok = 0;
+      EXIT;
+    END
+  END
+  xl = BIN_SHR(x - rad - orgx, 23);
+  xh = BIN_SHR(x + rad - orgx, 23);
+  yl = BIN_SHR(y - rad - orgy, 23);
+  yh = BIN_SHR(y + rad - orgy, 23);
+  FOR SELECT l.id, l.fx, l.fy, l.fdx, l.fdy, l.slope, l.flags, l.special, l.back_sector,
+             l.minx, l.maxx, l.miny, l.maxy, fs.floor_h, fs.ceil_h, bs.floor_h, bs.ceil_h
+        FROM (SELECT b.line_id, b.bx, b.by_, b.seq,
+                     ROW_NUMBER() OVER (PARTITION BY b.line_id ORDER BY b.bx, b.by_, b.seq) rn
+                FROM blockmap b
+               WHERE b.bx BETWEEN :xl AND :xh AND b.by_ BETWEEN :yl AND :yh) q
+        JOIN linedefs l ON l.id = q.line_id
+        LEFT JOIN sectors fs ON fs.id = l.front_sector
+        LEFT JOIN sectors bs ON bs.id = l.back_sector
+       WHERE q.rn = 1
+       ORDER BY q.bx, q.by_, q.seq
+        INTO lid, lx, ly, ldx, ldy, lslope, lflags, lspecial, lback, lminx, lmaxx, lminy, lmaxy, ff, fc, bf, bc
+  DO
+  BEGIN
+    IF (x + rad <= fx_of(lminx) OR x - rad >= fx_of(lmaxx) OR y + rad <= fx_of(lminy) OR y - rad >= fx_of(lmaxy)) THEN CONTINUE;
+    IF (box_on_line_side(y + rad, y - rad, x - rad, x + rad, lx, ly, ldx, ldy, lslope) <> -1) THEN CONTINUE;
+    -- one-sided, or ML_BLOCKING
+    IF (lback IS NULL OR BIN_AND(lflags, 1) = 1) THEN
+    BEGIN
+      ok = 0;
+      EXIT;
+    END
+    opentop = MINVALUE(fx_of(fc), fx_of(bc));
+    openbottom = MAXVALUE(fx_of(ff), fx_of(bf));
+    lowfloor = MINVALUE(fx_of(ff), fx_of(bf));
+    IF (opentop < ceilz) THEN ceilz = opentop;
+    IF (openbottom > floorz) THEN floorz = openbottom;
+    IF (lowfloor < dropoffz) THEN dropoffz = lowfloor;
+    IF (lspecial <> 0) THEN spechit = lid || ',' || spechit;
+  END
+END^
+
+-- P_TryMove for a player: to (X, Y), if P_CheckPosition lets it and it fits there (the gap as
+-- tall as it, the ceiling above its head, a step up of 24 at most; with no clipping, anywhere).
+-- The floor and ceiling found are its own from then on, and the special lines met that it
+-- crossed – its side of the line changed, P_PointOnLineSide – go off, last met first
+-- (P_CrossSpecialLine; a teleporter only from the front). Each line looks at where it is now:
+-- a teleporter may have moved it.
+CREATE OR ALTER PROCEDURE try_move_fx (tid INTEGER, pid SMALLINT, x BIGINT, y BIGINT)
+RETURNS (ok SMALLINT)
+AS
+DECLARE ox BIGINT;
+DECLARE oy BIGINT;
+DECLARE z BIGINT;
+DECLARE noclip SMALLINT;
+DECLARE fz BIGINT;
+DECLARE cz BIGINT;
+DECLARE dz BIGINT;
+DECLARE spec VARCHAR(4000);
+DECLARE k INTEGER;
+DECLARE lid INTEGER;
+DECLARE lx BIGINT;
+DECLARE ly BIGINT;
+DECLARE ldx BIGINT;
+DECLARE ldy BIGINT;
+DECLARE lsp INTEGER;
+DECLARE nx BIGINT;
+DECLARE ny BIGINT;
+DECLARE side SMALLINT;
+DECLARE oldside SMALLINT;
+BEGIN
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z) FROM things t WHERE t.id = :tid INTO ox, oy, z;
+  SELECT p.noclip FROM player p WHERE p.id = :pid INTO noclip;
+  EXECUTE PROCEDURE check_position_fx(tid, x, y, 1048576, noclip) RETURNING_VALUES ok, fz, cz, dz, spec;
+  IF (ok = 0) THEN EXIT;
+  IF (noclip = 0 AND (cz - fz < 3670016 OR cz - z < 3670016 OR fz - z > 1572864)) THEN
+  BEGIN
+    ok = 0;
+    EXIT;
+  END
+  UPDATE things t
+     SET x = :x / 65536e0, y = :y / 65536e0, floorz = :fz / 65536e0, ceilz = :cz / 65536e0,
+         fz_x = :x / 65536e0, fz_y = :y / 65536e0, sector_id = sector_at_fx(:x, :y)
+   WHERE t.id = :tid;
+  IF (noclip = 1) THEN EXIT;
+  WHILE (spec <> '') DO
+  BEGIN
+    k = POSITION(',' IN spec);
+    lid = CAST(SUBSTRING(spec FROM 1 FOR k - 1) AS INTEGER);
+    spec = SUBSTRING(spec FROM k + 1);
+    SELECT l.fx, l.fy, l.fdx, l.fdy, l.special FROM linedefs l WHERE l.id = :lid INTO lx, ly, ldx, ldy, lsp;
+    SELECT fx_of(t.x), fx_of(t.y) FROM things t WHERE t.id = :tid INTO nx, ny;
+    side = point_on_line_side(nx, ny, lx, ly, ldx, ldy);
+    oldside = point_on_line_side(ox, oy, lx, ly, ldx, ldy);
+    IF (side <> oldside AND lsp <> 0 AND NOT (lsp IN (39, 97, 125, 126) AND oldside = 1)) THEN
+      EXECUTE PROCEDURE activate_line(lid, 'walk', NULL, pid);
+  END
+END^
+
+-- P_PathTraverse along (X1, Y1) → (X2, Y2) with PT_ADDLINES and PTR_SlideTraverse, for
+-- P_SlideMove: through the blocks the trace passes, as DOOM steps through them, each line once
+-- (PIT_AddLineIntercepts: crossed – by the line's own side test for a short trace, the
+-- trace's for a long one – and not behind the start); nearest first (the first met of equal
+-- ones), up to the trace's end, the first one that would stop the player (one-sided and in
+-- front of it, or an opening too low, under its head, or a step over 24) is where it hits.
+-- It goes in as the new best if it's nearer than BEST_IN (bestslidefrac).
+CREATE OR ALTER PROCEDURE slide_traverse (
+  x1 BIGINT, y1 BIGINT, x2 BIGINT, y2 BIGINT, mx BIGINT, my BIGINT, mz BIGINT,
+  best_in BIGINT, line_in INTEGER)
+RETURNS (best BIGINT, best_line INTEGER)
+AS
+DECLARE orgx BIGINT;
+DECLARE orgy BIGINT;
+DECLARE bw INTEGER;
+DECLARE bh INTEGER;
+DECLARE tx BIGINT;
+DECLARE ty BIGINT;
+DECLARE tdx BIGINT;
+DECLARE tdy BIGINT;
+DECLARE xt1 BIGINT;
+DECLARE yt1 BIGINT;
+DECLARE xt2 BIGINT;
+DECLARE yt2 BIGINT;
+DECLARE mapxstep INTEGER;
+DECLARE mapystep INTEGER;
+DECLARE partial BIGINT;
+DECLARE xstep BIGINT;
+DECLARE ystep BIGINT;
+DECLARE xintercept BIGINT;
+DECLARE yintercept BIGINT;
+DECLARE mapx BIGINT;
+DECLARE mapy BIGINT;
+DECLARE cnt INTEGER;
+DECLARE seen VARCHAR(8000);
+DECLARE lid INTEGER;
+DECLARE lx BIGINT;
+DECLARE ly BIGINT;
+DECLARE ldx BIGINT;
+DECLARE ldy BIGINT;
+DECLARE lflags INTEGER;
+DECLARE lback INTEGER;
+DECLARE ff DOUBLE PRECISION;
+DECLARE fc DOUBLE PRECISION;
+DECLARE bf DOUBLE PRECISION;
+DECLARE bc DOUBLE PRECISION;
+DECLARE s1 SMALLINT;
+DECLARE s2 SMALLINT;
+DECLARE frac BIGINT;
+DECLARE near_frac BIGINT;
+DECLARE near_line INTEGER;
+DECLARE blocks SMALLINT;
+DECLARE opentop BIGINT;
+DECLARE openbottom BIGINT;
+BEGIN
+  best = best_in;
+  best_line = line_in;
+  near_frac = 2147483647;
+  near_line = NULL;
+  SELECT CAST(b.org_x AS BIGINT) * 65536, CAST(b.org_y AS BIGINT) * 65536, b.w, b.h
+    FROM blockmap_info b WHERE b.id = 1 INTO orgx, orgy, bw, bh;
+  -- (don't start exactly on a block's edge)
+  IF (BIN_AND(x1 - orgx, 8388607) = 0) THEN x1 = x1 + 65536;
+  IF (BIN_AND(y1 - orgy, 8388607) = 0) THEN y1 = y1 + 65536;
+  tx = x1;
+  ty = y1;
+  tdx = fx32(x2 - x1);
+  tdy = fx32(y2 - y1);
+  x1 = x1 - orgx;
+  y1 = y1 - orgy;
+  xt1 = BIN_SHR(x1, 23);
+  yt1 = BIN_SHR(y1, 23);
+  x2 = x2 - orgx;
+  y2 = y2 - orgy;
+  xt2 = BIN_SHR(x2, 23);
+  yt2 = BIN_SHR(y2, 23);
+  IF (xt2 > xt1) THEN
+  BEGIN
+    mapxstep = 1;
+    partial = 65536 - BIN_AND(BIN_SHR(x1, 7), 65535);
+    ystep = fx_div(fx32(y2 - y1), ABS(fx32(x2 - x1)));
+  END
+  ELSE IF (xt2 < xt1) THEN
+  BEGIN
+    mapxstep = -1;
+    partial = BIN_AND(BIN_SHR(x1, 7), 65535);
+    ystep = fx_div(fx32(y2 - y1), ABS(fx32(x2 - x1)));
+  END
+  ELSE
+  BEGIN
+    mapxstep = 0;
+    partial = 65536;
+    ystep = 16777216;
+  END
+  yintercept = fx32(BIN_SHR(y1, 7) + fx_mul(partial, ystep));
+  IF (yt2 > yt1) THEN
+  BEGIN
+    mapystep = 1;
+    partial = 65536 - BIN_AND(BIN_SHR(y1, 7), 65535);
+    xstep = fx_div(fx32(x2 - x1), ABS(fx32(y2 - y1)));
+  END
+  ELSE IF (yt2 < yt1) THEN
+  BEGIN
+    mapystep = -1;
+    partial = BIN_AND(BIN_SHR(y1, 7), 65535);
+    xstep = fx_div(fx32(x2 - x1), ABS(fx32(y2 - y1)));
+  END
+  ELSE
+  BEGIN
+    mapystep = 0;
+    partial = 65536;
+    xstep = 16777216;
+  END
+  xintercept = fx32(BIN_SHR(x1, 7) + fx_mul(partial, xstep));
+  mapx = xt1;
+  mapy = yt1;
+  cnt = 0;
+  seen = ',';
+  WHILE (cnt < 64) DO
+  BEGIN
+    -- P_BlockLinesIterator (mapx, mapy, PIT_AddLineIntercepts)
+    IF (mapx >= 0 AND mapy >= 0 AND mapx < bw AND mapy < bh) THEN
+      FOR SELECT l.id, l.fx, l.fy, l.fdx, l.fdy, l.flags, l.back_sector, fs.floor_h, fs.ceil_h, bs.floor_h, bs.ceil_h
+            FROM blockmap b
+            JOIN linedefs l ON l.id = b.line_id
+            LEFT JOIN sectors fs ON fs.id = l.front_sector
+            LEFT JOIN sectors bs ON bs.id = l.back_sector
+           WHERE b.bx = :mapx AND b.by_ = :mapy
+           ORDER BY b.seq
+            INTO lid, lx, ly, ldx, ldy, lflags, lback, ff, fc, bf, bc
+      DO
+      BEGIN
+        IF (POSITION(',' || lid || ',' IN seen) > 0) THEN CONTINUE;
+        seen = seen || lid || ',';
+        IF (tdx > 1048576 OR tdy > 1048576 OR tdx < -1048576 OR tdy < -1048576) THEN
+        BEGIN
+          s1 = point_on_divline_side(lx, ly, tx, ty, tdx, tdy);
+          s2 = point_on_divline_side(fx32(lx + ldx), fx32(ly + ldy), tx, ty, tdx, tdy);
+        END
+        ELSE
+        BEGIN
+          s1 = point_on_line_side(tx, ty, lx, ly, ldx, ldy);
+          s2 = point_on_line_side(fx32(tx + tdx), fx32(ty + tdy), lx, ly, ldx, ldy);
+        END
+        IF (s1 = s2) THEN CONTINUE;
+        frac = intercept_vector(tx, ty, tdx, tdy, lx, ly, ldx, ldy);
+        IF (frac < 0 OR frac > 65536 OR frac >= near_frac) THEN CONTINUE;
+        -- PTR_SlideTraverse: would it stop the player?
+        blocks = 0;
+        IF (BIN_AND(lflags, 4) = 0) THEN          -- (not ML_TWOSIDED: only from in front)
+          blocks = IIF(point_on_line_side(mx, my, lx, ly, ldx, ldy) = 1, 0, 1);
+        ELSE IF (lback IS NULL) THEN
+          blocks = 1;                             -- (P_LineOpening: no back, no opening)
+        ELSE
+        BEGIN
+          opentop = MINVALUE(fx_of(fc), fx_of(bc));
+          openbottom = MAXVALUE(fx_of(ff), fx_of(bf));
+          IF (opentop - openbottom < 3670016 OR opentop - mz < 3670016 OR openbottom - mz > 1572864) THEN blocks = 1;
+        END
+        IF (blocks = 1) THEN
+        BEGIN
+          near_frac = frac;
+          near_line = lid;
+        END
+      END
+    IF (mapx = xt2 AND mapy = yt2) THEN LEAVE;
+    IF (BIN_SHR(yintercept, 16) = mapy) THEN
+    BEGIN
+      yintercept = fx32(yintercept + ystep);
+      mapx = mapx + mapxstep;
+    END
+    ELSE IF (BIN_SHR(xintercept, 16) = mapx) THEN
+    BEGIN
+      xintercept = fx32(xintercept + xstep);
+      mapy = mapy + mapystep;
+    END
+    cnt = cnt + 1;
+  END
+  IF (near_line IS NOT NULL AND near_frac < best) THEN
+  BEGIN
+    best = near_frac;
+    best_line = near_line;
+  END
+END^
+
+-- P_HitSlideLine: the move (XM, YM) turned along the line it hit – straight along a
+-- horizontal or vertical one; else as long as its part along the line (P_AproxDistance, the
+-- angle between them in fine angles), in the line's direction (from the player's side)
+CREATE OR ALTER PROCEDURE hit_slide_line (lid INTEGER, xm BIGINT, ym BIGINT, mx BIGINT, my BIGINT)
+RETURNS (oxm BIGINT, oym BIGINT)
+AS
+DECLARE lx BIGINT;
+DECLARE ly BIGINT;
+DECLARE ldx BIGINT;
+DECLARE ldy BIGINT;
+DECLARE lslope SMALLINT;
+DECLARE lineangle BIGINT;
+DECLARE moveangle BIGINT;
+DECLARE deltaangle BIGINT;
+DECLARE movelen BIGINT;
+DECLARE newlen BIGINT;
+BEGIN
+  oxm = xm;
+  oym = ym;
+  SELECT l.fx, l.fy, l.fdx, l.fdy, l.slope FROM linedefs l WHERE l.id = :lid INTO lx, ly, ldx, ldy, lslope;
+  IF (lslope = 0) THEN
+  BEGIN
+    oym = 0;
+    EXIT;
+  END
+  IF (lslope = 1) THEN
+  BEGIN
+    oxm = 0;
+    EXIT;
+  END
+  lineangle = point_to_angle2(0, 0, ldx, ldy);
+  IF (point_on_line_side(mx, my, lx, ly, ldx, ldy) = 1) THEN lineangle = BIN_AND(lineangle + 2147483648, 4294967295);
+  moveangle = point_to_angle2(0, 0, xm, ym);
+  deltaangle = BIN_AND(moveangle - lineangle, 4294967295);
+  IF (deltaangle > 2147483648) THEN deltaangle = BIN_AND(deltaangle + 2147483648, 4294967295);
+  lineangle = BIN_SHR(lineangle, 19);
+  deltaangle = BIN_SHR(deltaangle, 19);
+  movelen = aprox_distance(xm, ym);
+  newlen = fx_mul(movelen, fine_cosine(deltaangle));
+  oxm = fx_mul(newlen, fine_cosine(lineangle));
+  oym = fx_mul(newlen, fine_sine(lineangle));
+END^
+
+-- P_SlideMove: blocked, the player slides along what stopped it. Traces from its three leading
+-- corners find the nearest line it would hit; it moves up to just short of that (a 0x800
+-- fudge), then the rest of the move, turned along the line, becomes its momentum and it tries
+-- that – up to three times. When nothing's found, or a move fails, it "stairsteps": the y move
+-- alone, else the x move alone.
+CREATE OR ALTER PROCEDURE slide_move_fx (tid INTEGER, pid SMALLINT)
+AS
+DECLARE hitcount INTEGER;
+DECLARE stair SMALLINT;
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE z BIGINT;
+DECLARE momx BIGINT;
+DECLARE momy BIGINT;
+DECLARE leadx BIGINT;
+DECLARE leady BIGINT;
+DECLARE trailx BIGINT;
+DECLARE traily BIGINT;
+DECLARE best BIGINT;
+DECLARE bline INTEGER;
+DECLARE tmx BIGINT;
+DECLARE tmy BIGINT;
+DECLARE ok SMALLINT;
+BEGIN
+  hitcount = 0;
+  stair = 0;
+  WHILE (1 = 1) DO
+  BEGIN
+    hitcount = hitcount + 1;
+    IF (hitcount = 3) THEN
+    BEGIN
+      stair = 1;
+      LEAVE;
+    END
+    SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), fx_of(t.momx), fx_of(t.momy) FROM things t WHERE t.id = :tid
+      INTO x, y, z, momx, momy;
+    IF (momx > 0) THEN BEGIN leadx = x + 1048576; trailx = x - 1048576; END
+    ELSE BEGIN leadx = x - 1048576; trailx = x + 1048576; END
+    IF (momy > 0) THEN BEGIN leady = y + 1048576; traily = y - 1048576; END
+    ELSE BEGIN leady = y - 1048576; traily = y + 1048576; END
+    best = 65537;
+    bline = NULL;
+    EXECUTE PROCEDURE slide_traverse(leadx, leady, leadx + momx, leady + momy, x, y, z, best, bline) RETURNING_VALUES best, bline;
+    EXECUTE PROCEDURE slide_traverse(trailx, leady, trailx + momx, leady + momy, x, y, z, best, bline) RETURNING_VALUES best, bline;
+    EXECUTE PROCEDURE slide_traverse(leadx, traily, leadx + momx, traily + momy, x, y, z, best, bline) RETURNING_VALUES best, bline;
+    IF (best = 65537) THEN
+    BEGIN
+      stair = 1;
+      LEAVE;
+    END
+    best = best - 2048;
+    IF (best > 0) THEN
+    BEGIN
+      EXECUTE PROCEDURE try_move_fx(tid, pid, x + fx_mul(momx, best), y + fx_mul(momy, best)) RETURNING_VALUES ok;
+      IF (ok = 0) THEN
+      BEGIN
+        stair = 1;
+        LEAVE;
+      END
+    END
+    best = 65536 - (best + 2048);
+    IF (best > 65536) THEN best = 65536;
+    IF (best <= 0) THEN LEAVE;
+    tmx = fx_mul(momx, best);
+    tmy = fx_mul(momy, best);
+    SELECT fx_of(t.x), fx_of(t.y) FROM things t WHERE t.id = :tid INTO x, y;
+    EXECUTE PROCEDURE hit_slide_line(bline, tmx, tmy, x, y) RETURNING_VALUES tmx, tmy;
+    UPDATE things t SET momx = :tmx / 65536e0, momy = :tmy / 65536e0 WHERE t.id = :tid;
+    EXECUTE PROCEDURE try_move_fx(tid, pid, x + tmx, y + tmy) RETURNING_VALUES ok;
+    IF (ok = 1) THEN LEAVE;
+  END
+  IF (stair = 1) THEN
+  BEGIN
+    SELECT fx_of(t.x), fx_of(t.y), fx_of(t.momx), fx_of(t.momy) FROM things t WHERE t.id = :tid INTO x, y, momx, momy;
+    EXECUTE PROCEDURE try_move_fx(tid, pid, x, y + momy) RETURNING_VALUES ok;
+    IF (ok = 0) THEN EXECUTE PROCEDURE try_move_fx(tid, pid, x + momx, y) RETURNING_VALUES ok;
+  END
+END^
+
+-- P_XYMovement for a player: its momentum, at most MAXMOVE (30) each way, in steps of at most
+-- half of that (DOOM halves a step only when it's positive), each a P_TryMove, sliding when
+-- one fails; then, on the ground, friction (FRICTION, 0xe800) – or a stop, once both
+-- momentums are under STOPSPEED (0x1000) and no move is told (CMD_FWD, CMD_SIDE: the
+-- ticcmd's), when a running body stands
+CREATE OR ALTER PROCEDURE xy_movement_fx (tid INTEGER, pid SMALLINT, cmd_fwd INTEGER, cmd_side INTEGER, tic INTEGER)
+AS
+DECLARE momx BIGINT;
+DECLARE momy BIGINT;
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE z BIGINT;
+DECLARE fz BIGINT;
+DECLARE xmove BIGINT;
+DECLARE ymove BIGINT;
+DECLARE tx BIGINT;
+DECLARE ty BIGINT;
+DECLARE ok SMALLINT;
+DECLARE alive SMALLINT;
+BEGIN
+  SELECT fx_of(t.momx), fx_of(t.momy) FROM things t WHERE t.id = :tid INTO momx, momy;
+  IF (momx = 0 AND momy = 0) THEN EXIT;
+  momx = MAXVALUE(-1966080, MINVALUE(1966080, momx));
+  momy = MAXVALUE(-1966080, MINVALUE(1966080, momy));
+  UPDATE things t SET momx = :momx / 65536e0, momy = :momy / 65536e0 WHERE t.id = :tid;
+  xmove = momx;
+  ymove = momy;
+  WHILE (1 = 1) DO
+  BEGIN
+    SELECT fx_of(t.x), fx_of(t.y) FROM things t WHERE t.id = :tid INTO x, y;
+    IF (xmove > 983040 OR ymove > 983040) THEN
+    BEGIN
+      tx = x + xmove / 2;                        -- (C's division: towards 0)
+      ty = y + ymove / 2;
+      xmove = BIN_SHR(xmove, 1);
+      ymove = BIN_SHR(ymove, 1);
+    END
+    ELSE
+    BEGIN
+      tx = x + xmove;
+      ty = y + ymove;
+      xmove = 0;
+      ymove = 0;
+    END
+    EXECUTE PROCEDURE try_move_fx(tid, pid, tx, ty) RETURNING_VALUES ok;
+    IF (ok = 0) THEN EXECUTE PROCEDURE slide_move_fx(tid, pid);
+    IF (xmove = 0 AND ymove = 0) THEN LEAVE;
+  END
+  SELECT fx_of(t.momx), fx_of(t.momy), fx_of(t.z), fx_of(t.floorz) FROM things t WHERE t.id = :tid INTO momx, momy, z, fz;
+  IF (z > fz) THEN EXIT;                         -- (no friction in the air)
+  IF (momx > -4096 AND momx < 4096 AND momy > -4096 AND momy < 4096 AND cmd_fwd = 0 AND cmd_side = 0) THEN
+  BEGIN
+    IF (EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                 WHERE t.id = :tid AND t.state BETWEEN tt.see_state AND tt.see_state + 3)) THEN
+      EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1), tic - 1)
+        RETURNING_VALUES alive;
+    momx = 0;
+    momy = 0;
+  END
+  ELSE
+  BEGIN
+    momx = fx_mul(momx, 59392);
+    momy = fx_mul(momy, 59392);
+  END
+  UPDATE things t SET momx = :momx / 65536e0, momy = :momy / 65536e0 WHERE t.id = :tid;
+END^
+
+-- P_ZMovement for a player (when it's off its floor or moving up or down): below its floor (a
+-- step up), the view drops by the step and comes back up over the next tics; momz moves it,
+-- the floor stops it – a landing faster than 8 squats the view and says "oof" – and gravity
+-- pulls it down, 2 the first tic, 1 more each tic after; the ceiling stops its head.
+CREATE OR ALTER PROCEDURE z_movement_fx (tid INTEGER, pid SMALLINT)
+AS
+DECLARE z BIGINT;
+DECLARE momz BIGINT;
+DECLARE fz BIGINT;
+DECLARE cz BIGINT;
+DECLARE vh BIGINT;
+DECLARE dvh BIGINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
+BEGIN
+  SELECT fx_of(t.z), fx_of(t.momz), fx_of(t.floorz), fx_of(t.ceilz), fx_of(p.view_h), fx_of(p.delta_vh), t.x, t.y
+    FROM things t JOIN player p ON p.thing_id = t.id
+   WHERE t.id = :tid AND p.id = :pid
+    INTO z, momz, fz, cz, vh, dvh, px, py;
+  IF (z = fz AND momz = 0) THEN EXIT;
+  IF (z < fz) THEN
+  BEGIN
+    vh = vh - (fz - z);
+    dvh = BIN_SHR(2686976 - vh, 3);              -- (VIEWHEIGHT: 41)
+  END
+  z = z + momz;
+  IF (z <= fz) THEN
+  BEGIN
+    IF (momz < 0) THEN
+    BEGIN
+      IF (momz < -524288) THEN
+      BEGIN
+        dvh = BIN_SHR(momz, 3);
+        EXECUTE PROCEDURE play_sound('DSOOF', tid, px, py);
+      END
+      momz = 0;
+    END
+    z = fz;
+  END
+  ELSE IF (momz = 0) THEN momz = -131072;
+  ELSE momz = momz - 65536;
+  IF (z + 3670016 > cz) THEN
+  BEGIN
+    IF (momz > 0) THEN momz = 0;
+    z = cz - 3670016;
+  END
+  UPDATE things t SET z = :z / 65536e0, momz = :momz / 65536e0 WHERE t.id = :tid;
+  UPDATE player p SET view_h = :vh / 65536e0, delta_vh = :dvh / 65536e0 WHERE p.id = :pid;
+END^
+
+-- A player's floor and ceiling where it stands, found again (P_CheckPosition's, the lines its
+-- box touches): when a sector moved (FORCE, P_ChangeSector's P_ThingHeightClip: on the floor,
+-- it stays on it; else the ceiling may push it down), where it has just landed (FLOORZ NULL:
+-- a teleport, P_TeleportMove – it stands on it), or when something put it elsewhere than
+-- where they were found (FZ_X, FZ_Y: a test, the console – it stays at its height)
+CREATE OR ALTER PROCEDURE height_clip_fx (tid INTEGER, force SMALLINT = 0)
+AS
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE z BIGINT;
+DECLARE oldfz BIGINT;
+DECLARE moved SMALLINT;
+DECLARE ok SMALLINT;
+DECLARE fz BIGINT;
+DECLARE cz BIGINT;
+DECLARE dz BIGINT;
+DECLARE spec VARCHAR(4000);
+BEGIN
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), fx_of(t.floorz), IIF(t.fz_x = t.x AND t.fz_y = t.y, 0, 1)
+    FROM things t WHERE t.id = :tid
+    INTO x, y, z, oldfz, moved;
+  IF (oldfz IS NOT NULL AND force = 0 AND moved = 0) THEN EXIT;
+  EXECUTE PROCEDURE check_position_fx(tid, x, y, 1048576, 0, 0) RETURNING_VALUES ok, fz, cz, dz, spec;
+  IF (oldfz IS NULL OR (z = oldfz AND moved = 0)) THEN z = fz;
+  ELSE IF (z + 3670016 > cz) THEN z = cz - 3670016;
+  UPDATE things t SET z = :z / 65536e0, floorz = :fz / 65536e0, ceilz = :cz / 65536e0, fz_x = t.x, fz_y = t.y
+   WHERE t.id = :tid;
 END^
 
 CREATE OR ALTER PROCEDURE player_think (
@@ -2504,6 +3375,22 @@ DECLARE gave SMALLINT;
 DECLARE qn INTEGER;
 DECLARE tries INTEGER;
 DECLARE noclip SMALLINT;
+DECLARE cmd_fwd INTEGER;
+DECLARE cmd_side INTEGER;
+DECLARE cmd_turn BIGINT;
+DECLARE onground SMALLINT;
+DECLARE fz_z BIGINT;
+DECLARE ffz BIGINT;
+DECLARE fcz BIGINT;
+DECLARE fmx BIGINT;
+DECLARE fmy BIGINT;
+DECLARE fang BIGINT;
+DECLARE sang BIGINT;
+DECLARE vh BIGINT;
+DECLARE dvh BIGINT;
+DECLARE fbob BIGINT;
+DECLARE bobv BIGINT;
+DECLARE fvz BIGINT;
 BEGIN
   SELECT p.thing_id, t.x, t.y, t.z, t.angle, t.momx, t.momy, t.momz, p.dead, p.weapon,
          p.bullets, p.shells, p.has_shotgun, p.has_chaingun, p.use_down, p.view_h,
@@ -2517,6 +3404,11 @@ BEGIN
          pending;
   -- (this tic's trigger, for the weapon's actions: player->cmd.buttons & BT_ATTACK)
   UPDATE player p SET buttons = :fire WHERE p.id = :pid;
+  -- the ticcmd in DOOM's units (G_BuildTiccmd): forwardmove and sidemove, 25 a walk and 50 a
+  -- run, and angleturn, a BAM >> 16 (a short)
+  cmd_fwd = MAXVALUE(-127, MINVALUE(127, ROUND(fwd * IIF(run = 1, 50, 25))));
+  cmd_side = MAXVALUE(-127, MINVALUE(127, ROUND(side * IIF(run = 1, 50, 25))));
+  cmd_turn = BIN_AND(CAST(ROUND(turn * 32768 / PI()) AS BIGINT) + 32768, 65535) - 32768;
 
   IF (is_dead = 1) THEN
   BEGIN
@@ -2549,142 +3441,87 @@ BEGIN
       UPDATE game SET exit_kind = 3 WHERE id = 1;
     END
     UPDATE player SET view_h = :view_h, view_z = :z + :view_h, use_down = :use_key WHERE id = :pid;
+    -- (the body's own thinker goes on: it slides to a stop and falls, P_MobjThinker)
+    EXECUTE PROCEDURE height_clip_fx(tid);
+    EXECUTE PROCEDURE xy_movement_fx(tid, pid, cmd_fwd, cmd_side, tic);
+    EXECUTE PROCEDURE z_movement_fx(tid, pid);
     EXIT;
   END
 
+  -- the floor and ceiling where it stands, if it has just landed somewhere (P_TeleportMove)
+  EXECUTE PROCEDURE height_clip_fx(tid);
+  SELECT fx_of(t.z), fx_of(t.floorz), fx_of(t.ceilz), fx_of(t.momx), fx_of(t.momy), bam_of(t.angle), COALESCE(t.reaction, 0)
+    FROM things t WHERE t.id = :tid
+    INTO fz_z, ffz, fcz, fmx, fmy, fang, preact;
+  onground = IIF(fz_z <= ffz, 1, 0);
   -- P_PlayerThink: just teleported (reactiontime), it can't turn or move
-  SELECT COALESCE(t.reaction, 0) FROM things t WHERE t.id = :tid INTO preact;
   IF (preact > 0) THEN
-  BEGIN
-    fwd = 0;
-    side = 0;
-    turn = 0;
     UPDATE things SET reaction = :preact - 1 WHERE id = :tid;
-  END
-
-  -- P_MovePlayer: standing (S_PLAY) and told to move, the body starts running (S_PLAY_RUN1).
-  -- (P_PlayerThink comes before the body's own thinker, which counts this tic off its
-  -- new state: set at TIC - 1 it ends when DOOM's does)
-  IF ((fwd <> 0 OR side <> 0)
-      AND EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-                   WHERE t.id = :tid AND t.state = tt.spawn_state)) THEN
-    EXECUTE PROCEDURE set_state(tid, (SELECT tt.see_state FROM thing_types tt WHERE tt.thing_type = 1), tic - 1)
-      RETURNING_VALUES alive;
-
-  -- P_MovePlayer: turn, thrust, friction
-  ang = ang + turn;
-  ang = ang - 2 * PI() * FLOOR(ang / (2 * PI()));
-  thrust = IIF(run = 1, 1.5625e0, 0.78125e0);
-  momx = momx + thrust * (fwd * COS(ang) + side * SIN(ang));
-  momy = momy + thrust * (fwd * SIN(ang) - side * COS(ang));
-  spd = SQRT(momx * momx + momy * momy);
-  IF (spd > 30) THEN BEGIN momx = momx * 30 / spd; momy = momy * 30 / spd; END
-
-  -- P_XYMovement with wall sliding
-  ox = x;
-  oy = y;
-  IF (momx <> 0 OR momy <> 0) THEN
+  ELSE
   BEGIN
-    nx = x + momx;
-    ny = y + momy;
-    -- CF_NOCLIP: P_CheckPosition says yes before looking at a single line or thing
-    IF (noclip = 1) THEN ok = 1;
-    ELSE EXECUTE PROCEDURE check_position(tid, nx, ny, z, 16, 56, 0) RETURNING_VALUES ok, fz, cz, dz, sec;
-    IF (ok = 1) THEN
+    -- P_MovePlayer: turn (angleturn << 16), and only on the ground, thrust: forwardmove × 2048
+    -- the way it faces, sidemove × 2048 a quarter turn to the right (P_Thrust)
+    fang = BIN_AND(fang + cmd_turn * 65536, 4294967295);
+    IF (cmd_fwd <> 0 AND onground = 1) THEN
     BEGIN
-      x = nx;
-      y = ny;
+      fmx = fx32(fmx + fx_mul(cmd_fwd * 2048, fine_cosine(BIN_SHR(fang, 19))));
+      fmy = fx32(fmy + fx_mul(cmd_fwd * 2048, fine_sine(BIN_SHR(fang, 19))));
     END
-    ELSE
+    IF (cmd_side <> 0 AND onground = 1) THEN
     BEGIN
-      EXECUTE PROCEDURE check_position(tid, nx, y, z, 16, 56, 0) RETURNING_VALUES ok, fz, cz, dz, sec;
-      IF (ok = 1) THEN
-      BEGIN
-        x = nx;
-        momy = 0;
-      END
-      ELSE
-      BEGIN
-        EXECUTE PROCEDURE check_position(tid, x, ny, z, 16, 56, 0) RETURNING_VALUES ok, fz, cz, dz, sec;
-        IF (ok = 1) THEN
-        BEGIN
-          y = ny;
-          momx = 0;
-        END
-        ELSE
-        BEGIN
-          momx = 0;
-          momy = 0;
-        END
-      END
+      sang = BIN_SHR(BIN_AND(fang - 1073741824, 4294967295), 19);
+      fmx = fx32(fmx + fx_mul(cmd_side * 2048, fine_cosine(sang)));
+      fmy = fx32(fmy + fx_mul(cmd_side * 2048, fine_sine(sang)));
     END
+    -- standing (S_PLAY) and told to move, the body starts running (S_PLAY_RUN1). (P_PlayerThink
+    -- comes before the body's own thinker, which counts this tic off its new state: set at
+    -- TIC - 1 it ends when DOOM's does)
+    IF ((cmd_fwd <> 0 OR cmd_side <> 0)
+        AND EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                     WHERE t.id = :tid AND t.state = tt.spawn_state)) THEN
+      EXECUTE PROCEDURE set_state(tid, (SELECT tt.see_state FROM thing_types tt WHERE tt.thing_type = 1), tic - 1)
+        RETURNING_VALUES alive;
+    UPDATE things t SET angle = rad_of(:fang), momx = :fmx / 65536e0, momy = :fmy / 65536e0 WHERE t.id = :tid;
   END
-  momx = momx * 0.90625e0;
-  momy = momy * 0.90625e0;
-  IF (ABS(momx) < 0.05) THEN momx = 0;
-  IF (ABS(momy) < 0.05) THEN momy = 0;
-  -- P_XYMovement: stopped with no move told, a running body stands (S_PLAY_RUN1–4 → S_PLAY)
-  IF (momx = 0 AND momy = 0 AND fwd = 0 AND side = 0
-      AND EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-                   WHERE t.id = :tid AND t.state BETWEEN tt.see_state AND tt.see_state + 3)) THEN
-    EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1), tic - 1)
-      RETURNING_VALUES alive;
+  ang = rad_of(fang);
 
-  -- P_CrossSpecialLine: walk-over triggers between the old and new position
-  -- (not without clipping: no lines were checked, so none are crossed)
-  IF ((x <> ox OR y <> oy) AND noclip = 0) THEN
+  -- P_CalcHeight: the bob, a quarter of the speed squared (at most 16); on the ground the view
+  -- comes back to 41 over a step or a landing (deltaviewheight) and bobs with leveltime, short
+  -- of the ceiling by 4; in the air it's the view height alone
+  fbob = BIN_SHR(fx32(fx_mul(fmx, fmx) + fx_mul(fmy, fmy)), 2);
+  IF (fbob > 1048576) THEN fbob = 1048576;
+  SELECT fx_of(p.view_h), fx_of(p.delta_vh) FROM player p WHERE p.id = :pid INTO vh, dvh;
+  IF (onground = 0) THEN fvz = fz_z + vh;
+  ELSE
   BEGIN
-    UPDATE things SET x = :x, y = :y, angle = :ang, momx = :momx, momy = :momy WHERE id = :tid;
-    FOR SELECT l.id
-          FROM lines_in_box(MINVALUE(:ox, :x), MINVALUE(:oy, :y), MAXVALUE(:ox, :x), MAXVALUE(:oy, :y)) lb
-          LEFT JOIN linedefs l ON l.id = lb.line_id
-         WHERE l.special > 0
-           AND l.minx <= MAXVALUE(:ox, :x) AND l.maxx >= MINVALUE(:ox, :x)
-           AND l.miny <= MAXVALUE(:oy, :y) AND l.maxy >= MINVALUE(:oy, :y)
-           AND SIGN(l.dx * (:oy - l.y1) - l.dy * (:ox - l.x1)) <> SIGN(l.dx * (:y - l.y1) - l.dy * (:x - l.x1))
-           AND SIGN((:x - :ox) * (l.y1 - :oy) - (:y - :oy) * (l.x1 - :ox))
-            <> SIGN((:x - :ox) * (l.y2 - :oy) - (:y - :oy) * (l.x2 - :ox))
-           -- teleporters only work entered from the front
-           AND (l.special NOT IN (39, 97) OR l.dx * (:oy - l.y1) - l.dy * (:ox - l.x1) < 0)
-          ORDER BY l.id
-          INTO lid
-    DO
-      EXECUTE PROCEDURE activate_line(lid, 'walk', NULL, pid);
-    SELECT t.x, t.y, t.z, t.angle, t.momx, t.momy FROM things t WHERE t.id = :tid INTO x, y, z, ang, momx, momy;
+    bobv = fx_mul(fbob / 2, fine_sine(BIN_AND(409 * (tic - 1), 8191)));
+    vh = vh + dvh;
+    IF (vh > 2686976) THEN
+    BEGIN
+      vh = 2686976;
+      dvh = 0;
+    END
+    IF (vh < 1343488) THEN
+    BEGIN
+      vh = 1343488;
+      IF (dvh <= 0) THEN dvh = 1;
+    END
+    IF (dvh <> 0) THEN
+    BEGIN
+      dvh = dvh + 16384;
+      IF (dvh = 0) THEN dvh = 1;
+    END
+    fvz = fz_z + vh + bobv;
+    IF (fvz > fcz - 262144) THEN fvz = fcz - 262144;
   END
+  UPDATE player p
+     SET view_h = :vh / 65536e0, delta_vh = :dvh / 65536e0, view_z = :fvz / 65536e0, bob = :fbob / 65536e0
+   WHERE p.id = :pid;
 
-  -- P_ZMovement: snap up steps (smoothing the view), fall with gravity
-  sec = sector_at(x, y);
+  -- the sector it's in (its subsector's), for its specials
+  z = fz_z / 65536e0;
+  SELECT sector_at_fx(fx_of(t.x), fx_of(t.y)) FROM things t WHERE t.id = :tid INTO sec;
   SELECT floor_h, ceil_h, special FROM sectors WHERE id = :sec INTO fz, cz, sspec;
-  IF (z < fz) THEN
-  BEGIN
-    view_h = view_h - (fz - z);
-    z = fz;
-    momz = 0;
-  END
-  ELSE IF (z > fz OR momz > 0) THEN
-  BEGIN
-    momz = momz - 1;
-    z = MAXVALUE(fz, z + momz);
-    IF (z + 56 > cz) THEN
-    BEGIN
-      z = cz - 56;                   -- banged our head
-      momz = MINVALUE(momz, 0);
-    END
-    IF (z = fz) THEN
-    BEGIN
-      IF (momz < -8) THEN
-      BEGIN
-        view_h = view_h + momz / 2;   -- landing squat
-        EXECUTE PROCEDURE play_sound('DSOOF', tid, x, y);
-      END
-      momz = 0;
-    END
-  END
-  view_h = MINVALUE(41, view_h + MAXVALUE(1, (41 - view_h) / 4));
-  bob = MINVALUE(16, (momx * momx + momy * momy) / 4);
-  view_z = z + view_h + bob / 2 * SIN(tic * 2 * PI() / 20);
-  IF (view_z > cz - 4) THEN view_z = cz - 4;
 
   -- sector specials under the player
   -- E1M8's exit floor (11): IDDQD off every tic you stand on it, before its damage
@@ -2751,14 +3588,15 @@ BEGIN
   IF (neww > 0 AND neww <> weapon) THEN pending = neww;
 
 
-  UPDATE things SET x = :x, y = :y, z = :z, angle = :ang, momx = :momx, momy = :momy, momz = :momz,
-                    sector_id = :sec
-   WHERE id = :tid;
-  UPDATE player SET pending_weapon = :pending, use_down = :use_key, view_h = :view_h, view_z = :view_z, bob = :bob
-   WHERE id = :pid;
+  UPDATE player SET pending_weapon = :pending, use_down = :use_key WHERE id = :pid;
   -- P_MovePsprites: the weapon and its flash, a tic on (firing, lowering, raising)
   EXECUTE PROCEDURE move_psprites(pid, tic);
   SELECT p.weapon, p.pending_weapon FROM player p WHERE p.id = :pid INTO weapon, pending;
+
+  -- P_MobjThinker, the body's own thinker: P_XYMovement (slides, crosses lines), then P_ZMovement
+  EXECUTE PROCEDURE xy_movement_fx(tid, pid, cmd_fwd, cmd_side, tic);
+  EXECUTE PROCEDURE z_movement_fx(tid, pid);
+  SELECT t.x, t.y, t.z FROM things t WHERE t.id = :tid INTO x, y, z;
 
   -- P_GiveAmmo: twice the ammo on the easiest skill and on Nightmare
   SELECT IIF(g.skill IN (1, 5), 2, 1), g.players, g.deathmatch FROM game g WHERE g.id = 1 INTO mult, np, dm;
@@ -2766,7 +3604,7 @@ BEGIN
   FOR SELECT t.id, tt.pickup, tt.amount, tt.label, IIF(BIN_AND(t.flags, 65536) <> 0, 1, 0), tt.count_item
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        WHERE t.kind = 'item' AND ABS(t.x - :x) < t.radius + 16 AND ABS(t.y - :y) < t.radius + 16
-         AND t.z <= :z + 56 AND t.z + 16 >= :z
+         AND t.z - :z <= 56 AND t.z - :z >= -8   -- (P_TouchSpecialThing: not above its head, nor 8 below its feet)
         ORDER BY t.id
         INTO iid, pk, amt, lbl, dropped, count_item
   DO
@@ -5265,7 +6103,12 @@ BEGIN
         minx = MINVALUE(s.ax, s.bx), maxx = MAXVALUE(s.ax, s.bx),
         miny = MINVALUE(s.ay, s.bby), maxy = MAXVALUE(s.ay, s.bby),
         front_sector = s.fsec, back_sector = s.bsec,
-        light_delta = CASE WHEN s.ay = s.bby THEN -16 WHEN s.ax = s.bx THEN 16 ELSE 0 END;
+        light_delta = CASE WHEN s.ay = s.bby THEN -16 WHEN s.ax = s.bx THEN 16 ELSE 0 END,
+        -- P_LoadLineDefs: v1 and dx, dy in 16.16, and the slopetype
+        fx = CAST(s.ax AS BIGINT) * 65536, fy = CAST(s.ay AS BIGINT) * 65536,
+        fdx = CAST(s.bx - s.ax AS BIGINT) * 65536, fdy = CAST(s.bby - s.ay AS BIGINT) * 65536,
+        slope = CASE WHEN s.bx = s.ax THEN 1 WHEN s.bby = s.ay THEN 0
+                     WHEN (s.bx - s.ax) * (s.bby - s.ay) > 0 THEN 2 ELSE 3 END;
 
   -- BLOCKMAP: every 128×128 cell whose centre lies within half a diagonal
   -- of the line, inside the line's bounding box.
@@ -5392,7 +6235,7 @@ BEGIN
   BEGIN
     px = NULL;
     IF (dm > 0) THEN SELECT d.sx, d.sy, d.sa FROM deathmatch_spot(:i, NULL) d INTO px, py, pa;
-    ELSE SELECT FIRST 1 x, y, angle * PI() / 180 FROM map_things WHERE ttype = :i INTO px, py, pa;
+    ELSE SELECT FIRST 1 x, y, TRUNC(angle / 45) * PI() / 4 FROM map_things WHERE ttype = :i INTO px, py, pa;
     IF (px IS NULL) THEN
     BEGIN
       SELECT FIRST 1 x, y, angle * PI() / 180 FROM map_things WHERE ttype = 1 INTO px, py, pa;
@@ -5435,6 +6278,11 @@ BEGIN
      SET z = (SELECT IIF(tt.hang = 1, s.ceil_h - tt.height, s.floor_h)
                 FROM sectors s, thing_types tt
                WHERE s.id = t.sector_id AND tt.thing_type = t.thing_type);
+  -- P_SpawnMobj: a player's floorz and ceilingz are its subsector's to start with
+  UPDATE things t
+     SET floorz = (SELECT s.floor_h FROM sectors s WHERE s.id = t.sector_id),
+         ceilz = (SELECT s.ceil_h FROM sectors s WHERE s.id = t.sector_id), fz_x = t.x, fz_y = t.y
+   WHERE t.kind = 'player';
 
   UPDATE game g
      SET total_kills = (SELECT COUNT(*) FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
@@ -5455,7 +6303,7 @@ BEGIN
            rockets = 0, cells = 0, max_rockets = (SELECT r.max_rockets FROM rules r WHERE r.id = 1), max_cells = (SELECT r.max_cells FROM rules r WHERE r.id = 1), god = 0, noclip = 0;
   UPDATE player
      SET keycards = IIF(:dm > 0, 7, 0), kills = 0, items = 0, secrets = 0, dead = 0,
-         damage_count = 0, bonus_count = 0, view_h = 41, use_down = 0, invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0, strength_tics = 0, allmap = 0,
+         damage_count = 0, bonus_count = 0, view_h = 41, delta_vh = 0, use_down = 0, invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0, strength_tics = 0, allmap = 0,
          msg = :map_name, msg_tics = 105;
   UPDATE player p SET view_z = (SELECT z FROM things t WHERE t.id = p.thing_id) + 41;
   -- P_SpawnPlayer's P_SetupPsprites: every level starts with the weapon coming up

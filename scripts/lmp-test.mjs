@@ -93,6 +93,35 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.lmp')).sort())
     `${name} (${lmpMapName(demo, wadFile === 'freedoom2.wad')}, ${r.tics} tics): the player in step for ${r.synced}; first differences ${where || 'none'}`
     + `${!was && !update ? ' – no baseline yet (npm run test:lmp -- --update)' : ''}${worse.length ? `; worse than the baseline: ${worse.join('; ')}` : ''}${gained.length ? `; closer than the baseline: ${gained.join('; ')}` : ''}`);
 }
+// phase L2: the scripted walk (turns, runs, strafes, a wall) keeps the player in step all the way
+assert(results['e1m1-walk']?.synced === results['e1m1-walk']?.tics,
+  `the player in fixed point: the scripted walk on E1M1 stays in step with vanilla for all ${results['e1m1-walk']?.tics} tics (${results['e1m1-walk']?.synced})`);
+
+// ── DOOM's fixed point in SQL (m_fixed.c, tables.c, p_maputl.c, r_main.c), and the BLOCKMAP ──
+{
+  const v = async (expr) => Number((await db.query(`SELECT ${expr} AS v FROM rdb$database`)).rows[0].V);
+  const U = 65536;
+  const fx = [await v('fx_mul(-1, 1)'), await v(`fx_mul(${51200}, fine_cosine(0))`), await v(`fx_mul(${51199}, ${0xe800})`),
+    await v(`fx_div(${U}, ${3 * U})`), await v(`fx_div(${-5 * U}, 0)`), await v(`fx_div(${200 * U}, 1)`), await v('fx32(2147483648)')];
+  assert(JSON.stringify(fx) === JSON.stringify([-1, 51199, 46399, 21845, -2147483648, 2147483647, -2147483648]),
+    `FixedMul rounds down (-1 × 1/65536 → ${fx[0]}); a walk's first thrust and friction, 51200 × finecosine[0] → ${fx[1]}, × FRICTION → ${fx[2]} (vanilla's 46399); FixedDiv ${fx[3]}, and past its range the largest of its sign (${fx[4]}, ${fx[5]}); a 32-bit wrap (${fx[6]})`);
+  const ang = [await v(`point_to_angle2(0, 0, ${U}, 0)`), await v(`point_to_angle2(0, 0, ${U}, ${U})`), await v(`point_to_angle2(0, 0, 0, ${U})`),
+    await v(`point_to_angle2(0, 0, ${-U}, 0)`), await v(`point_to_angle2(0, 0, 0, ${-U})`), await v(`point_to_angle2(${U}, ${U}, ${U}, ${U})`)];
+  assert(JSON.stringify(ang) === JSON.stringify([0, 0x1fffffff, 0x3fffffff, 0x7fffffff, 0xc0000000, 0]),
+    `R_PointToAngle2 by octant and tantoangle: east 0, north-east 0x1fffffff, north 0x3fffffff, west 0x7fffffff, south 0xc0000000, a point to itself 0 (${ang.map((a) => `0x${a.toString(16)}`).join(' ')})`);
+  // a line from (0, 0) to (64, 64): what's left of it is behind (1); a box across it straddles (-1)
+  const side = [await v(`point_on_line_side(0, ${10 * U}, 0, 0, ${64 * U}, ${64 * U})`), await v(`point_on_line_side(${10 * U}, 0, 0, 0, ${64 * U}, ${64 * U})`),
+    await v(`box_on_line_side(${40 * U}, ${20 * U}, ${20 * U}, ${40 * U}, 0, 0, ${64 * U}, ${64 * U}, 2)`), await v(`point_on_divline_side(0, ${10 * U}, 0, 0, ${64 * U}, ${64 * U})`),
+    await v(`intercept_vector(0, ${32 * U}, ${64 * U}, 0, 0, 0, ${64 * U}, ${64 * U})`), await v(`aprox_distance(${3 * U}, ${4 * U})`)];
+  assert(JSON.stringify(side) === JSON.stringify([1, 0, -1, 1, 32768, 5 * U + U / 2]),
+    `P_PointOnLineSide (${side[0]}, ${side[1]}), P_BoxOnLineSide (${side[2]}), P_PointOnDivlineSide (${side[3]}), P_InterceptVector (a trace crossing halfway: ${side[4]}), P_AproxDistance (3, 4 → ${side[5] / U})`);
+  // every thing's sector by R_PointInSubsector in 16.16 is the one the map loaded it in
+  const off = Number((await db.query('SELECT COUNT(*) n FROM things t WHERE t.sector_id IS DISTINCT FROM sector_at_fx(fx_of(t.x), fx_of(t.y))')).rows[0].N);
+  const bm = (await db.query("SELECT (SELECT COUNT(*) FROM blockmap) n, (SELECT COUNT(*) FROM blockmap WHERE seq = 0 AND line_id = 0) z, b.w * b.h cells FROM blockmap_info b")).rows[0];
+  assert(off === 0 && Number(bm.Z) === Number(bm.CELLS) && Number(bm.N) > Number(bm.CELLS),
+    `R_PointInSubsector in 16.16 puts every thing where the map did (${off} elsewhere); the BLOCKMAP lump: ${bm.N} entries over ${bm.CELLS} blocks, every list starting with linedef 0 (${bm.Z})`);
+}
+
 if (update) {
   fs.writeFileSync(basePath, `${JSON.stringify(results, null, 2)}\n`);
   console.log(`(wrote ${path.relative(root, basePath)})`);

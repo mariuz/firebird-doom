@@ -156,6 +156,17 @@ CREATE TABLE rndtable (
   i SMALLINT NOT NULL PRIMARY KEY,
   v SMALLINT NOT NULL
 );
+-- tables.c's finesine (src/states.js's FINESINE): 16.16 sines of the 8192 fine angles, and a
+-- quarter turn more, so finecosine[i] is finesine[i + 2048] (P_Thrust, P_HitSlideLine)
+CREATE TABLE finesine (
+  i SMALLINT NOT NULL PRIMARY KEY,
+  v INTEGER NOT NULL
+);
+-- tables.c's tantoangle (TANTOANGLE): the BAM angle of each slope 0–2048 / 2048 (R_PointToAngle)
+CREATE TABLE tantoangle (
+  i SMALLINT NOT NULL PRIMARY KEY,
+  v BIGINT NOT NULL
+);
 
 CREATE TABLE states (
   id         INTEGER NOT NULL PRIMARY KEY,
@@ -255,7 +266,11 @@ CREATE TABLE linedefs (
   miny DOUBLE PRECISION, maxy DOUBLE PRECISION,
   front_sector INTEGER,
   back_sector  INTEGER,
-  light_delta  INTEGER DEFAULT 0 NOT NULL  -- DOOM's "fake contrast"
+  light_delta  INTEGER DEFAULT 0 NOT NULL,  -- DOOM's "fake contrast"
+  -- in 16.16 fixed point, for the code that moves as DOOM does (INIT_MAP): v1, dx, dy, and
+  -- the slopetype (0 ST_HORIZONTAL, 1 ST_VERTICAL, 2 ST_POSITIVE, 3 ST_NEGATIVE)
+  fx BIGINT, fy BIGINT, fdx BIGINT, fdy BIGINT,
+  slope SMALLINT
 );
 CREATE INDEX linedefs_tag ON linedefs (tag);
 CREATE INDEX linedefs_special ON linedefs (special);   -- (the few lines a monster can set off)
@@ -272,6 +287,24 @@ CREATE TABLE line_blocks (
 );
 CREATE INDEX line_blocks_cell ON line_blocks (bx, by_);
 CREATE INDEX line_blocks_key ON line_blocks (cell);
+
+-- The map's own BLOCKMAP lump, as P_LoadBlockMap reads it: each block's linedefs in the lump's
+-- order (SEQ), the 0 that starts every list included, for P_BlockLinesIterator's order in
+-- P_CheckPosition and P_PathTraverse. Its origin and size are in BLOCKMAP_INFO.
+CREATE TABLE blockmap (
+  bx      SMALLINT NOT NULL,
+  by_     SMALLINT NOT NULL,
+  seq     SMALLINT NOT NULL,
+  line_id INTEGER NOT NULL,
+  PRIMARY KEY (bx, by_, seq)
+);
+CREATE TABLE blockmap_info (
+  id    SMALLINT NOT NULL PRIMARY KEY,
+  org_x INTEGER NOT NULL,                  -- bmaporgx, bmaporgy (map units)
+  org_y INTEGER NOT NULL,
+  w     INTEGER NOT NULL,                  -- bmapwidth, bmapheight (blocks)
+  h     INTEGER NOT NULL
+);
 
 CREATE TABLE segs (
   id      INTEGER NOT NULL PRIMARY KEY,
@@ -361,7 +394,14 @@ CREATE TABLE things (
   -- STATES_THINK move it on.
   state       INTEGER,
   state_tic   INTEGER,
-  just_hit    SMALLINT DEFAULT 0 NOT NULL         -- MF_JUSTHIT: hurt into its pain state, it fights back next (P_CheckMissileRange)
+  just_hit    SMALLINT DEFAULT 0 NOT NULL,        -- MF_JUSTHIT: hurt into its pain state, it fights back next (P_CheckMissileRange)
+  -- mobj->floorz, ceilingz: the floor and ceiling a player's box touches, as P_TryMove and
+  -- P_ThingHeightClip found them (NULL: to be found where it stands, after a teleport), and
+  -- where it was then (put anywhere else, it looks again)
+  floorz      DOUBLE PRECISION,
+  ceilz       DOUBLE PRECISION,
+  fz_x        DOUBLE PRECISION,
+  fz_y        DOUBLE PRECISION
 );
 CREATE INDEX things_kind ON things (kind);
 CREATE INDEX things_sector ON things (sector_id);
@@ -407,6 +447,7 @@ CREATE TABLE player (
   buttons      SMALLINT DEFAULT 0 NOT NULL,     -- this tic's BT_ATTACK, for A_WeaponReady and A_ReFire
   extralight   SMALLINT DEFAULT 0 NOT NULL,     -- 0–2 while a muzzle flash lights the view (A_Light1, A_Light2)
   bob          DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- player->bob: P_CalcHeight's, for A_WeaponReady's sway
+  delta_vh     DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- player->deltaviewheight: the view coming back up after a step or a landing
   damage_count INTEGER DEFAULT 0 NOT NULL,
   bonus_count  INTEGER DEFAULT 0 NOT NULL,
   kills        INTEGER DEFAULT 0 NOT NULL,

@@ -34,12 +34,12 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   rules are gone.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above (done) and DOOM's fixed-point physics, bit for bit. What stands in the way is in the
-  README (*Simplifications*, "What's still not vanilla"): doubles and radians for 16.16 and BAMs,
-  `rndtable`'s draws in DOOM's order everywhere, `P_SlideMove`, the blockmap's
-  order, `P_DamageMobj`'s thrust. A stretch goal; it marks where full
+  README (*Simplifications*, "What's still not vanilla"): doubles and radians for 16.16 and BAMs
+  (but for the player's movement), `rndtable`'s draws in DOOM's order everywhere, the blockmap's
+  order for monsters, `P_DamageMobj`'s thrust. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation). *Under way*, in phases
   (under **Simulation** below: *Original `.lmp` demos, in phases*): phases L0, the yardstick,
-  and L1, DOOM's random numbers, are done.
+  L1, DOOM's random numbers, and L2, the player in fixed point, are done.
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
@@ -369,12 +369,33 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   the draws of actions the demos haven't reached yet (A_Look's sight-sound choice, P_SubRandom's
   order, the damage rolls) as L4 and L5 bring them over.
 
-**Phase L2: the player in fixed point.** The ticcmd as DOOM's: forwardmove, sidemove and
-angleturn in its units, angles as BAMs. P_Thrust with `finesine`/`finecosine` (the tables in
-SQL), P_XYMovement's friction (FRICTION 0xe800, FixedMul) and STOPSPEED, MAXMOVE, P_SlideMove's
-traced slide, P_ZMovement and gravity, P_CalcHeight's bob and view height, P_PlayerThink's
-order. Positions as 16.16 integers (BIGINT), so every step rounds as DOOM's does. Test: the
-scripted walk stays in step until it meets something with a random number in it.
+**Phase L2: the player in fixed point.** *Done.*
+- **The numbers:** 16.16 sums as PSQL functions over BIGINTs that wrap as DOOM's 32-bit ints do
+  (`FX_MUL`, `FX_DIV`, `FX32`), with tables.c's `finesine` and `tantoangle` (generated into
+  `src/states.js`, loaded into tables). Positions and speeds stay DOUBLE columns, each a whole
+  number of 1/65536ths, so they go to 16.16 and back exactly; an angle in radians is a whole BAM.
+  p_maputl.c's and r_main.c's tests in 16.16: `POINT_ON_LINE_SIDE`, `POINT_ON_DIVLINE_SIDE`,
+  `BOX_ON_LINE_SIDE`, `INTERCEPT_VECTOR`, `POINT_TO_ANGLE2` (`SLOPE_DIV`), `APROX_DISTANCE`,
+  and `SECTOR_AT_FX` (R_PointInSubsector).
+- **The BLOCKMAP:** the map's own lump, as P_LoadBlockMap reads it (origin, size, each block's
+  lines in order, the 0 every list starts with), for the order P_CheckPosition and
+  P_PathTraverse meet lines in. A map without one gets one built.
+- **The ticcmd:** forwardmove and sidemove (25 a walk, 50 a run) and angleturn (a BAM >> 16)
+  from DOOM_TIC's arguments.
+- **P_PlayerThink's order:** P_MovePlayer (the turn, P_Thrust only on the ground), P_CalcHeight
+  (bob, viewheight and deltaviewheight), the sector's specials, use, weapons, psprites; then the
+  body's thinker: P_XYMovement (MAXMOVE, the halved steps, P_TryMove through P_CheckPosition –
+  things, then lines in BLOCKMAP order, spechit crossed last first – P_SlideMove's three traces
+  with P_PathTraverse and PTR_SlideTraverse, P_HitSlideLine, the stairstep, friction and
+  STOPSPEED), P_ZMovement (step-up smoothing, gravity, the squat and "oof"); then pickups.
+- **floorz and ceilingz:** the player's own, as P_TryMove found them; a moving sector clips the
+  players at once (P_ChangeSector, P_ThingHeightClip), a teleport finds them where it lands.
+- **Where it stands:** the scripted walk on E1M1 (turns, a run, a strafe, a wall, a lowering
+  stair) keeps the player in step with vanilla for all 215 tics (`npm run test:lmp` asserts it).
+  On the attract demos it does until a monster's hit (75 tics on E1M1, 512 on MAP01). Left:
+  P_DamageMobj's thrust (L5); pickups happen where the player ends the tic, not in
+  PIT_CheckThing at each spot tried; the player's thinker runs before the world's rather than
+  in thinker order (L3); the page's own ticcmds (G_BuildTiccmd's 24/40 strafe and slow turn).
 
 **Phase L3: the map as DOOM spawns it.** P_LoadThings' order (the players among the map's
 things, where their starts are), MT_ flags, spawnhealth, z on the ceiling or floor, P_SpawnMapThing's

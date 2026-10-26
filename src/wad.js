@@ -14,6 +14,34 @@ function name8(bytes, off) {
 }
 
 /**
+ * BLOCKMAP as P_LoadBlockMap reads it: the origin (map units), the grid's columns and rows, and
+ * every block's list of linedefs in the lump's order – including the 0 a node builder starts each
+ * list with, which P_BlockLinesIterator reads as linedef 0 – as [bx, by, seq, linedef] rows.
+ * (A list's offset is read unsigned, as later ports do, where vanilla's short would go negative
+ * past 64 KB.)
+ */
+function readBlockmap(dv, size) {
+  const words = size >> 1;
+  const orgX = dv.getInt16(0, true);
+  const orgY = dv.getInt16(2, true);
+  const w = dv.getInt16(4, true);
+  const h = dv.getInt16(6, true);
+  const blocks = [];
+  if (w <= 0 || h <= 0 || 4 + w * h > words) return null;
+  for (let by = 0; by < h; by++) {
+    for (let bx = 0; bx < w; bx++) {
+      let at = dv.getUint16((4 + by * w + bx) * 2, true);
+      for (let seq = 0; at < words; at++, seq++) {
+        const v = dv.getUint16(at * 2, true);
+        if (v === 0xffff) break;
+        blocks.push([bx, by, seq, v]);
+      }
+    }
+  }
+  return { orgX, orgY, w, h, blocks };
+}
+
+/**
  * One WAD, or an IWAD with PWADs on top: new Wad(iwad, ...pwads). Like
  * W_AddFile, every file's lumps go into one directory in load order, and a
  * name finds the last of them – so a PWAD replaces maps, graphics, sounds,
@@ -291,6 +319,7 @@ export class Wad {
       things: rec('THINGS', 10, (dv, o, i) => ({
         id: i, x: s16(dv, o), y: s16(dv, o + 2), angle: s16(dv, o + 4), type: u16(dv, o + 6), flags: u16(dv, o + 8),
       })),
+      blockmap: parts.BLOCKMAP && parts.BLOCKMAP.size >= 8 ? readBlockmap(this.dv(parts.BLOCKMAP), parts.BLOCKMAP.size) : null,
     };
   }
 }

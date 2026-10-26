@@ -43,8 +43,9 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | WAD lumps `VERTEXES` `LINEDEFS` `SIDEDEFS` `SECTORS` `SEGS` `SSECTORS` `NODES` `THINGS` | tables of the same names ([sql/schema.sql](sql/schema.sql)) |
 | `info.c` mobjinfo | `THING_TYPES` rows ([src/thinginfo.js](src/thinginfo.js)) |
 | `R_PointInSubsector` | `SECTOR_AT()` walks the BSP; `INIT_MAP` locates every thing in one recursive CTE |
-| `BLOCKMAP` | `LINE_BLOCKS`, a 128×128 grid built by `INIT_MAP` |
-| `P_CheckPosition`, `P_TryMove` | `CHECK_POSITION`, plus wall sliding in `PLAYER_THINK` |
+| `BLOCKMAP` | the lump itself (`BLOCKMAP`, in its order, for the player), and `LINE_BLOCKS`, a 128×128 grid built by `INIT_MAP` |
+| `P_CheckPosition`, `P_TryMove` | `CHECK_POSITION`; for the player in 16.16, `CHECK_POSITION_FX`, `TRY_MOVE_FX` |
+| `P_MovePlayer`, `P_CalcHeight`, `P_XYMovement`, `P_SlideMove`, `P_ZMovement` (the player) | `PLAYER_THINK`, `XY_MOVEMENT_FX`, `SLIDE_MOVE_FX` (`SLIDE_TRAVERSE`, `HIT_SLIDE_LINE`), `Z_MOVEMENT_FX` |
 | `P_CheckSight` | `CHECK_SIGHT()` walks the blockmap cells along the sight line |
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
 | `G_DoCompleted`: which map comes next, secret exits included | [src/progress.js](src/progress.js) |
@@ -784,10 +785,16 @@ measured against vanilla itself:
   `P_SpawnMapThing` starts it with, the player's start, then the flashing and strobing lights'
   first counts. The lights then run on DOOM's timers (`P_SpawnLightFlash`, `P_SpawnStrobeFlash`,
   `P_SpawnFireFlicker`, `P_SpawnGlowingLight`), drawing as theirs do.
+- **The player in fixed point (phase L2, done):** the player moves as DOOM moves it, in 16.16
+  fixed point: the ticcmd in DOOM's units, the angle in BAMs, `P_Thrust` with `finesine`,
+  friction and `STOPSPEED`, `P_TryMove` and `P_CheckPosition` through the map's own `BLOCKMAP`
+  lump in its order, `P_SlideMove`'s traced slide along walls, gravity and the view's bob and
+  squat (`P_ZMovement`, `P_CalcHeight`), and a moving floor carrying it in the same tic.
 - **Where it stands:** standing still on E1M1 it keeps step for all 350 tics: the player, the
-  things' states and the random index, from the level's setup on. Anything that moves differs
-  from the first tic, in the last bit of DOOM's fixed-point rounding (phase L2), and the
-  random index follows some 40–57 tics later, once a monster wakes.
+  things' states and the random index, from the level's setup on. On the scripted walk (turns,
+  runs, strafes, along walls, down a lowering stair) the player stays in step for all 215
+  tics. On the attract demos it does until a monster hurts it (75 tics on E1M1, 512 on MAP01):
+  the monsters themselves still move in doubles (phase L4), and a hit's thrust is missing (L5).
 
 ### Co-op and deathmatch over the network
 
@@ -1321,17 +1328,19 @@ not the demons' `DSDMPAIN`.) `npm run test:states` wakes, hurts, kills and gibs 
 step.
 
 What's still not vanilla, and why `.lmp` demos can't play yet (docs/ROADMAP.md):
-- **Arithmetic:** positions and speeds are doubles, and angles are radians, where DOOM uses 16.16
-  fixed point and 32-bit BAMs with its `finesine` tables. A thing ends up a fraction of a unit
-  from where DOOM's would, and over a demo that adds up.
+- **Arithmetic:** the player moves in DOOM's 16.16 fixed point, with BAM angles and the
+  `finesine` table; everything else's positions and speeds are doubles and its angles radians.
+  A monster ends up a fraction of a unit from where DOOM's would, and over a demo that adds up.
 - **Random numbers:** `P_Random` is DOOM's `rndtable`, but its draws come in DOOM's order only
   where the code follows DOOM's (the map's setup, the lights, the actions, the damage), not yet
   everywhere.
-- **Movement:** the player's wall sliding tries each axis in turn rather than `P_SlideMove`'s
-  traced slide. Friction stops at 0.05 rather than `STOPSPEED`. A hit pushes no one: there is
-  none of `P_DamageMobj`'s thrust, for you or for monsters.
-- **Collision:** collision and sight are set-based SQL over the map's lines and things, not DOOM's
-  blockmap walk, so ties between equally near things can break differently.
+- **Movement:** a hit pushes no one: there is none of `P_DamageMobj`'s thrust, for you or for
+  monsters. You pick things up where you end the tic, not at each spot `P_TryMove` tries on
+  the way. The page's own keys aren't quite `G_BuildTiccmd`'s: a strafe is 25 (50 running)
+  rather than 24 (40), and the turn keys have no slow start.
+- **Collision:** the player's goes through the `BLOCKMAP` as DOOM's does; the monsters' and the
+  projectiles', and sight, are set-based SQL over the map's lines and things, so ties between
+  equally near things can break differently.
 - **Crushers:** a crusher turns only corpses to gibs: not the dying, and dropped items aren't
   removed (`PIT_ChangeSector`).
 - **Weapon keys:** they choose as the port always has, not quite as `P_PlayerThink` does (see
@@ -1430,15 +1439,17 @@ Large maps with many monsters awake at once can still drop below 10 fps. The *Lo
 * Game data: [Freedoom](https://freedoom.github.io/) (BSD-3-Clause; its licence ships as
   `wads/FREEDOOM-COPYING.txt`, covering the WADs and the story text derived from them)
 * DOOM © id Software. This is an SQL re-implementation that reads the WAD format. DOOM's state
-  table (`src/states.js`) is taken from id's source release (GPL-2), through
-  [Chocolate Doom](https://www.chocolate-doom.org/)'s `info.c`.
+  table (`src/states.js`, with its random, sine and arctangent tables) is taken from id's source
+  release (GPL-2), through [Chocolate Doom](https://www.chocolate-doom.org/)'s `info.c`,
+  `m_random.c` and `tables.c`.
 * Inspired by [SQL DOOM / DOOMQL](https://github.com/cedardb/sqldoom) by CedarDB and
   [duckdb-doom](https://github.com/patricktrainer/duckdb-doom)
 
 ### Licence
 
 Firebird DOOM's own code is MIT ([LICENSE](LICENSE)). One file isn't: `src/states.js`, DOOM's state
-table (each frame of every thing's animation, how long it lasts and what it does), generated from id's
-`info.c` by `npm run gen-states`. It's GPL-2.0-or-later like its source ([LICENSES/GPL-2.0.md](LICENSES/GPL-2.0.md)).
+table (each frame of every thing's animation, how long it lasts and what it does) and its number
+tables (`rndtable`, `finesine`, `tantoangle`), generated from id's `info.c`, `m_random.c` and
+`tables.c` by `npm run gen-states`. It's GPL-2.0-or-later like its source ([LICENSES/GPL-2.0.md](LICENSES/GPL-2.0.md)).
 The page bundles it, so the site as built and deployed is distributed under the GPL as a whole; `dist/` ships
 both texts (`LICENSE.txt`, `GPL-2.0.txt`). Freedoom's WADs are BSD-3-Clause (above).
