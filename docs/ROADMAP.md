@@ -39,7 +39,8 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   order for monsters, `P_DamageMobj`'s thrust. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation). *Under way*, in phases
   (under **Simulation** below: *Original `.lmp` demos, in phases*): phases L0, the yardstick,
-  L1, DOOM's random numbers, and L2, the player in fixed point, are done.
+  L1, DOOM's random numbers, L2, the player in fixed point, and L3, the map as DOOM spawns it
+  and its thinkers' order, are done.
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
@@ -397,10 +398,30 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   PIT_CheckThing at each spot tried; the player's thinker runs before the world's rather than
   in thinker order (L3); the page's own ticcmds (G_BuildTiccmd's 24/40 strafe and slow turn).
 
-**Phase L3: the map as DOOM spawns it.** P_LoadThings' order (the players among the map's
-things, where their starts are), MT_ flags, spawnhealth, z on the ceiling or floor, P_SpawnMapThing's
-skill and options; thinker order as P_RunThinkers runs it. Test: the idle demos agree in every
-column.
+**Phase L3: the map as DOOM spawns it.** *Done.*
+- **The spawn:** every mobj has mobjinfo's spawnhealth (an item's or a decoration's 1000;
+  generated into `src/states.js`); things find their subsector as R_PointInSubsector does, in
+  16.16 (one on a node line stood 8 units off); a player faces `ANG45 × (angle / 45)` and
+  plays from the last start of its number.
+- **The thinkers' order:** each thinker has its place in P_RunThinkers' list: the map's things
+  in P_LoadThings' order with the player's body among them where its start is (in deathmatch
+  after them), then P_SpawnSpecials' lights and doors in sector order, then everything made
+  later as it's made. Each tic the players think (P_PlayerThink), then `RUN_THINKERS` dispatches
+  every thinker with something to do in that order, each thing's movement, fall and state
+  countdown together (P_MobjThinker); what one makes runs the same tic, after. A state set on
+  a thing whose turn is still to come, or a thing spawned, counts down this tic too
+  (`THINK_AHEAD`). The player's body and its pickups moved out of P_PlayerThink into its own
+  turn.
+- **The oracle:** `dump.c` writes every thinker too, in the list's order, at chosen leveltimes
+  (`ORACLE_MOBJS`); `npm run lmp-fixtures` keeps that for the idle demo and a new one that fires
+  a shot (`NAME.mobjs`), and `npm run test:lmp` checks the port's thinkers against it one by one.
+- **Where it stands:** on the idle E1M1 demo every column agrees for all 350 tics, and every
+  thinker, in the same order, with the same position, angle, health, state and tics, at each
+  tic dumped; on the shot demo too, but the puff's position (hitscan, L5). The MAP01 attract
+  demo keeps the count of mobjs to tic 279 (was 52) and their states to 269 (was 40). Left: a
+  state made due by another thinker after its turn goes on a tic late (the next pass picks it
+  up); a sector's light or mover has no place relative to the things made in the same tic
+  before it beyond its key; the monsters' sight and movement (L4).
 
 **Phase L4: the monsters' movement and sight.** P_Move, P_TryMove, P_CheckPosition through the
 blockmap in its order (PIT_CheckLine, PIT_CheckThing), P_NewChaseDir, P_CheckSight (its BSP

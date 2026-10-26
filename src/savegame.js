@@ -15,7 +15,7 @@ export const SLOTS = 6;
 // tables saved whole, and the columns that change in the rest
 const WHOLE = ['game', 'player', 'things', 'movers', 'frags', 'respawn_queue'];
 const MOVING = {
-  sectors: ['floor_h', 'ceil_h', 'light', 'special', 'sound_heard', 'floor_flat', 'lfx', 'lfx_count', 'lfx_min', 'lfx_max', 'lfx_dark', 'lfx_dir'],
+  sectors: ['floor_h', 'ceil_h', 'light', 'special', 'sound_heard', 'floor_flat', 'lfx', 'lfx_count', 'lfx_min', 'lfx_max', 'lfx_dark', 'lfx_dir', 'lfx_key'],
   sidedefs: ['upper_tex', 'mid_tex', 'lower_tex'],
   linedefs: ['special'],
 };

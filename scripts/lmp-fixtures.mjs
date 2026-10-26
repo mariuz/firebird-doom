@@ -2,7 +2,8 @@
 // test:lmp (npm run lmp-fixtures). Writes scripts/fixtures/lmp/NAME.lmp and NAME.trace.
 //
 // The demos are ours: scripted input, or the attract demos' (public/demos) turned into
-// ticcmds. Each trace is the oracle's (scripts/oracle: Chocolate Doom 3.1.0 built headless,
+// ticcmds. `npm run lmp-fixtures -- NAME …` makes only those. For some, NAME.mobjs too: every
+// thinker in the list's order at a few leveltimes (dump.c's ORACLE_MOBJS), for the things one by one. Each trace is the oracle's (scripts/oracle: Chocolate Doom 3.1.0 built headless,
 // npm run oracle first): one line of the game's state per tic, as vanilla plays the demo.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -47,24 +48,31 @@ function scripted(episode, map, steps) {
 
 const DEMOS = [
   // standing still: only the world moves (the monsters, the randoms, the lights)
-  ['e1m1-idle', 'freedoom1.wad', scripted(1, 1, [[350, 0, 0, 0, 0]])],
+  ['e1m1-idle', 'freedoom1.wad', scripted(1, 1, [[350, 0, 0, 0, 0]]), '0,1,175,350'],
   ['e1m1-walk', 'freedoom1.wad', scripted(1, 1, [
     [35, 25, 0, 0, 0], [10, 25, 0, -640, 0], [35, 50, 10, 0, 0], [20, 0, 0, 1280, 0],
     [15, 0, -25, 0, BT_ATTACK], [30, -25, 0, -320, 0], [10, 0, 0, 0, BT_USE], [60, 50, 0, 0, BT_ATTACK],
   ])],
+  // standing still, a shot at once: the puffs and the woken monsters, before anything else moves
+  ['e1m1-shoot', 'freedoom1.wad', scripted(1, 1, [[30, 0, 0, 0, 0], [12, 0, 0, 0, BT_ATTACK], [60, 0, 0, 0, 0]]), '34,35,36,48,49,102'],
   ['e1m1-attract', 'freedoom1.wad', fromAttract('freedoom1-demo1.json', 700)],
   ['map01-attract', 'freedoom2.wad', fromAttract('freedoom2-demo1.json', 700)],
 ];
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-home-'));
-for (const [name, wadFile, demo] of DEMOS) {
+// (names on the command line: only those)
+const only = process.argv.slice(2);
+for (const [name, wadFile, demo, mobjTics] of DEMOS.filter(([n]) => !only.length || only.includes(n))) {
   const lmp = path.join(out, `${name}.lmp`);
   const trace = path.join(out, `${name}.trace`);
+  // (and for some, every thinker at those leveltimes: NAME.mobjs, ORACLE_MOBJS)
+  const mobjs = path.join(out, `${name}.mobjs`);
   fs.writeFileSync(lmp, writeLmp(demo));
   fs.rmSync(trace, { force: true });
   try {
     execFileSync(oracle, ['-iwad', path.join(root, 'public/wads', wadFile), '-timedemo', lmp, '-nodraw', '-nosound', '-nomusic'],
-      { env: { ...process.env, HOME: home, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy', ORACLE_TRACE: trace }, stdio: 'pipe', timeout: 120000 });
+      { env: { ...process.env, HOME: home, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy', ORACLE_TRACE: trace,
+        ...(mobjTics ? { ORACLE_MOBJS: mobjs, ORACLE_MOBJS_TICS: mobjTics } : {}) }, stdio: 'pipe', timeout: 120000 });
   } catch { /* (-timedemo ends with I_Error's report and a non-zero exit) */ }
   const lines = fs.existsSync(trace) ? fs.readFileSync(trace, 'utf8').trim().split('\n').length : 0;
   console.log(`scripts/fixtures/lmp/${name}.lmp: ${demo.tics.length} tics; vanilla's trace ${lines} lines`);

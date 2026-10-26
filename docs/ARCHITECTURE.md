@@ -68,22 +68,37 @@ When adding a feature, put game logic in SQL. Only presentation goes in JS.
 tics (1–6, catching up to 35 Hz) and returns one row: everything the HUD needs, plus `exit_kind`.
 Per tic, `DOOM_TIC` runs:
 
-- `PLAYER_THINK`: `P_PlayerThink` in its order. The turn and thrust (`P_MovePlayer`) and the view
-  (`P_CalcHeight`), sector specials, use lines, weapons (`HITSCAN` with `AIM_SLOPE`,
-  `FIRE_MISSILE`), noise (`NOISE_ALERT`); then the body's own thinker, in 16.16 fixed point:
-  `XY_MOVEMENT_FX` (friction, `TRY_MOVE_FX` through `CHECK_POSITION_FX` over the map's own
-  `BLOCKMAP` rows, walk-over lines from its spechit list, `SLIDE_MOVE_FX`'s traced slide),
-  `Z_MOVEMENT_FX` (gravity, steps); then pickups. The fixed-point sums are PSQL functions next
-  to `P_RANDOM` (`FX_MUL`, `FX_DIV`, `POINT_ON_LINE_SIDE`, `POINT_TO_ANGLE2`, …) over the
-  `FINESINE` and `TANTOANGLE` tables; positions stay DOUBLE columns, each a whole number of
-  1/65536ths, so they go to 16.16 and back exactly.
-- `MOVERS_THINK`: doors, lifts, floors, stairs and crushers (`movers` rows). Each one that moves
-  has the players look again at their floor and ceiling (`HEIGHT_CLIP_FX`, `P_ThingHeightClip`).
-- `STATES_THINK`: the frame tables. A charging lost soul's flight (`SKULLS_THINK`) and the
-  projectiles' (`MISSILES_THINK`), the falls and floats (`P_ZMovement`), then every thing whose
-  state ends this tic goes on to its next (`SET_STATE`, which calls the next state's action:
-  A_Look, A_Chase, the attacks, …).
-- `LIGHTS_THINK` every other tic.
+- `PLAYER_THINK`, for each player: `P_PlayerThink` in its order. The turn and thrust
+  (`P_MovePlayer`) and the view (`P_CalcHeight`), sector specials, use lines, weapons (`HITSCAN`
+  with `AIM_SLOPE`, `FIRE_MISSILE`), noise (`NOISE_ALERT`). The fixed-point sums its body moves
+  by are PSQL functions next to `P_RANDOM` (`FX_MUL`, `FX_DIV`, `POINT_ON_LINE_SIDE`,
+  `POINT_TO_ANGLE2`, …) over the `FINESINE` and `TANTOANGLE` tables; positions stay DOUBLE
+  columns, each a whole number of 1/65536ths, so they go to 16.16 and back exactly.
+- `WORLD_TIC`: `P_RunThinkers`. The lights' countdowns all at once (`LIGHTS_COUNT`: no draws in
+  them), then `THINK_ALL`: every thinker with something to do this tic, in the list's order
+  (`RUN_THINKERS`). The order is each thinker's key: a thing's is twice its id (`THINGS.THINK_KEY`
+  for a player's body at the level's start, among the map's things where its start is), a
+  light's (`SECTORS.LFX_KEY`) and a mover's (`MOVERS.THINK_KEY`) come from `THING_SEQ` as it's
+  made, so `P_SpawnSpecials`' follow the map's things and whatever is made later follows them.
+  Each is dispatched to its step:
+  - a thing (`THING_THINK`, `P_MobjThinker`): its movement – a player's body (`PLAYER_BODY`:
+    `XY_MOVEMENT_FX` with `TRY_MOVE_FX` through `CHECK_POSITION_FX` over the map's own
+    `BLOCKMAP` rows, walk-over lines from its spechit list, `SLIDE_MOVE_FX`'s traced slide;
+    `Z_MOVEMENT_FX`; then `TOUCH_SPECIALS`, its pickups), a charging lost soul's
+    (`SKULL_STEP`), a missile's (`MISSILE_STEP`) – its fall or float (`Z_STEP`), then its
+    state's countdown (`SET_STATE`, which calls the next state's action: A_Look, A_Chase, the
+    attacks, …), and on Nightmare a corpse's chance to rise (`NIGHTMARE_STEP`);
+  - a light at the end of its count (`LIGHT_STEP`: T_LightFlash, T_StrobeFlash, T_FireFlicker);
+  - a door, lift, floor or crusher (`MOVER_STEP`). Each one that moves has the players look again
+    at their floor and ceiling (`HEIGHT_CLIP_FX`, `P_ThingHeightClip`).
+
+  What a thinker makes on its turn (a missile, blood, a door) runs this same tic, after the
+  rest, as DOOM's new thinkers do at the end of its list. `THINK_KEY`, a context variable,
+  says whose turn it is (-1 during `PLAYER_THINK`): a state set on a thing whose turn is still
+  to come this tic, or a thing spawned, counts down this tic too (`THINK_AHEAD`), so it ends a
+  tic sooner. `MOVERS_THINK`, `LIGHTS_THINK`, `SKULLS_THINK`, `MISSILES_THINK`,
+  `NIGHTMARE_RESPAWN` and `STATES_THINK` (the things alone) are the same steps in a loop, for
+  the tests.
 - The countdowns: damage and bonus flashes, messages, power-ups.
 
 **Determinism.** Every chance goes through `P_RAND256()` (or `P_RANDOM()`, the same draw over 256,
@@ -192,7 +207,7 @@ databases), running real Freedoom maps. Run them after every change, on both WAD
 | `pwad-test.mjs` | A PWAD built in memory (map, flat, sprite, music, DEHACKED) over Freedoom: what replaces what, in the directory and in Firebird; loading twice into one database. |
 | `dehacked-test.mjs` | Freedoom's lump (pars, cheats, its seven frame patches applied), a patch with every kind of block (patched things and pickups, the Misc rules in play, respelt cheats, par times), and a patch to the frame tables played out: a faster imp, a moved action, a weapon's frames, a reaction time, frame 966's overflow. |
 | `demo-test.mjs` | A recorded demo (through JSON) replays into the same game, row for row; a third run too; another seed diverges; `P_Random` walks rndtable from its index, one draw for `P_Random() & n`; thing ids repeat across loads. |
-| `lmp-test.mjs` | DOOM's `.lmp` format read and written (v1.9, v1.2, longtics); each demo in `scripts/fixtures/lmp` played against vanilla's trace (from the oracle, `scripts/oracle`), ratcheted by `baseline.json`: no demo may fall out of step earlier than it did; the scripted walk keeps the player in step throughout; the fixed-point functions (FixedMul, FixedDiv, R_PointToAngle2, the side tests) against known values; R_PointInSubsector in 16.16 and the BLOCKMAP lump as loaded. |
+| `lmp-test.mjs` | DOOM's `.lmp` format read and written (v1.9, v1.2, longtics); each demo in `scripts/fixtures/lmp` played against vanilla's trace (from the oracle, `scripts/oracle`), ratcheted by `baseline.json`: no demo may fall out of step earlier than it did; the scripted walk keeps the player in step throughout; the fixed-point functions (FixedMul, FixedDiv, R_PointToAngle2, the side tests) against known values; R_PointInSubsector in 16.16 and the BLOCKMAP lump as loaded; and where a fixture has `NAME.mobjs` (the oracle's list of every thinker at some leveltimes), the port's thinkers one by one against it: the same order, each mobj's position, angle, health, state and tics. |
 | `menu-test.mjs` | The title loop; menu navigation, remembered cursors, New Game → episode → skill, Nightmare's question, options and sliders, Load/Save, Quit, Read This!, coordinates, and every graphic present in both WADs. |
 | `compare-renderers.mjs` | BSP and brute-force renderers agree, column by column. |
 | `frame-bench.mjs [maps]` | Times `FRAME_WALLS`, `FRAME_SPRITES`, `FRAME_SECTORS` and `DOOM_TIC` with every monster awake, from eight spots per map looking four ways (`WAD=`, `VIEWS=`, `REPS=`). Not a test. |

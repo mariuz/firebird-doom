@@ -16,7 +16,7 @@ import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
 import { parseLmp, writeLmp, portCmd, lmpMapName, BT_ATTACK, BT_USE, BT_CHANGE } from '../src/lmp.js';
-import { FIELDS, parseTrace, playAgainst, startDemo } from './lmp-sync.mjs';
+import { FIELDS, parseTrace, playAgainst, startDemo, parseMobjs, portThinkers, compareThinkers } from './lmp-sync.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -93,6 +93,39 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.lmp')).sort())
     `${name} (${lmpMapName(demo, wadFile === 'freedoom2.wad')}, ${r.tics} tics): the player in step for ${r.synced}; first differences ${where || 'none'}`
     + `${!was && !update ? ' – no baseline yet (npm run test:lmp -- --update)' : ''}${worse.length ? `; worse than the baseline: ${worse.join('; ')}` : ''}${gained.length ? `; closer than the baseline: ${gained.join('; ')}` : ''}`);
 }
+// phase L3: the map as DOOM spawns it, and the thinkers in its order – every thinker one by one
+// (NAME.mobjs: the oracle's list at a few leveltimes) in the same order, each mobj with the same
+// position, angle, health, state and tics left. (The shot's puff is where the port's hitscan put
+// it, phase L5: its position alone may differ.)
+const ALLOWED = { 'e1m1-shoot': (f, d) => ['x', 'y', 'z'].includes(f) && d[3].startsWith('MT_PUFF') };
+for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.mobjs')).sort()) {
+  const name = file.replace(/\.mobjs$/, '');
+  const demo = parseLmp(fs.readFileSync(path.join(dir, `${name}.lmp`)));
+  const van = parseMobjs(fs.readFileSync(path.join(dir, file), 'utf8'));
+  const wadFile = name.startsWith('map') ? 'freedoom2.wad' : 'freedoom1.wad';
+  const w = wads.get(wadFile);
+  w.res = await loadResources(db, w.wad);
+  await startDemo(db, w.wad, w.res, demo, loadMap);
+  const tics = [...van.keys()].sort((a, b) => a - b);
+  const bad = [];
+  const seen = [];
+  let done = 0;
+  for (const t of tics) {
+    for (; done < t; done++) {
+      const [fwd, side, turn, fire, use, weapon, run] = portCmd(demo.tics[done][0]);
+      await db.query('SELECT * FROM doom_tic(1, ?, ?, ?, ?, ?, ?, ?)', [fwd, side, turn, fire, use, weapon, run]);
+    }
+    const c = compareThinkers(van.get(t), await portThinkers(db));
+    seen.push(`${t}: ${c.count[1]} thinkers`);
+    if (c.order) bad.push(`at ${t} the order differs at ${c.order.at}: port ${c.order.port}, vanilla ${c.order.vanilla}`);
+    for (const [f, l] of Object.entries(c.fields)) {
+      const off = l.filter((d) => !ALLOWED[name]?.(f, d));
+      if (off.length) bad.push(`at ${t} ${f} differs for ${off.length} (${off.slice(0, 3).map((d) => `#${d[0]} ${d[3]}: port ${d[1]}, vanilla ${d[2]}`).join('; ')})`);
+    }
+  }
+  assert(bad.length === 0, `${name}, thinker by thinker against vanilla's list (${seen.join(', ')}): ${bad.length ? bad.slice(0, 4).join('; ') : 'the same order, and every mobj where it is, as it is'}`);
+}
+
 // phase L2: the scripted walk (turns, runs, strafes, a wall) keeps the player in step all the way
 assert(results['e1m1-walk']?.synced === results['e1m1-walk']?.tics,
   `the player in fixed point: the scripted walk on E1M1 stays in step with vanilla for all ${results['e1m1-walk']?.tics} tics (${results['e1m1-walk']?.synced})`);

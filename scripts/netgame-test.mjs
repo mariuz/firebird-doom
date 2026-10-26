@@ -452,7 +452,9 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   const r0 = await thing(1);
   const corpse = await spawn(3001, r0.X + 64, r0.Y);
   await db.exec(`UPDATE things SET st = 'dead', state = (SELECT id FROM states WHERE name = 'S_TROO_DIE5'), state_tic = NULL, hp = 0, solid = 0, dead_tic = 0, spawn_x = x, spawn_y = y, spawn_angle = 1.5 WHERE id = ${corpse}`);
-  // the next P_RANDOM is 0 from this state (the tic's only draw is P_NightmareRespawn's 4-in-256 roll), at a tic that's a multiple of 32
+  // the next P_RANDOM is 0 from this state (the tic's only draw is P_NightmareRespawn's 4-in-256 roll: the
+  // lights, whose thinkers come before the corpse's and draw too, are put out), at a tic that's a multiple of 32
+  await db.exec('UPDATE sectors SET lfx = NULL');
   const rise = async (respawn) => {
     await db.exec(`UPDATE game SET tic = 1023, rng = 255, respawn = ${respawn} WHERE id = 1`);
     await tic([IDLE, IDLE]);

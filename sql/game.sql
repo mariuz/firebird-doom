@@ -346,17 +346,21 @@ BEGIN
   SELECT s.light FROM sectors s WHERE s.id = :sec INTO lt;
   mn = MINVALUE(lt, COALESCE(neighbor_h(sec, 'min_light'), lt));
   IF (special = 1) THEN
-    UPDATE sectors s SET lfx = 'flash', lfx_max = :lt, lfx_min = :mn, lfx_count = p_rand_and(64) + 1, special = 0
+    UPDATE sectors s SET lfx = 'flash', lfx_max = :lt, lfx_min = :mn, lfx_count = p_rand_and(64) + 1, special = 0,
+           lfx_key = 2 * NEXT VALUE FOR thing_seq
      WHERE s.id = :sec;
   ELSE IF (special IN (2, 3, 4, 12, 13)) THEN
     UPDATE sectors s
        SET lfx = 'strobe', lfx_max = :lt, lfx_min = IIF(:mn = :lt, 0, :mn), lfx_dark = IIF(:special IN (3, 12), 35, 15),
-           lfx_count = IIF(:special IN (12, 13), 1, p_rand_and(7) + 1), special = IIF(:special = 4, 4, 0)
+           lfx_count = IIF(:special IN (12, 13), 1, p_rand_and(7) + 1), special = IIF(:special = 4, 4, 0),
+           lfx_key = 2 * NEXT VALUE FOR thing_seq
      WHERE s.id = :sec;
   ELSE IF (special = 8) THEN
-    UPDATE sectors s SET lfx = 'glow', lfx_max = :lt, lfx_min = :mn, lfx_dir = -1, special = 0 WHERE s.id = :sec;
+    UPDATE sectors s SET lfx = 'glow', lfx_max = :lt, lfx_min = :mn, lfx_dir = -1, special = 0,
+           lfx_key = 2 * NEXT VALUE FOR thing_seq WHERE s.id = :sec;
   ELSE IF (special = 17) THEN
-    UPDATE sectors s SET lfx = 'flicker', lfx_max = :lt, lfx_min = :mn + 16, lfx_count = 4, special = 0 WHERE s.id = :sec;
+    UPDATE sectors s SET lfx = 'flicker', lfx_max = :lt, lfx_min = :mn + 16, lfx_count = 4, special = 0,
+           lfx_key = 2 * NEXT VALUE FOR thing_seq WHERE s.id = :sec;
 END^
 
 -- BLOCKMAP lookup: every linedef in the cells overlapping a box.
@@ -602,6 +606,21 @@ BEGIN
 END^
 
 -- ── spawning and damage ───────────────────────────────────────────────────
+-- P_RunThinkers' place in the list (THINK_KEY, a transaction's context variable): -1 while the
+-- players think (P_PlayerThink, before the list), a thinker's own key while it runs (a thing's,
+-- less one while it moves: its countdown comes after), none outside a tic. A thing whose turn
+-- is still to come this tic (its key past it) counts its state's tics down this tic too, so a
+-- state set on it – or a thing spawned – ends a tic sooner (THINK_AHEAD 1).
+CREATE OR ALTER FUNCTION think_ahead (k BIGINT) RETURNS SMALLINT
+AS
+DECLARE v VARCHAR(255);
+BEGIN
+  v = RDB$GET_CONTEXT('USER_TRANSACTION', 'THINK_KEY');
+  IF (v IS NULL) THEN RETURN 0;
+  RETURN IIF(k > CAST(v AS BIGINT), 1, 0);
+END^
+
+
 -- (SET_STATE, P_SetMobjState, declared here for DAMAGE_THING and the others that call
 -- it; its body comes with the frame tables' machine, before WORLD_TIC)
 CREATE OR ALTER PROCEDURE set_state (tid INTEGER, st INTEGER, tic INTEGER)
@@ -648,7 +667,8 @@ BEGIN
          -- on the frame tables: its spawn state, as P_SpawnMobj sets it (no action), and
          -- its reaction time (mobjinfo's: 8, the player's 0; none on Nightmare)
          IIF(tt.on_states = 1, tt.spawn_state, NULL),
-         IIF(tt.on_states = 1, (SELECT IIF(s.tics < 0, NULL, g.tic + s.tics) FROM states s CROSS JOIN game g
+         -- (spawned during a tic, it's at the end of the list: it counts down this tic, THINK_AHEAD)
+         IIF(tt.on_states = 1, (SELECT IIF(s.tics < 0, NULL, g.tic + s.tics - think_ahead(2 * :new_id)) FROM states s CROSS JOIN game g
                                  WHERE s.id = tt.spawn_state AND g.id = 1), NULL),
          IIF(tt.on_states = 1, (SELECT IIF(g.skill = 5, 0, tt.reaction_time) FROM game g WHERE g.id = 1), 0)
     FROM thing_types tt WHERE tt.thing_type = :ttype;
@@ -709,7 +729,7 @@ BEGIN
     SELECT IIF(:hp < -100, tt.xdeath_state, tt.death_state) FROM thing_types tt WHERE tt.thing_type = 1 INTO nst;
     UPDATE things t SET solid = 0, hp = :hp WHERE t.id = :ptid;
     EXECUTE PROCEDURE set_state(ptid, nst, tic) RETURNING_VALUES alive;
-    UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3))
+    UPDATE things t SET state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1)
      WHERE t.id = :ptid AND t.state_tic IS NOT NULL;
   END
   ELSE
@@ -806,7 +826,7 @@ BEGIN
       -- first frame 0–3 tics shorter (at least 1). The cry is A_Scream's, in those frames.
       EXECUTE PROCEDURE set_state(tid, IIF(hp < -spawn_hp AND xdeath_state > 0, xdeath_state, death_state), tic)
         RETURNING_VALUES alive;
-      UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3))
+      UPDATE things t SET state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1)
        WHERE t.id = :tid AND t.state_tic IS NOT NULL;
       IF (drop_type IS NOT NULL) THEN
       BEGIN
@@ -1395,6 +1415,217 @@ BEGIN
   END
 END^
 
+-- One mover's tic (T_VerticalDoor, T_PlatRaise, T_MoveFloor, T_MoveCeiling): the sector's
+-- door, lift, floor or crusher (MOVERS) moves on, stops or waits. RUN_THINKERS calls it in its turn.
+CREATE OR ALTER PROCEDURE mover_step (sid INTEGER)
+AS
+DECLARE k VARCHAR(8);
+DECLARE dir SMALLINT;
+DECLARE spd DOUBLE PRECISION;
+DECLARE top_h DOUBLE PRECISION;
+DECLARE bottom_h DOUBLE PRECISION;
+DECLARE wait_tics INTEGER;
+DECLARE wait_left INTEGER;
+DECLARE stay SMALLINT;
+DECLARE fh DOUBLE PRECISION;
+DECLARE ch DOUBLE PRECISION;
+DECLARE nh DOUBLE PRECISION;
+DECLARE del SMALLINT;
+DECLARE crush SMALLINT;
+DECLARE silent SMALLINT;
+DECLARE crushed SMALLINT;
+DECLARE tic INTEGER;
+DECLARE new_flat INTEGER;
+DECLARE new_special INTEGER;
+DECLARE pt INTEGER;
+BEGIN
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  SELECT m.kind, m.dir, m.speed, m.top_h, m.bottom_h, m.wait_tics, m.wait_left, m.stay,
+         s.floor_h, s.ceil_h, m.crush, m.silent, m.new_flat, m.new_special
+    FROM movers m JOIN sectors s ON s.id = m.sector_id
+   WHERE m.sector_id = :sid
+    INTO k, dir, spd, top_h, bottom_h, wait_tics, wait_left, stay, fh, ch, crush, silent, new_flat, new_special;
+  IF (k IS NULL) THEN EXIT;
+  del = 0;
+  IF (k = 'door') THEN
+  BEGIN
+    IF (dir = 1) THEN
+    BEGIN
+      ch = MINVALUE(ch + spd, top_h);
+      IF (ch >= top_h) THEN
+        IF (stay >= 1) THEN del = 1; ELSE BEGIN dir = 0; wait_left = wait_tics; END
+    END
+    ELSE IF (dir = 0) THEN
+    BEGIN
+      wait_left = wait_left - 1;
+      IF (wait_left <= 0 AND stay = 2) THEN
+      BEGIN
+        -- close30ThenOpen, the thirty seconds up: back up, and stay
+        dir = 1;
+        stay = 1;
+        EXECUTE PROCEDURE sector_sound('DSDOROPN', sid);
+      END
+      ELSE IF (wait_left <= 0) THEN
+      BEGIN
+        dir = -1;
+        EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDCLS', 'DSDORCLS'), sid);
+      END
+    END
+    -- T_VerticalDoor, direction 2 (raiseIn5Mins): waiting to rise, then a normal door
+    ELSE IF (dir = 2) THEN
+    BEGIN
+      wait_left = wait_left - 1;
+      IF (wait_left <= 0) THEN
+      BEGIN
+        dir = 1;
+        EXECUTE PROCEDURE sector_sound('DSDOROPN', sid);
+      END
+    END
+    ELSE
+    BEGIN
+      nh = MAXVALUE(ch - spd, fh);
+      IF (EXISTS (SELECT 1 FROM things t WHERE t.sector_id = :sid AND t.solid = 1
+                     AND t.z + t.height > :nh)) THEN
+      BEGIN
+        dir = 1;                         -- something is in the way: reopen
+        EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDOPN', 'DSDOROPN'), sid);
+      END
+      ELSE
+      BEGIN
+        ch = nh;
+        IF (ch <= fh AND stay = 2) THEN
+        BEGIN
+          dir = 0;
+          wait_left = 30 * 35;
+        END
+        ELSE IF (ch <= fh) THEN del = 1;
+      END
+    END
+    UPDATE sectors SET ceil_h = :ch WHERE id = :sid;
+  END
+  ELSE IF (k = 'lifts') THEN
+    dir = dir;                           -- (a stopped perpetual lift: in stasis)
+  ELSE IF (k = 'lift') THEN
+  BEGIN
+    IF (dir = -1) THEN
+    BEGIN
+      fh = MAXVALUE(fh - spd, bottom_h);
+      IF (fh <= bottom_h) THEN
+      BEGIN
+        dir = 0;
+        wait_left = wait_tics;
+        EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
+      END
+    END
+    ELSE IF (dir = 0) THEN
+    BEGIN
+      wait_left = wait_left - 1;
+      IF (wait_left <= 0) THEN
+      BEGIN
+        -- (a perpetual lift may be waiting at the top: then it goes down)
+        dir = IIF(fh <= bottom_h, 1, -1);
+        EXECUTE PROCEDURE sector_sound('DSPSTART', sid);
+      END
+    END
+    ELSE
+    BEGIN
+      nh = MINVALUE(fh + spd, top_h);
+      IF (EXISTS (SELECT 1 FROM things t WHERE t.sector_id = :sid AND t.solid = 1
+                     AND :nh + t.height > :ch)) THEN
+        dir = -1;
+      ELSE
+      BEGIN
+        fh = nh;
+        IF (fh >= top_h) THEN
+        BEGIN
+          IF (stay = 2) THEN
+          BEGIN
+            dir = 0;
+            wait_left = wait_tics;
+          END
+          ELSE del = 1;
+          EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
+        END
+      END
+    END
+    UPDATE sectors SET floor_h = :fh WHERE id = :sid;
+    -- what stands on it rides along; what's in the air (tossed, or flying
+    -- above it) is only pushed up if the floor overtakes it
+    UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
+       AND (t.momz = 0 OR t.z < :fh)
+       AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type
+                        AND (tt.hang = 1 OR (tt.floats = 1 AND t.st NOT IN ('dying', 'dead') AND t.z >= :fh)));
+  END
+  ELSE IF (k = 'crush') THEN
+  BEGIN
+    -- T_MoveCeiling for crushers: down to floor + 8 squeezing everything
+    -- (the slow ones slow to an eighth while they crush), back up, again –
+    -- or stop at the bottom for a one-shot (stay = 1); dir 0 means stopped
+    IF (dir = -1 AND crush = 0) THEN
+    BEGIN
+      -- lowerToFloor: it doesn't crush – it waits while something's in the way
+      IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.sector_id = :sid AND t.solid = 1
+                         AND t.z + t.height > :ch - :spd)) THEN
+        ch = MAXVALUE(ch - spd, bottom_h);
+      IF (ch <= bottom_h) THEN
+        IF (stay = 1) THEN del = 1; ELSE dir = 1;
+    END
+    ELSE IF (dir = -1) THEN
+    BEGIN
+      EXECUTE PROCEDURE crush_things(sid, ch - spd) RETURNING_VALUES crushed;
+      ch = MAXVALUE(ch - IIF(crushed = 1 AND spd <= 1, spd / 8, spd), bottom_h);
+      IF (ch <= bottom_h) THEN
+        IF (stay = 1) THEN del = 1; ELSE dir = 1;
+    END
+    ELSE IF (dir = 1) THEN
+    BEGIN
+      ch = MINVALUE(ch + spd, top_h);
+      IF (ch >= top_h) THEN
+        IF (stay = 1) THEN del = 1; ELSE dir = -1;   -- (raiseToHighest stops there)
+    END
+    IF (dir <> 0 AND silent = 0 AND MOD(tic, 8) = 0) THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
+    UPDATE sectors SET ceil_h = :ch WHERE id = :sid;
+  END
+  ELSE
+  BEGIN
+    -- plain floor mover (T_MoveFloor): top_h is the target; it grinds every
+    -- 8 tics (sfx_stnmov) and stops with sfx_pstop, where a lowerAndChange or
+    -- a donut's ring takes its new flat and special
+    IF (dir = 1) THEN fh = MINVALUE(fh + spd, top_h); ELSE fh = MAXVALUE(fh - spd, top_h);
+    IF (silent = 0 AND MOD(tic, 8) = 0) THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
+    IF (fh = top_h) THEN
+    BEGIN
+      del = 1;
+      IF (crush = 0) THEN EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
+      IF (new_flat IS NOT NULL) THEN
+        UPDATE sectors SET floor_flat = :new_flat, special = COALESCE(:new_special, special) WHERE id = :sid;
+    END
+    UPDATE sectors SET floor_h = :fh WHERE id = :sid;
+    -- what stands on it rides along; what's in the air (tossed, or flying
+    -- above it) is only pushed up if the floor overtakes it
+    UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
+       AND (t.momz = 0 OR t.z < :fh)
+       AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type
+                        AND (tt.hang = 1 OR (tt.floats = 1 AND t.st NOT IN ('dying', 'dead') AND t.z >= :fh)));
+    -- raiseFloorCrush: squeeze what rides it up against the ceiling
+    IF (crush = 1) THEN
+    BEGIN
+      UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind = 'player' AND t.z < :fh;
+      EXECUTE PROCEDURE crush_things(sid, ch) RETURNING_VALUES crushed;
+    END
+  END
+
+  IF (del = 1) THEN
+    DELETE FROM movers WHERE sector_id = :sid;
+  ELSE
+    UPDATE movers SET dir = :dir, wait_left = :wait_left, stay = :stay WHERE sector_id = :sid;
+  -- P_ChangeSector: the players look again at the floor and ceiling they touch, there and
+  -- then (P_ThingHeightClip: one standing on a moving floor rides it)
+  FOR SELECT t.id FROM things t WHERE t.kind = 'player' ORDER BY t.id INTO pt
+  DO
+    EXECUTE PROCEDURE height_clip_fx(pt, 1);
+END^
+
 CREATE OR ALTER PROCEDURE movers_think
 AS
 DECLARE sid INTEGER;
@@ -1425,186 +1656,7 @@ BEGIN
         ORDER BY m.sector_id
         INTO sid, k, dir, spd, top_h, bottom_h, wait_tics, wait_left, stay, fh, ch, crush, silent, new_flat, new_special
   DO
-  BEGIN
-    del = 0;
-    IF (k = 'door') THEN
-    BEGIN
-      IF (dir = 1) THEN
-      BEGIN
-        ch = MINVALUE(ch + spd, top_h);
-        IF (ch >= top_h) THEN
-          IF (stay >= 1) THEN del = 1; ELSE BEGIN dir = 0; wait_left = wait_tics; END
-      END
-      ELSE IF (dir = 0) THEN
-      BEGIN
-        wait_left = wait_left - 1;
-        IF (wait_left <= 0 AND stay = 2) THEN
-        BEGIN
-          -- close30ThenOpen, the thirty seconds up: back up, and stay
-          dir = 1;
-          stay = 1;
-          EXECUTE PROCEDURE sector_sound('DSDOROPN', sid);
-        END
-        ELSE IF (wait_left <= 0) THEN
-        BEGIN
-          dir = -1;
-          EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDCLS', 'DSDORCLS'), sid);
-        END
-      END
-      -- T_VerticalDoor, direction 2 (raiseIn5Mins): waiting to rise, then a normal door
-      ELSE IF (dir = 2) THEN
-      BEGIN
-        wait_left = wait_left - 1;
-        IF (wait_left <= 0) THEN
-        BEGIN
-          dir = 1;
-          EXECUTE PROCEDURE sector_sound('DSDOROPN', sid);
-        END
-      END
-      ELSE
-      BEGIN
-        nh = MAXVALUE(ch - spd, fh);
-        IF (EXISTS (SELECT 1 FROM things t WHERE t.sector_id = :sid AND t.solid = 1
-                       AND t.z + t.height > :nh)) THEN
-        BEGIN
-          dir = 1;                         -- something is in the way: reopen
-          EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDOPN', 'DSDOROPN'), sid);
-        END
-        ELSE
-        BEGIN
-          ch = nh;
-          IF (ch <= fh AND stay = 2) THEN
-          BEGIN
-            dir = 0;
-            wait_left = 30 * 35;
-          END
-          ELSE IF (ch <= fh) THEN del = 1;
-        END
-      END
-      UPDATE sectors SET ceil_h = :ch WHERE id = :sid;
-    END
-    ELSE IF (k = 'lifts') THEN
-      dir = dir;                           -- (a stopped perpetual lift: in stasis)
-    ELSE IF (k = 'lift') THEN
-    BEGIN
-      IF (dir = -1) THEN
-      BEGIN
-        fh = MAXVALUE(fh - spd, bottom_h);
-        IF (fh <= bottom_h) THEN
-        BEGIN
-          dir = 0;
-          wait_left = wait_tics;
-          EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
-        END
-      END
-      ELSE IF (dir = 0) THEN
-      BEGIN
-        wait_left = wait_left - 1;
-        IF (wait_left <= 0) THEN
-        BEGIN
-          -- (a perpetual lift may be waiting at the top: then it goes down)
-          dir = IIF(fh <= bottom_h, 1, -1);
-          EXECUTE PROCEDURE sector_sound('DSPSTART', sid);
-        END
-      END
-      ELSE
-      BEGIN
-        nh = MINVALUE(fh + spd, top_h);
-        IF (EXISTS (SELECT 1 FROM things t WHERE t.sector_id = :sid AND t.solid = 1
-                       AND :nh + t.height > :ch)) THEN
-          dir = -1;
-        ELSE
-        BEGIN
-          fh = nh;
-          IF (fh >= top_h) THEN
-          BEGIN
-            IF (stay = 2) THEN
-            BEGIN
-              dir = 0;
-              wait_left = wait_tics;
-            END
-            ELSE del = 1;
-            EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
-          END
-        END
-      END
-      UPDATE sectors SET floor_h = :fh WHERE id = :sid;
-      -- what stands on it rides along; what's in the air (tossed, or flying
-      -- above it) is only pushed up if the floor overtakes it
-      UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
-         AND (t.momz = 0 OR t.z < :fh)
-         AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type
-                          AND (tt.hang = 1 OR (tt.floats = 1 AND t.st NOT IN ('dying', 'dead') AND t.z >= :fh)));
-    END
-    ELSE IF (k = 'crush') THEN
-    BEGIN
-      -- T_MoveCeiling for crushers: down to floor + 8 squeezing everything
-      -- (the slow ones slow to an eighth while they crush), back up, again –
-      -- or stop at the bottom for a one-shot (stay = 1); dir 0 means stopped
-      IF (dir = -1 AND crush = 0) THEN
-      BEGIN
-        -- lowerToFloor: it doesn't crush – it waits while something's in the way
-        IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.sector_id = :sid AND t.solid = 1
-                           AND t.z + t.height > :ch - :spd)) THEN
-          ch = MAXVALUE(ch - spd, bottom_h);
-        IF (ch <= bottom_h) THEN
-          IF (stay = 1) THEN del = 1; ELSE dir = 1;
-      END
-      ELSE IF (dir = -1) THEN
-      BEGIN
-        EXECUTE PROCEDURE crush_things(sid, ch - spd) RETURNING_VALUES crushed;
-        ch = MAXVALUE(ch - IIF(crushed = 1 AND spd <= 1, spd / 8, spd), bottom_h);
-        IF (ch <= bottom_h) THEN
-          IF (stay = 1) THEN del = 1; ELSE dir = 1;
-      END
-      ELSE IF (dir = 1) THEN
-      BEGIN
-        ch = MINVALUE(ch + spd, top_h);
-        IF (ch >= top_h) THEN
-          IF (stay = 1) THEN del = 1; ELSE dir = -1;   -- (raiseToHighest stops there)
-      END
-      IF (dir <> 0 AND silent = 0 AND MOD(tic, 8) = 0) THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
-      UPDATE sectors SET ceil_h = :ch WHERE id = :sid;
-    END
-    ELSE
-    BEGIN
-      -- plain floor mover (T_MoveFloor): top_h is the target; it grinds every
-      -- 8 tics (sfx_stnmov) and stops with sfx_pstop, where a lowerAndChange or
-      -- a donut's ring takes its new flat and special
-      IF (dir = 1) THEN fh = MINVALUE(fh + spd, top_h); ELSE fh = MAXVALUE(fh - spd, top_h);
-      IF (silent = 0 AND MOD(tic, 8) = 0) THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
-      IF (fh = top_h) THEN
-      BEGIN
-        del = 1;
-        IF (crush = 0) THEN EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
-        IF (new_flat IS NOT NULL) THEN
-          UPDATE sectors SET floor_flat = :new_flat, special = COALESCE(:new_special, special) WHERE id = :sid;
-      END
-      UPDATE sectors SET floor_h = :fh WHERE id = :sid;
-      -- what stands on it rides along; what's in the air (tossed, or flying
-      -- above it) is only pushed up if the floor overtakes it
-      UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
-         AND (t.momz = 0 OR t.z < :fh)
-         AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type
-                          AND (tt.hang = 1 OR (tt.floats = 1 AND t.st NOT IN ('dying', 'dead') AND t.z >= :fh)));
-      -- raiseFloorCrush: squeeze what rides it up against the ceiling
-      IF (crush = 1) THEN
-      BEGIN
-        UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind = 'player' AND t.z < :fh;
-        EXECUTE PROCEDURE crush_things(sid, ch) RETURNING_VALUES crushed;
-      END
-    END
-
-    IF (del = 1) THEN
-      DELETE FROM movers WHERE sector_id = :sid;
-    ELSE
-      UPDATE movers SET dir = :dir, wait_left = :wait_left, stay = :stay WHERE sector_id = :sid;
-    -- P_ChangeSector: the players look again at the floor and ceiling they touch, there and
-    -- then (P_ThingHeightClip: one standing on a moving floor rides it)
-    FOR SELECT t.id FROM things t WHERE t.kind = 'player' ORDER BY t.id INTO pt
-    DO
-      EXECUTE PROCEDURE height_clip_fx(pt, 1);
-  END
+    EXECUTE PROCEDURE mover_step(sid);
 END^
 
 -- ── weapons ───────────────────────────────────────────────────────────────
@@ -1625,7 +1677,7 @@ BEGIN
   z = z + (p_rand256() - p_rand256()) / 64e0;
   EXECUTE PROCEDURE spawn_thing(9010, x, y, z, 0) RETURNING_VALUES mid;
   UPDATE things t SET momz = 1 WHERE t.id = :mid;
-  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3)) WHERE t.id = :mid;
+  UPDATE things t SET state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1) WHERE t.id = :mid;
   IF (melee = 1) THEN
     EXECUTE PROCEDURE set_state(mid, (SELECT s.id FROM states s WHERE s.name = 'S_PUFF3'), tic) RETURNING_VALUES alive;
 END^
@@ -1642,7 +1694,7 @@ BEGIN
   z = z + (p_rand256() - p_rand256()) / 64e0;
   EXECUTE PROCEDURE spawn_thing(9011, x, y, z, 0) RETURNING_VALUES mid;
   UPDATE things t SET momz = 2 WHERE t.id = :mid;
-  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3)) WHERE t.id = :mid;
+  UPDATE things t SET state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1) WHERE t.id = :mid;
   IF (dmg <= 12 AND dmg >= 9) THEN
     EXECUTE PROCEDURE set_state(mid, (SELECT s.id FROM states s WHERE s.name = 'S_BLOOD2'), tic) RETURNING_VALUES alive;
   ELSE IF (dmg < 9) THEN
@@ -1869,7 +1921,7 @@ BEGIN
   UPDATE things t SET momx = 0, momy = 0, momz = 0 WHERE t.id = :tid;
   EXECUTE PROCEDURE set_state(tid, dstate, tic) RETURNING_VALUES alive;
   IF (alive = 0) THEN EXIT;
-  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3))
+  UPDATE things t SET state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1)
    WHERE t.id = :tid AND t.state_tic IS NOT NULL;
   IF (snd IS NOT NULL) THEN EXECUTE PROCEDURE play_sound(snd, tid, x, y);
 END^
@@ -1958,7 +2010,7 @@ DECLARE nx DOUBLE PRECISION;
 DECLARE ny DOUBLE PRECISION;
 BEGIN
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
-  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3)),
+  UPDATE things t SET state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1),
                       x = t.x + t.momx / 2, y = t.y + t.momy / 2, z = t.z + t.momz / 2
    WHERE t.id = :mid AND t.state_tic IS NOT NULL;
   SELECT t.x, t.y FROM things t WHERE t.id = :mid INTO nx, ny;
@@ -2208,7 +2260,7 @@ BEGIN
   EXECUTE PROCEDURE check_ammo(pid, tic) RETURNING_VALUES ok;
   IF (ok = 0) THEN EXIT;
   SELECT p.thing_id, t.sector_id FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = :pid INTO tid, sec;
-  EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK1'), tic - 1) RETURNING_VALUES alive;
+  EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK1'), tic) RETURNING_VALUES alive;
   EXECUTE PROCEDURE set_psprite(pid, 0, (SELECT wi.atk_state FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon
                                           WHERE p.id = :pid), tic);
   EXECUTE PROCEDURE noise_alert(sec, tic, pid);
@@ -2349,7 +2401,7 @@ BEGIN
     INTO tid, x, y, z, ang, refire, flash;
   EXECUTE PROCEDURE play_sound(CASE kind WHEN 'shotgun' THEN 'DSSHOTGN' WHEN 'shotgun2' THEN 'DSDSHTGN' ELSE 'DSPISTOL' END, tid, x, y);
   IF (kind = 'cgun' AND (SELECT p.bullets FROM player p WHERE p.id = :pid) = 0) THEN EXIT;
-  EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK2'), tic - 1) RETURNING_VALUES alive;
+  EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK2'), tic) RETURNING_VALUES alive;
   EXECUTE PROCEDURE decrease_ammo(pid, IIF(kind = 'shotgun2', 2, 1));
   EXECUTE PROCEDURE set_psprite(pid, 1, flash, tic);
   EXECUTE PROCEDURE bullet_slope(tid) RETURNING_VALUES slope;
@@ -2423,7 +2475,7 @@ BEGIN
     FROM player p JOIN things t ON t.id = p.thing_id JOIN weapon_info wi ON wi.weapon = p.weapon WHERE p.id = :pid
     INTO tid, weapon, pending, health, fire, down, bob, psp, body, down_st;
   IF (EXISTS (SELECT 1 FROM states s WHERE s.id = :body AND s.name IN ('S_PLAY_ATK1', 'S_PLAY_ATK2'))) THEN
-    EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY'), tic - 1) RETURNING_VALUES alive;
+    EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY'), tic) RETURNING_VALUES alive;
   IF (weapon = 8 AND EXISTS (SELECT 1 FROM states s WHERE s.id = :psp AND s.name = 'S_SAW')) THEN
     EXECUTE PROCEDURE play_sound('DSSAWIDL', tid, (SELECT t.x FROM things t WHERE t.id = :tid), (SELECT t.y FROM things t WHERE t.id = :tid));
   IF (pending <> 0 OR health <= 0) THEN
@@ -2516,7 +2568,7 @@ BEGIN
   BEGIN
     -- A_GunFlash: the body's flash (S_PLAY_ATK2) and the weapon's muzzle flash
     SELECT p.thing_id FROM player p WHERE p.id = :pid INTO tid;
-    EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK2'), tic - 1) RETURNING_VALUES alive;
+    EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_PLAY_ATK2'), tic) RETURNING_VALUES alive;
     EXECUTE PROCEDURE set_psprite(pid, 1, (SELECT wi.flash_state FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon
                                             WHERE p.id = :pid), tic);
   END
@@ -3207,7 +3259,7 @@ BEGIN
   BEGIN
     IF (EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
                  WHERE t.id = :tid AND t.state BETWEEN tt.see_state AND tt.see_state + 3)) THEN
-      EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1), tic - 1)
+      EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1), tic)
         RETURNING_VALUES alive;
     momx = 0;
     momy = 0;
@@ -3409,6 +3461,8 @@ BEGIN
   cmd_fwd = MAXVALUE(-127, MINVALUE(127, ROUND(fwd * IIF(run = 1, 50, 25))));
   cmd_side = MAXVALUE(-127, MINVALUE(127, ROUND(side * IIF(run = 1, 50, 25))));
   cmd_turn = BIN_AND(CAST(ROUND(turn * 32768 / PI()) AS BIGINT) + 32768, 65535) - 32768;
+  -- (P_XYMovement, in the body's own thinker, looks at the ticcmd's moves)
+  UPDATE player p SET cmd_fwd = :cmd_fwd, cmd_side = :cmd_side WHERE p.id = :pid;
 
   IF (is_dead = 1) THEN
   BEGIN
@@ -3441,10 +3495,6 @@ BEGIN
       UPDATE game SET exit_kind = 3 WHERE id = 1;
     END
     UPDATE player SET view_h = :view_h, view_z = :z + :view_h, use_down = :use_key WHERE id = :pid;
-    -- (the body's own thinker goes on: it slides to a stop and falls, P_MobjThinker)
-    EXECUTE PROCEDURE height_clip_fx(tid);
-    EXECUTE PROCEDURE xy_movement_fx(tid, pid, cmd_fwd, cmd_side, tic);
-    EXECUTE PROCEDURE z_movement_fx(tid, pid);
     EXIT;
   END
 
@@ -3479,7 +3529,7 @@ BEGIN
     IF ((cmd_fwd <> 0 OR cmd_side <> 0)
         AND EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
                      WHERE t.id = :tid AND t.state = tt.spawn_state)) THEN
-      EXECUTE PROCEDURE set_state(tid, (SELECT tt.see_state FROM thing_types tt WHERE tt.thing_type = 1), tic - 1)
+      EXECUTE PROCEDURE set_state(tid, (SELECT tt.see_state FROM thing_types tt WHERE tt.thing_type = 1), tic)
         RETURNING_VALUES alive;
     UPDATE things t SET angle = rad_of(:fang), momx = :fmx / 65536e0, momy = :fmy / 65536e0 WHERE t.id = :tid;
   END
@@ -3593,11 +3643,107 @@ BEGIN
   EXECUTE PROCEDURE move_psprites(pid, tic);
   SELECT p.weapon, p.pending_weapon FROM player p WHERE p.id = :pid INTO weapon, pending;
 
-  -- P_MobjThinker, the body's own thinker: P_XYMovement (slides, crosses lines), then P_ZMovement
-  EXECUTE PROCEDURE xy_movement_fx(tid, pid, cmd_fwd, cmd_side, tic);
-  EXECUTE PROCEDURE z_movement_fx(tid, pid);
-  SELECT t.x, t.y, t.z FROM things t WHERE t.id = :tid INTO x, y, z;
 
+
+END^
+
+-- P_TouchSpecialThing for a player that has moved: whatever it now overlaps it picks up
+CREATE OR ALTER PROCEDURE touch_specials (pid SMALLINT, tic INTEGER)
+AS
+DECLARE alive SMALLINT;
+DECLARE iron INTEGER;
+DECLARE tid INTEGER;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE ang DOUBLE PRECISION;
+DECLARE momx DOUBLE PRECISION;
+DECLARE momy DOUBLE PRECISION;
+DECLARE momz DOUBLE PRECISION;
+DECLARE ox DOUBLE PRECISION;
+DECLARE oy DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION;
+DECLARE ny DOUBLE PRECISION;
+DECLARE spd DOUBLE PRECISION;
+DECLARE thrust DOUBLE PRECISION;
+DECLARE ok SMALLINT;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
+DECLARE dz DOUBLE PRECISION;
+DECLARE sec INTEGER;
+DECLARE sspec INTEGER;
+DECLARE is_dead SMALLINT;
+DECLARE weapon SMALLINT;
+DECLARE bullets INTEGER;
+DECLARE shells INTEGER;
+DECLARE has_sg SMALLINT;
+DECLARE has_cg SMALLINT;
+DECLARE use_down SMALLINT;
+DECLARE view_h DOUBLE PRECISION;
+DECLARE view_z DOUBLE PRECISION;
+DECLARE bob DOUBLE PRECISION;
+DECLARE lid INTEGER;
+DECLARE lsp INTEGER;
+DECLARE pellets INTEGER;
+DECLARE spread DOUBLE PRECISION;
+DECLARE i INTEGER;
+DECLARE iid INTEGER;
+DECLARE pk VARCHAR(10);
+DECLARE amt INTEGER;
+DECLARE lbl VARCHAR(80);
+DECLARE took SMALLINT;
+DECLARE dropped SMALLINT;
+DECLARE count_item SMALLINT;
+DECLARE health INTEGER;
+DECLARE armor INTEGER;
+DECLARE armor_type SMALLINT;
+DECLARE maxb INTEGER;
+DECLARE maxs INTEGER;
+DECLARE rockets INTEGER;
+DECLARE cells INTEGER;
+DECLARE maxr INTEGER;
+DECLARE maxc INTEGER;
+DECLARE has_rl SMALLINT;
+DECLARE has_pl SMALLINT;
+DECLARE has_bfg SMALLINT;
+DECLARE has_saw SMALLINT;
+DECLARE has_ssg SMALLINT;
+DECLARE shot_hit SMALLINT;
+DECLARE old_weapon SMALLINT;
+DECLARE pending SMALLINT;
+DECLARE neww SMALLINT;
+DECLARE preact INTEGER;
+DECLARE killer_ang DOUBLE PRECISION;
+DECLARE bslope DOUBLE PRECISION;
+DECLARE mult INTEGER;
+DECLARE np SMALLINT;
+DECLARE dm SMALLINT;
+DECLARE gave SMALLINT;
+DECLARE qn INTEGER;
+DECLARE tries INTEGER;
+DECLARE noclip SMALLINT;
+DECLARE cmd_fwd INTEGER;
+DECLARE cmd_side INTEGER;
+DECLARE cmd_turn BIGINT;
+DECLARE onground SMALLINT;
+DECLARE fz_z BIGINT;
+DECLARE ffz BIGINT;
+DECLARE fcz BIGINT;
+DECLARE fmx BIGINT;
+DECLARE fmy BIGINT;
+DECLARE fang BIGINT;
+DECLARE sang BIGINT;
+DECLARE vh BIGINT;
+DECLARE dvh BIGINT;
+DECLARE fbob BIGINT;
+DECLARE bobv BIGINT;
+DECLARE fvz BIGINT;
+BEGIN
+  SELECT p.thing_id, t.x, t.y, t.z, p.weapon, p.pending_weapon, p.dead
+    FROM player p JOIN things t ON t.id = p.thing_id
+   WHERE p.id = :pid
+    INTO tid, x, y, z, weapon, pending, is_dead;
+  IF (tid IS NULL OR is_dead = 1) THEN EXIT;     -- (the dead pick nothing up)
   -- P_GiveAmmo: twice the ammo on the easiest skill and on Nightmare
   SELECT IIF(g.skill IN (1, 5), 2, 1), g.players, g.deathmatch FROM game g WHERE g.id = 1 INTO mult, np, dm;
   -- P_TouchSpecialThing: pick up anything we overlap
@@ -3808,6 +3954,24 @@ BEGIN
     END
   END
 END^
+
+-- A player's body, its own thinker in its turn (P_MobjThinker): the floor where it stands if it
+-- has just landed somewhere, P_XYMovement (slides, crosses lines) and P_ZMovement in 16.16,
+-- and what it touched on the way (P_TryMove's PIT_CheckThing; here, where it ends up)
+CREATE OR ALTER PROCEDURE player_body (pid SMALLINT, tic INTEGER)
+AS
+DECLARE tid INTEGER;
+DECLARE cf INTEGER;
+DECLARE cs INTEGER;
+BEGIN
+  SELECT p.thing_id, p.cmd_fwd, p.cmd_side FROM player p WHERE p.id = :pid INTO tid, cf, cs;
+  IF (tid IS NULL) THEN EXIT;
+  EXECUTE PROCEDURE height_clip_fx(tid);
+  EXECUTE PROCEDURE xy_movement_fx(tid, pid, cf, cs, tic);
+  EXECUTE PROCEDURE z_movement_fx(tid, pid);
+  EXECUTE PROCEDURE touch_specials(pid, tic);
+END^
+
 
 -- P_SpawnMissile: a monster's projectile, from just in front of it at
 -- chest height, flying along ANG.
@@ -4183,6 +4347,55 @@ END^
 -- may get back up – every 32 tics each one tries, 4 times in 256 – at the
 -- spot the map put it, in a flash of teleport fog, if there's room. Lost
 -- souls don't count as kills and don't come back.
+-- One corpse's chance to rise (P_MobjThinker's check, every 32 tics, P_NightmareRespawn)
+CREATE OR ALTER PROCEDURE nightmare_step (id INTEGER, tic INTEGER)
+AS
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE sx DOUBLE PRECISION;
+DECLARE sy DOUBLE PRECISION;
+DECLARE sa DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE ok SMALLINT;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
+DECLARE dz DOUBLE PRECISION;
+DECLARE sec INTEGER;
+DECLARE mid INTEGER;
+BEGIN
+  x = NULL;
+  SELECT t.x, t.y, t.spawn_x, t.spawn_y, t.spawn_angle, tt.radius, tt.height
+    FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+   WHERE t.id = :id AND t.kind = 'monster' AND t.st = 'dead' AND t.thing_type <> 3006
+     AND t.spawn_x IS NOT NULL AND t.dead_tic IS NOT NULL AND :tic - t.dead_tic >= 12 * 35
+    INTO x, y, sx, sy, sa, rad, hgt;
+  IF (x IS NULL) THEN EXIT;
+  IF (p_random() * 256 > 4) THEN EXIT;
+  EXECUTE PROCEDURE check_position(id, sx, sy, (SELECT se.floor_h FROM sectors se WHERE se.id = sector_at(:sx, :sy)),
+                                   rad, hgt, 1)
+    RETURNING_VALUES ok, fz, cz, dz, sec;
+  IF (ok = 0) THEN EXIT;
+  -- fog where the corpse lay, and where it rises
+  EXECUTE PROCEDURE spawn_thing(9016, x, y, NULL, 0) RETURNING_VALUES mid;
+  EXECUTE PROCEDURE spawn_thing(9016, sx, sy, NULL, 0) RETURNING_VALUES mid;
+  EXECUTE PROCEDURE play_sound('DSTELEPT', mid, sx, sy);
+  mid = p_rand256();   -- (P_SpawnMobj for the new body: its lastlook)
+  UPDATE things t
+     SET x = :sx, y = :sy, angle = :sa, z = :fz, sector_id = :sec, momx = 0, momy = 0, momz = 0,
+         hp = (SELECT tt.hp FROM thing_types tt WHERE tt.thing_type = t.thing_type),
+         st = 'idle', solid = 1,
+         -- (P_NightmareRespawn: the new body's reactiontime is 18)
+         reaction = 18,
+         target_id = NULL, threshold = 0, dead_tic = NULL,
+         -- (its spawn state, as a new P_SpawnMobj)
+         state = (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = t.thing_type),
+         state_tic = (SELECT IIF(s.tics >= 0, :tic + s.tics, NULL)
+                        FROM thing_types tt JOIN states s ON s.id = tt.spawn_state WHERE tt.thing_type = t.thing_type),
+         just_hit = 0
+   WHERE t.id = :id;
+END^
+
 CREATE OR ALTER PROCEDURE nightmare_respawn (tic INTEGER)
 AS
 DECLARE id INTEGER;
@@ -4207,39 +4420,57 @@ BEGIN
         ORDER BY t.id
         INTO id, x, y, sx, sy, sa, rad, hgt
   DO
-  BEGIN
-    IF (p_random() * 256 > 4) THEN CONTINUE;
-    EXECUTE PROCEDURE check_position(id, sx, sy, (SELECT se.floor_h FROM sectors se WHERE se.id = sector_at(:sx, :sy)),
-                                     rad, hgt, 1)
-      RETURNING_VALUES ok, fz, cz, dz, sec;
-    IF (ok = 0) THEN CONTINUE;
-    -- fog where the corpse lay, and where it rises
-    EXECUTE PROCEDURE spawn_thing(9016, x, y, NULL, 0) RETURNING_VALUES mid;
-    EXECUTE PROCEDURE spawn_thing(9016, sx, sy, NULL, 0) RETURNING_VALUES mid;
-    EXECUTE PROCEDURE play_sound('DSTELEPT', mid, sx, sy);
-    mid = p_rand256();   -- (P_SpawnMobj for the new body: its lastlook)
-    UPDATE things t
-       SET x = :sx, y = :sy, angle = :sa, z = :fz, sector_id = :sec, momx = 0, momy = 0, momz = 0,
-           hp = (SELECT tt.hp FROM thing_types tt WHERE tt.thing_type = t.thing_type),
-           st = 'idle', solid = 1,
-           -- (P_NightmareRespawn: the new body's reactiontime is 18)
-           reaction = 18,
-           target_id = NULL, threshold = 0, dead_tic = NULL,
-           -- (its spawn state, as a new P_SpawnMobj)
-           state = (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = t.thing_type),
-           state_tic = (SELECT IIF(s.tics >= 0, :tic + s.tics, NULL)
-                          FROM thing_types tt JOIN states s ON s.id = tt.spawn_state WHERE tt.thing_type = t.thing_type),
-           just_hit = 0
-     WHERE t.id = :id;
-  END
+    EXECUTE PROCEDURE nightmare_step(id, tic);
 END^
 
 -- The light thinkers, every tic: T_LightFlash, T_StrobeFlash and T_FireFlicker count down
 -- (if (--count) return) and, at 0, change – the flash to its other level for (P_Random() & 7) + 1
 -- tics dark or (P_Random() & 64) + 1 bright, the strobe for its dark or bright time, the flicker
 -- 0–3 × 16 below its brightest (P_Random() & 3; no lower than its floor) for 4 more; T_Glow
--- steps 8 a tic, turning at either end. Those that draw do so one at a time, in sector order,
--- as their thinkers were made.
+-- steps 8 a tic, turning at either end. Those that draw do so one at a time, in their
+-- thinkers' order (RUN_THINKERS; LIGHTS_THINK alone, in sector order).
+
+-- The light thinkers' countdowns, all at once (if (--count) return), and T_Glow's steps: no
+-- draw in them, so no order. Those at 0 change in their turn (LIGHT_STEP, RUN_THINKERS).
+CREATE OR ALTER PROCEDURE lights_count (tic INTEGER)
+AS
+BEGIN
+  UPDATE sectors s
+     SET light = IIF(s.lfx_dir = -1, IIF(s.light - 8 <= s.lfx_min, s.light, s.light - 8),
+                                     IIF(s.light + 8 >= s.lfx_max, s.light, s.light + 8)),
+         lfx_dir = IIF(s.lfx_dir = -1, IIF(s.light - 8 <= s.lfx_min, 1, -1), IIF(s.light + 8 >= s.lfx_max, -1, 1))
+   WHERE s.lfx = 'glow';
+  UPDATE sectors s SET lfx_count = s.lfx_count - 1 WHERE s.lfx IN ('flash', 'strobe', 'flicker');
+END^
+
+-- A light thinker at the end of its count changes (T_LightFlash, T_StrobeFlash, T_FireFlicker)
+CREATE OR ALTER PROCEDURE light_step (sec INTEGER)
+AS
+DECLARE k VARCHAR(8);
+DECLARE lt INTEGER;
+DECLARE mn INTEGER;
+DECLARE mx INTEGER;
+DECLARE dark INTEGER;
+DECLARE amount INTEGER;
+BEGIN
+  k = NULL;
+  SELECT s.lfx, s.light, s.lfx_min, s.lfx_max, s.lfx_dark FROM sectors s
+   WHERE s.id = :sec AND s.lfx IN ('flash', 'strobe', 'flicker') INTO k, lt, mn, mx, dark;
+  IF (k IS NULL) THEN EXIT;
+  IF (k = 'flash') THEN
+  BEGIN
+    IF (lt = mx) THEN UPDATE sectors s SET light = :mn, lfx_count = p_rand_and(7) + 1 WHERE s.id = :sec;
+    ELSE UPDATE sectors s SET light = :mx, lfx_count = p_rand_and(64) + 1 WHERE s.id = :sec;
+  END
+  ELSE IF (k = 'strobe') THEN
+    UPDATE sectors s SET light = IIF(:lt = :mn, :mx, :mn), lfx_count = IIF(:lt = :mn, 5, :dark) WHERE s.id = :sec;
+  ELSE
+  BEGIN
+    amount = p_rand_and(3) * 16;
+    UPDATE sectors s SET light = IIF(:lt - :amount < :mn, :mn, :mx - :amount), lfx_count = 4 WHERE s.id = :sec;
+  END
+END^
+
 CREATE OR ALTER PROCEDURE lights_think (tic INTEGER)
 AS
 DECLARE sec INTEGER;
@@ -4250,31 +4481,13 @@ DECLARE mx INTEGER;
 DECLARE dark INTEGER;
 DECLARE amount INTEGER;
 BEGIN
-  UPDATE sectors s
-     SET light = IIF(s.lfx_dir = -1, IIF(s.light - 8 <= s.lfx_min, s.light, s.light - 8),
-                                     IIF(s.light + 8 >= s.lfx_max, s.light, s.light + 8)),
-         lfx_dir = IIF(s.lfx_dir = -1, IIF(s.light - 8 <= s.lfx_min, 1, -1), IIF(s.light + 8 >= s.lfx_max, -1, 1))
-   WHERE s.lfx = 'glow';
-  UPDATE sectors s SET lfx_count = s.lfx_count - 1 WHERE s.lfx IN ('flash', 'strobe', 'flicker');
+  EXECUTE PROCEDURE lights_count(tic);
   FOR SELECT s.id, s.lfx, s.light, s.lfx_min, s.lfx_max, s.lfx_dark FROM sectors s
        WHERE s.lfx IN ('flash', 'strobe', 'flicker') AND s.lfx_count = 0
        ORDER BY s.id
         INTO sec, k, lt, mn, mx, dark
   DO
-  BEGIN
-    IF (k = 'flash') THEN
-    BEGIN
-      IF (lt = mx) THEN UPDATE sectors s SET light = :mn, lfx_count = p_rand_and(7) + 1 WHERE s.id = :sec;
-      ELSE UPDATE sectors s SET light = :mx, lfx_count = p_rand_and(64) + 1 WHERE s.id = :sec;
-    END
-    ELSE IF (k = 'strobe') THEN
-      UPDATE sectors s SET light = IIF(:lt = :mn, :mx, :mn), lfx_count = IIF(:lt = :mn, 5, :dark) WHERE s.id = :sec;
-    ELSE
-    BEGIN
-      amount = p_rand_and(3) * 16;
-      UPDATE sectors s SET light = IIF(:lt - :amount < :mn, :mn, :mx - :amount), lfx_count = 4 WHERE s.id = :sec;
-    END
-  END
+    EXECUTE PROCEDURE light_step(sec);
 END^
 
 -- ── the tic ───────────────────────────────────────────────────────────────
@@ -5238,7 +5451,7 @@ BEGIN
    WHERE t.id = :tid INTO x, y, z, momx, momy, momz, ang, spd;
   EXECUTE PROCEDURE spawn_puff(x, y, z) RETURNING_VALUES mid;
   EXECUTE PROCEDURE spawn_thing(9018, x - momx, y - momy, z, 0) RETURNING_VALUES mid;
-  UPDATE things t SET momz = 1, state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3)) WHERE t.id = :mid;
+  UPDATE things t SET momz = 1, state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1) WHERE t.id = :mid;
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL OR palive = 0) THEN EXIT;
   ta = 0.29452431127404e0;   -- TRACEANGLE, 0xc000000
@@ -5293,7 +5506,7 @@ BEGIN
   UPDATE things t SET momx = COS(:ang) * 10, momy = :momy, momz = (:sz - :z) / :flight, owner_id = :spot,
          reaction = IIF(ABS(:momy) < 1e-9, 0, TRUNC(TRUNC((:sy - :y) / :momy) / 3)),
          -- (P_CheckMissileSpawn: through walls, it's never stopped)
-         state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(3)),
+         state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1),
          x = t.x + COS(:ang) * 5, y = t.y + :momy / 2, z = t.z + (:sz - :z) / :flight / 2
    WHERE t.id = :mid;
   EXECUTE PROCEDURE play_sound('DSBOSPIT', mid, x, y);
@@ -5375,7 +5588,7 @@ BEGIN
   z = 128 + p_rand256() * 2;
   EXECUTE PROCEDURE spawn_thing(9013, x, y, z, 0) RETURNING_VALUES mid;
   UPDATE things t SET momz = p_rand256() / 128e0 WHERE t.id = :mid;
-  UPDATE things t SET state_tic = MAXVALUE(:tic + 1, t.state_tic - p_rand_and(7)) WHERE t.id = :mid;
+  UPDATE things t SET state_tic = t.state_tic - MINVALUE(p_rand_and(7), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1) WHERE t.id = :mid;
 END^
 
 CREATE OR ALTER PROCEDURE a_brain_scream (tid INTEGER, tic INTEGER)
@@ -5540,8 +5753,11 @@ DECLARE nxt INTEGER;
 DECLARE n INTEGER = 0;
 DECLARE md VARCHAR(8);
 DECLARE was VARCHAR(8);
+DECLARE ahead SMALLINT;
 BEGIN
   alive = 1;
+  -- (its turn still to come this tic? then its tics count down this tic too)
+  ahead = think_ahead((SELECT COALESCE(t.think_key, 2 * t.id) FROM things t WHERE t.id = :tid));
   WHILE (n < 100) DO   -- (a ring of 0-tic states would hang DOOM; here it stops)
   BEGIN
     n = n + 1;
@@ -5557,7 +5773,7 @@ BEGIN
     was = NULL;
     SELECT t.st FROM things t WHERE t.id = :tid INTO was;
     -- (ST, the old rules' word for it, follows: what can be shot, what's a corpse)
-    UPDATE things SET state = :st, state_tic = IIF(:tics < 0, NULL, :tic + :tics), st = COALESCE(:md, :was),
+    UPDATE things SET state = :st, state_tic = IIF(:tics < 0, NULL, :tic + :tics - IIF(:tics > 0, :ahead, 0)), st = COALESCE(:md, :was),
                       dead_tic = IIF(:md = 'dead' AND :was IS DISTINCT FROM 'dead', :tic, dead_tic)
      WHERE id = :tid;
     IF (act IS NOT NULL) THEN EXECUTE PROCEDURE state_action(tid, act, tic);
@@ -5566,8 +5782,8 @@ BEGIN
       alive = 0;
       EXIT;
     END
-    -- (DOOM's loop runs while mobj->tics is 0: here, while its state ends this very tic)
-    IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.state_tic = :tic)) THEN EXIT;
+    -- (DOOM's loop runs while mobj->tics is 0: here, while its state is still this one of 0 tics)
+    IF (tics <> 0 OR NOT EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.state = :st AND t.state_tic = :tic)) THEN EXIT;
     st = nxt;
   END
 END^
@@ -5577,6 +5793,75 @@ END^
 -- for (P_Random() % 8 + 1) × its damage (3), stops and goes back to its spawn state; a wall stops it
 -- (no momentum: back to its spawn state the tic after). A step it takes crosses lines as a
 -- monster's does.
+-- One charging lost soul's P_XYMovement (MF_SKULLFLY): it slams into what it meets
+CREATE OR ALTER PROCEDURE skull_step (tid INTEGER, tic INTEGER)
+AS
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE momx DOUBLE PRECISION;
+DECLARE momy DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE nx DOUBLE PRECISION;
+DECLARE ny DOUBLE PRECISION;
+DECLARE hit INTEGER;
+DECLARE hitp SMALLINT;
+DECLARE dmg INTEGER;
+DECLARE ok SMALLINT;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
+DECLARE dz DOUBLE PRECISION;
+DECLARE nsec INTEGER;
+DECLARE tele SMALLINT;
+DECLARE alive SMALLINT;
+BEGIN
+  x = NULL;
+  SELECT t.x, t.y, t.z, t.momx, t.momy, t.radius, t.height FROM things t
+   WHERE t.id = :tid AND BIN_AND(t.flags, 262144) <> 0 INTO x, y, z, momx, momy, rad, hgt;
+  IF (x IS NULL) THEN EXIT;
+  IF (momx = 0 AND momy = 0) THEN
+  BEGIN
+    -- it slammed into something: back to its spawn state
+    UPDATE things t SET flags = BIN_AND(t.flags, BIN_NOT(262144)), momz = 0 WHERE t.id = :tid;
+    EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                                       WHERE t.id = :tid), tic) RETURNING_VALUES alive;
+    EXIT;
+  END
+  nx = x + momx;
+  ny = y + momy;
+  hit = NULL;
+  SELECT FIRST 1 o.id FROM things o
+   WHERE o.x BETWEEN :nx - 160 AND :nx + 160 AND o.solid = 1 AND o.id <> :tid
+     AND ABS(o.x - :nx) < o.radius + :rad AND ABS(o.y - :ny) < o.radius + :rad
+   ORDER BY o.id
+    INTO hit;
+  IF (hit IS NOT NULL) THEN
+  BEGIN
+    dmg = (MOD(p_rand256(), 8) + 1) * COALESCE((SELECT tt.dmg_lo FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                                                  WHERE t.id = :tid), 3);   -- (info->damage: the lost soul's 3)
+    hitp = NULL;
+    SELECT p.id FROM player p WHERE p.thing_id = :hit INTO hitp;
+    IF (hitp IS NOT NULL) THEN EXECUTE PROCEDURE damage_player(dmg, tid, hitp);
+    ELSE EXECUTE PROCEDURE damage_thing(hit, dmg, tid);
+    IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.st NOT IN ('dying', 'dead'))) THEN
+    BEGIN
+      UPDATE things t SET flags = BIN_AND(t.flags, BIN_NOT(262144)), momx = 0, momy = 0, momz = 0 WHERE t.id = :tid;
+      EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                                         WHERE t.id = :tid), tic) RETURNING_VALUES alive;
+    END
+    EXIT;
+  END
+  -- (a flier: no ledge stops it, only walls, steps and low ceilings)
+  EXECUTE PROCEDURE check_position(tid, nx, ny, z, rad, hgt, 0) RETURNING_VALUES ok, fz, cz, dz, nsec;
+  IF (ok = 1) THEN
+  BEGIN
+    EXECUTE PROCEDURE monster_cross(tid, x, y, nx, ny) RETURNING_VALUES tele;
+    IF (tele = 0) THEN UPDATE things t SET x = :nx, y = :ny, sector_id = :nsec WHERE t.id = :tid;
+  END
+  ELSE UPDATE things t SET momx = 0, momy = 0 WHERE t.id = :tid;
+END^
+
 CREATE OR ALTER PROCEDURE skulls_think (tic INTEGER, after_id INTEGER = 0)
 AS
 DECLARE tid INTEGER;
@@ -5604,58 +5889,92 @@ BEGIN
        WHERE t.state IS NOT NULL AND BIN_AND(t.flags, 262144) <> 0 AND t.id > :after_id ORDER BY t.id
         INTO tid
   DO
-  BEGIN
-    x = NULL;
-    SELECT t.x, t.y, t.z, t.momx, t.momy, t.radius, t.height FROM things t
-     WHERE t.id = :tid AND BIN_AND(t.flags, 262144) <> 0 INTO x, y, z, momx, momy, rad, hgt;
-    IF (x IS NULL) THEN CONTINUE;
-    IF (momx = 0 AND momy = 0) THEN
-    BEGIN
-      -- it slammed into something: back to its spawn state
-      UPDATE things t SET flags = BIN_AND(t.flags, BIN_NOT(262144)), momz = 0 WHERE t.id = :tid;
-      EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-                                         WHERE t.id = :tid), tic) RETURNING_VALUES alive;
-      CONTINUE;
-    END
-    nx = x + momx;
-    ny = y + momy;
-    hit = NULL;
-    SELECT FIRST 1 o.id FROM things o
-     WHERE o.x BETWEEN :nx - 160 AND :nx + 160 AND o.solid = 1 AND o.id <> :tid
-       AND ABS(o.x - :nx) < o.radius + :rad AND ABS(o.y - :ny) < o.radius + :rad
-     ORDER BY o.id
-      INTO hit;
-    IF (hit IS NOT NULL) THEN
-    BEGIN
-      dmg = (MOD(p_rand256(), 8) + 1) * COALESCE((SELECT tt.dmg_lo FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-                                                    WHERE t.id = :tid), 3);   -- (info->damage: the lost soul's 3)
-      hitp = NULL;
-      SELECT p.id FROM player p WHERE p.thing_id = :hit INTO hitp;
-      IF (hitp IS NOT NULL) THEN EXECUTE PROCEDURE damage_player(dmg, tid, hitp);
-      ELSE EXECUTE PROCEDURE damage_thing(hit, dmg, tid);
-      IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.st NOT IN ('dying', 'dead'))) THEN
-      BEGIN
-        UPDATE things t SET flags = BIN_AND(t.flags, BIN_NOT(262144)), momx = 0, momy = 0, momz = 0 WHERE t.id = :tid;
-        EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-                                           WHERE t.id = :tid), tic) RETURNING_VALUES alive;
-      END
-      CONTINUE;
-    END
-    -- (a flier: no ledge stops it, only walls, steps and low ceilings)
-    EXECUTE PROCEDURE check_position(tid, nx, ny, z, rad, hgt, 0) RETURNING_VALUES ok, fz, cz, dz, nsec;
-    IF (ok = 1) THEN
-    BEGIN
-      EXECUTE PROCEDURE monster_cross(tid, x, y, nx, ny) RETURNING_VALUES tele;
-      IF (tele = 0) THEN UPDATE things t SET x = :nx, y = :ny, sector_id = :nsec WHERE t.id = :tid;
-    END
-    ELSE UPDATE things t SET momx = 0, momy = 0 WHERE t.id = :tid;
-  END
+    EXECUTE PROCEDURE skull_step(tid, tic);
 END^
 
 -- P_MobjThinker's movement for the missiles on the tables (those not yet burst):
 -- P_XYMovement, in half moves while one of them is over MAXMOVE/2 (15: DOOM asks only of
 -- the positive ones), each a MISSILE_TRY; then P_ZMovement: on through the floor or the
 -- ceiling, it bursts there (sky or not). AFTER_ID: only those spawned after it.
+-- One missile's P_XYMovement and P_ZMovement (or a boss cube's flight)
+CREATE OR ALTER PROCEDURE missile_step (tid INTEGER, tic INTEGER)
+AS
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE z DOUBLE PRECISION;
+DECLARE momx DOUBLE PRECISION;
+DECLARE momy DOUBLE PRECISION;
+DECLARE momz DOUBLE PRECISION;
+DECLARE rad DOUBLE PRECISION;
+DECLARE hgt DOUBLE PRECISION;
+DECLARE xmove DOUBLE PRECISION;
+DECLARE ymove DOUBLE PRECISION;
+DECLARE moved SMALLINT;
+DECLARE fz DOUBLE PRECISION;
+DECLARE cz DOUBLE PRECISION;
+BEGIN
+  IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.kind IN ('missile', 'cube') AND t.state IS NOT NULL
+                   AND t.st NOT IN ('dying', 'dead'))) THEN EXIT;
+  -- a boss cube (MF_NOCLIP): straight through everything, kept between floor and ceiling
+  IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.kind = 'cube')) THEN
+  BEGIN
+    SELECT t.x + t.momx, t.y + t.momy, t.z + t.momz, t.momz, t.radius, t.height FROM things t WHERE t.id = :tid
+      INTO x, y, z, momz, rad, hgt;
+    EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
+    IF (z <= fz) THEN
+    BEGIN
+      z = fz;
+      IF (momz < 0) THEN momz = 0;
+    END
+    IF (z + hgt > cz) THEN
+    BEGIN
+      IF (momz > 0) THEN momz = 0;
+      z = cz - hgt;
+    END
+    UPDATE things t SET x = :x, y = :y, z = :z, momz = :momz, sector_id = sector_at(:x, :y) WHERE t.id = :tid;
+    EXIT;
+  END
+  x = NULL;
+  SELECT t.x, t.y, t.momx, t.momy FROM things t WHERE t.id = :tid AND t.st NOT IN ('dying', 'dead')
+    INTO x, y, momx, momy;
+  IF (x IS NULL) THEN EXIT;
+  moved = 1;
+  xmove = momx;
+  ymove = momy;
+  WHILE (moved = 1 AND (xmove <> 0 OR ymove <> 0)) DO
+  BEGIN
+    IF (xmove > 15 OR ymove > 15) THEN
+    BEGIN
+      xmove = xmove / 2;
+      ymove = ymove / 2;
+      EXECUTE PROCEDURE missile_try(tid, x + xmove, y + ymove, tic) RETURNING_VALUES moved;
+    END
+    ELSE
+    BEGIN
+      EXECUTE PROCEDURE missile_try(tid, x + xmove, y + ymove, tic) RETURNING_VALUES moved;
+      xmove = 0;
+      ymove = 0;
+    END
+    IF (moved = 1) THEN SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO x, y;
+  END
+  IF (moved = 0) THEN EXIT;
+  SELECT t.z, t.momz, t.radius, t.height FROM things t WHERE t.id = :tid INTO z, momz, rad, hgt;
+  EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
+  IF (z = fz AND momz = 0) THEN EXIT;
+  z = z + momz;
+  IF (z <= fz) THEN
+  BEGIN
+    UPDATE things t SET z = :fz WHERE t.id = :tid;
+    EXECUTE PROCEDURE explode_missile(tid, tic);
+  END
+  ELSE IF (z + hgt > cz) THEN
+  BEGIN
+    UPDATE things t SET z = :cz - :hgt WHERE t.id = :tid;
+    EXECUTE PROCEDURE explode_missile(tid, tic);
+  END
+  ELSE UPDATE things t SET z = :z WHERE t.id = :tid;
+END^
+
 CREATE OR ALTER PROCEDURE missiles_think (tic INTEGER, after_id INTEGER = 0)
 AS
 DECLARE tid INTEGER;
@@ -5678,76 +5997,20 @@ BEGIN
        ORDER BY t.id
         INTO tid
   DO
-  BEGIN
-    -- a boss cube (MF_NOCLIP): straight through everything, kept between floor and ceiling
-    IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.kind = 'cube')) THEN
-    BEGIN
-      SELECT t.x + t.momx, t.y + t.momy, t.z + t.momz, t.momz, t.radius, t.height FROM things t WHERE t.id = :tid
-        INTO x, y, z, momz, rad, hgt;
-      EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
-      IF (z <= fz) THEN
-      BEGIN
-        z = fz;
-        IF (momz < 0) THEN momz = 0;
-      END
-      IF (z + hgt > cz) THEN
-      BEGIN
-        IF (momz > 0) THEN momz = 0;
-        z = cz - hgt;
-      END
-      UPDATE things t SET x = :x, y = :y, z = :z, momz = :momz, sector_id = sector_at(:x, :y) WHERE t.id = :tid;
-      CONTINUE;
-    END
-    x = NULL;
-    SELECT t.x, t.y, t.momx, t.momy FROM things t WHERE t.id = :tid AND t.st NOT IN ('dying', 'dead')
-      INTO x, y, momx, momy;
-    IF (x IS NULL) THEN CONTINUE;
-    moved = 1;
-    xmove = momx;
-    ymove = momy;
-    WHILE (moved = 1 AND (xmove <> 0 OR ymove <> 0)) DO
-    BEGIN
-      IF (xmove > 15 OR ymove > 15) THEN
-      BEGIN
-        xmove = xmove / 2;
-        ymove = ymove / 2;
-        EXECUTE PROCEDURE missile_try(tid, x + xmove, y + ymove, tic) RETURNING_VALUES moved;
-      END
-      ELSE
-      BEGIN
-        EXECUTE PROCEDURE missile_try(tid, x + xmove, y + ymove, tic) RETURNING_VALUES moved;
-        xmove = 0;
-        ymove = 0;
-      END
-      IF (moved = 1) THEN SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO x, y;
-    END
-    IF (moved = 0) THEN CONTINUE;
-    SELECT t.z, t.momz, t.radius, t.height FROM things t WHERE t.id = :tid INTO z, momz, rad, hgt;
-    EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
-    IF (z = fz AND momz = 0) THEN CONTINUE;
-    z = z + momz;
-    IF (z <= fz) THEN
-    BEGIN
-      UPDATE things t SET z = :fz WHERE t.id = :tid;
-      EXECUTE PROCEDURE explode_missile(tid, tic);
-    END
-    ELSE IF (z + hgt > cz) THEN
-    BEGIN
-      UPDATE things t SET z = :cz - :hgt WHERE t.id = :tid;
-      EXECUTE PROCEDURE explode_missile(tid, tic);
-    END
-    ELSE UPDATE things t SET z = :z WHERE t.id = :tid;
-  END
+    EXECUTE PROCEDURE missile_step(tid, tic);
 END^
 
 -- P_MobjThinker's countdown, for the things on the table: each whose state ends this
 -- tic goes on to the next, in spawn order (P_RunThinkers). Only those are touched
 -- (the index on STATE_TIC), not every thing every tic.
-CREATE OR ALTER PROCEDURE states_think (tic INTEGER)
+-- One thing's P_ZMovement (not a missile's, nor a player's): a walker thrown up (an
+-- arch-vile's blast) rises, bumps the ceiling and falls at 1 unit/tic² to the floor; a flier
+-- (MF_FLOAT, MF_NOGRAVITY) drifts 4 units a tic towards its target's middle while it's alive
+-- and not charging or squeezing through (MF_INFLOAT); a charging skull bounces off floor and
+-- ceiling. (It runs while the thing moves up or down or is off the floor, z != floorz: off the
+-- floor with no momz is the top of a toss, marked 1048576 in THINGS.FLAGS for the tic it lasts.)
+CREATE OR ALTER PROCEDURE z_step (tid INTEGER, tic INTEGER)
 AS
-DECLARE tid INTEGER;
-DECLARE nxt INTEGER;
-DECLARE alive SMALLINT;
 DECLARE x DOUBLE PRECISION;
 DECLARE y DOUBLE PRECISION;
 DECLARE z DOUBLE PRECISION;
@@ -5775,84 +6038,167 @@ DECLARE ady DOUBLE PRECISION;
 DECLARE dist DOUBLE PRECISION;
 DECLARE delta DOUBLE PRECISION;
 DECLARE st VARCHAR(8);
-DECLARE newest INTEGER;
 DECLARE nograv SMALLINT;
 BEGIN
-  -- P_MobjThinker's movement, for the things on the tables that move: first P_XYMovement
-  -- for a charging lost soul (SKULLS_THINK), then P_ZMovement for those in the air
-  EXECUTE PROCEDURE skulls_think(tic);
-  EXECUTE PROCEDURE missiles_think(tic);
-  -- P_ZMovement: a walker thrown up (an arch-vile's blast) rises, bumps the ceiling and
-  -- falls at 1 unit/tic² to the floor; a flier (MF_FLOAT, MF_NOGRAVITY) drifts 4 units a
-  -- tic towards its target's middle while it's alive and not charging or squeezing
-  -- through (MF_INFLOAT); a charging skull bounces off floor and ceiling
-  FOR SELECT t.id, t.x, t.y, t.z, t.momz, t.radius, t.height, IIF(tt.floats = 1 AND t.kind = 'monster', 1, 0), t.flags,
-             IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type, t.st, tt.nogravity
-        FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-       -- (P_ZMovement runs while it moves up or down or is off the floor, z != floorz: off the floor
-       -- with no momz is the top of a toss, marked 1048576 in THINGS.FLAGS for the tic it lasts)
-       WHERE t.state IS NOT NULL AND t.kind NOT IN ('missile', 'cube', 'player')
-         AND (t.momz <> 0 OR tt.floats = 1 OR BIN_AND(t.flags, 1048576) <> 0)
-       ORDER BY t.id
-        INTO tid, x, y, z, momz, rad, hgt, floats, flags, living, ttype, st, nograv
+  x = NULL;
+  SELECT t.x, t.y, t.z, t.momz, t.radius, t.height, IIF(tt.floats = 1 AND t.kind = 'monster', 1, 0), t.flags,
+         IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type, t.st, tt.nogravity
+    FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+   WHERE t.id = :tid AND t.state IS NOT NULL AND t.kind NOT IN ('missile', 'cube', 'player')
+     AND (t.momz <> 0 OR tt.floats = 1 OR BIN_AND(t.flags, 1048576) <> 0)
+    INTO x, y, z, momz, rad, hgt, floats, flags, living, ttype, st, nograv;
+  IF (x IS NULL) THEN EXIT;
+  EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
+  z = z + momz;
+  skullfly = IIF(BIN_AND(flags, 262144) <> 0, 1, 0);
+  -- (asleep it has no target yet: DOOM's A_Look gives it one)
+  IF (floats = 1 AND living = 1 AND skullfly = 0 AND BIN_AND(flags, 131072) = 0 AND st <> 'idle') THEN
+  BEGIN
+    EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
+    IF (px IS NOT NULL) THEN
+    BEGIN
+      adx = ABS(px - x);
+      ady = ABS(py - y);
+      dist = adx + ady - MINVALUE(adx, ady) / 2;
+      delta = pz + COALESCE((SELECT o.height FROM things o WHERE o.id = COALESCE(:tgt,
+                (SELECT p.thing_id FROM player p WHERE p.id = :tp))), 56) / 2 - z;
+      IF (delta < 0 AND dist < -delta * 3) THEN z = z - 4;
+      ELSE IF (delta > 0 AND dist < delta * 3) THEN z = z + 4;
+    END
+  END
+  IF (z <= fz) THEN
+  BEGIN
+    IF (skullfly = 1) THEN momz = -momz;   -- (the lost soul bounces)
+    IF (momz < 0) THEN momz = 0;
+    z = fz;
+  END
+  ELSE IF (nograv = 0 OR (floats = 1 AND living = 0 AND ttype <> 3006)) THEN
+    -- (MF_NOGRAVITY goes with a flier's death, but not the lost soul's; from rest, 2 at once)
+    momz = IIF(momz = 0, -2, momz - 1);
+  IF (z + hgt > cz) THEN
+  BEGIN
+    IF (momz > 0) THEN momz = 0;
+    z = cz - hgt;
+    IF (skullfly = 1) THEN momz = -momz;
+  END
+  -- (at the top of a toss, no momz but off the floor: still falling next tic)
+  UPDATE things t SET z = :z, momz = :momz,
+         flags = IIF(:momz = 0 AND :z > :fz AND :nograv = 0, BIN_OR(t.flags, 1048576), BIN_AND(t.flags, BIN_NOT(1048576)))
+   WHERE t.id = :tid;
+END^
+
+-- One thing's thinker, P_MobjThinker: its movement (a player's body, P_XYMovement and
+-- P_ZMovement in 16.16 and what it picks up; a charging lost soul's flight; a missile's), its
+-- P_ZMovement, then its state's countdown – the state ending this tic goes on to the next
+-- (SET_STATE, the next state's action) – and on Nightmare (NIGHTMARE, every 32 tics) a corpse's
+-- chance to rise.
+CREATE OR ALTER PROCEDURE thing_think (tid INTEGER, tic INTEGER, nightmare SMALLINT, key_ BIGINT)
+AS
+DECLARE k VARCHAR(10);
+DECLARE skull SMALLINT;
+DECLARE stt INTEGER;
+DECLARE pid SMALLINT;
+DECLARE nxt INTEGER;
+DECLARE alive SMALLINT;
+BEGIN
+  k = NULL;
+  SELECT t.kind, IIF(BIN_AND(t.flags, 262144) <> 0, 1, 0), t.state FROM things t WHERE t.id = :tid INTO k, skull, stt;
+  IF (k IS NULL) THEN EXIT;                      -- (removed earlier in the pass)
+  -- (while it moves, its countdown is still to come: THINK_AHEAD)
+  RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', key_ - 1);
+  IF (k = 'player') THEN
+  BEGIN
+    pid = NULL;
+    SELECT p.id FROM player p WHERE p.thing_id = :tid INTO pid;
+    IF (pid IS NOT NULL) THEN EXECUTE PROCEDURE player_body(pid, tic);
+  END
+  ELSE IF (skull = 1 AND stt IS NOT NULL) THEN EXECUTE PROCEDURE skull_step(tid, tic);
+  ELSE IF (k IN ('missile', 'cube')) THEN EXECUTE PROCEDURE missile_step(tid, tic);
+  EXECUTE PROCEDURE z_step(tid, tic);
+  RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', key_);
+  -- (still due? an action before it may have changed or removed it; and one made due during
+  -- the last pass, after its turn, goes on now)
+  nxt = NULL;
+  SELECT s.next_state FROM things t JOIN states s ON s.id = t.state
+   WHERE t.id = :tid AND t.state_tic BETWEEN :tic - 1 AND :tic INTO nxt;
+  IF (nxt IS NOT NULL) THEN EXECUTE PROCEDURE set_state(tid, nxt, tic) RETURNING_VALUES alive;
+  IF (nightmare = 1) THEN EXECUTE PROCEDURE nightmare_step(tid, tic);
+END^
+
+-- P_RunThinkers: every thinker with something to do this tic, in the list's order – the order
+-- they were made in (THINK_KEY: a thing's is twice its id, a player's body sits among the map's
+-- things where its start was, and a light's or a mover's is taken from THING_SEQ as it's made,
+-- so P_SpawnSpecials' come after the map's things) – between LO and HI (exclusive, inclusive).
+-- KINDS: T things, L lights, M movers. → N, how many ran.
+CREATE OR ALTER PROCEDURE run_thinkers (tic INTEGER, lo BIGINT, hi BIGINT, kinds VARCHAR(3))
+RETURNS (n INTEGER)
+AS
+DECLARE kind CHAR(1);
+DECLARE key_ BIGINT;
+DECLARE id INTEGER;
+DECLARE nightmare SMALLINT;
+BEGIN
+  n = 0;
+  nightmare = IIF(MOD(tic, 32) = 0 AND EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND (g.skill = 5 OR g.respawn = 1)), 1, 0);
+  FOR SELECT q.kind, q.k, q.id
+        FROM (SELECT 'T' kind, COALESCE(t.think_key, 2 * t.id) k, t.id FROM things t WHERE t.state_tic BETWEEN :tic - 1 AND :tic
+              UNION
+              SELECT 'T', COALESCE(t.think_key, 2 * t.id), t.id FROM things t
+               WHERE t.kind IN ('player', 'missile', 'cube')
+              UNION
+              SELECT 'T', COALESCE(t.think_key, 2 * t.id), t.id FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+               WHERE t.state IS NOT NULL
+                 AND (BIN_AND(t.flags, 262144) <> 0 OR t.momz <> 0 OR tt.floats = 1 OR BIN_AND(t.flags, 1048576) <> 0
+                      OR (:nightmare = 1 AND t.kind = 'monster' AND t.st = 'dead'))
+              UNION ALL
+              SELECT 'L', COALESCE(s.lfx_key, 0), s.id FROM sectors s
+               WHERE s.lfx IN ('flash', 'strobe', 'flicker') AND s.lfx_count = 0
+              UNION ALL
+              SELECT 'M', COALESCE(m.think_key, 0), m.sector_id FROM movers m) q
+       WHERE q.k > :lo AND q.k <= :hi AND POSITION(q.kind IN :kinds) > 0
+       ORDER BY q.k, q.kind
+        INTO kind, key_, id
   DO
   BEGIN
-    EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
-    z = z + momz;
-    skullfly = IIF(BIN_AND(flags, 262144) <> 0, 1, 0);
-    -- (asleep it has no target yet: DOOM's A_Look gives it one)
-    IF (floats = 1 AND living = 1 AND skullfly = 0 AND BIN_AND(flags, 131072) = 0 AND st <> 'idle') THEN
-    BEGIN
-      EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
-      IF (px IS NOT NULL) THEN
-      BEGIN
-        adx = ABS(px - x);
-        ady = ABS(py - y);
-        dist = adx + ady - MINVALUE(adx, ady) / 2;
-        delta = pz + COALESCE((SELECT o.height FROM things o WHERE o.id = COALESCE(:tgt,
-                  (SELECT p.thing_id FROM player p WHERE p.id = :tp))), 56) / 2 - z;
-        IF (delta < 0 AND dist < -delta * 3) THEN z = z - 4;
-        ELSE IF (delta > 0 AND dist < delta * 3) THEN z = z + 4;
-      END
-    END
-    IF (z <= fz) THEN
-    BEGIN
-      IF (skullfly = 1) THEN momz = -momz;   -- (the lost soul bounces)
-      IF (momz < 0) THEN momz = 0;
-      z = fz;
-    END
-    ELSE IF (nograv = 0 OR (floats = 1 AND living = 0 AND ttype <> 3006)) THEN
-      -- (MF_NOGRAVITY goes with a flier's death, but not the lost soul's; from rest, 2 at once)
-      momz = IIF(momz = 0, -2, momz - 1);
-    IF (z + hgt > cz) THEN
-    BEGIN
-      IF (momz > 0) THEN momz = 0;
-      z = cz - hgt;
-      IF (skullfly = 1) THEN momz = -momz;
-    END
-    -- (at the top of a toss, no momz but off the floor: still falling next tic)
-    UPDATE things t SET z = :z, momz = :momz,
-           flags = IIF(:momz = 0 AND :z > :fz AND :nograv = 0, BIN_OR(t.flags, 1048576), BIN_AND(t.flags, BIN_NOT(1048576)))
-     WHERE t.id = :tid;
+    n = n + 1;
+    RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', key_);
+    IF (kind = 'T') THEN EXECUTE PROCEDURE thing_think(id, tic, nightmare, key_);
+    ELSE IF (kind = 'L') THEN EXECUTE PROCEDURE light_step(id);
+    ELSE IF (EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = :id AND COALESCE(m.think_key, 0) = :key_)) THEN
+      EXECUTE PROCEDURE mover_step(id);
   END
-  newest = (SELECT MAX(t.id) FROM things t);
-  -- the plain frames first, all at once: a state ending into one with no action, some tics, no
-  -- -fast halving and no corpse to date (a torch's flicker, a bonus's glow, a fireball's spin)
-  -- needs only its new state and end. No random draw and no action: the order doesn't matter.
-  FOR SELECT t.id FROM things t WHERE t.state_tic = :tic ORDER BY t.id INTO tid
-  DO
+END^
+
+-- The whole pass, P_RunThinkers to the end of the list: the thinkers there at its start, then
+-- those they made (a missile fired, a lost soul spat, a door opened), which run this same tic as
+-- DOOM's do, appended to the list; and so on, a few rounds at most
+CREATE OR ALTER PROCEDURE think_all (tic INTEGER, kinds VARCHAR(3))
+AS
+DECLARE lo BIGINT;
+DECLARE hi BIGINT;
+DECLARE n INTEGER;
+DECLARE rounds INTEGER = 0;
+BEGIN
+  lo = -1;
+  hi = 2 * GEN_ID(thing_seq, 0) + 1;
+  WHILE (rounds < 8) DO
   BEGIN
-    -- (still due? an action before it may have changed or removed it)
-    nxt = NULL;
-    SELECT s.next_state FROM things t JOIN states s ON s.id = t.state
-     WHERE t.id = :tid AND t.state_tic = :tic INTO nxt;
-    IF (nxt IS NOT NULL) THEN EXECUTE PROCEDURE set_state(tid, nxt, tic) RETURNING_VALUES alive;
+    EXECUTE PROCEDURE run_thinkers(tic, lo, hi, kinds) RETURNING_VALUES n;
+    lo = hi;
+    hi = 2 * GEN_ID(thing_seq, 0) + 1;
+    IF (hi = lo) THEN LEAVE;
+    rounds = rounds + 1;
   END
-  -- a lost soul spat in this pass (A_PainAttack, A_PainDie) flies its first step this same tic,
-  -- as a new thinker runs in the pass that made it in DOOM
-  EXECUTE PROCEDURE skulls_think(tic, COALESCE(newest, 0));
-  -- (and so does a missile fired in it: a monster's attack, its first move made too)
-  EXECUTE PROCEDURE missiles_think(tic, COALESCE(newest, 0));
+  RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', NULL);
+END^
+
+-- The things' thinkers alone, in their order (THINK_ALL with things only): what STATES_THINK
+-- always did – the movement, the falls, each state ending this tic going on to the next – for
+-- the tests that run the things without the rest of the world
+CREATE OR ALTER PROCEDURE states_think (tic INTEGER)
+AS
+BEGIN
+  EXECUTE PROCEDURE think_all(tic, 'T');
 END^
 
 -- A save from before a type moved onto the tables: its things of that type take the
@@ -5910,12 +6256,12 @@ END^
 CREATE OR ALTER PROCEDURE world_tic (tic INTEGER)
 AS
 BEGIN
-  EXECUTE PROCEDURE movers_think;
-  EXECUTE PROCEDURE states_think(tic);
-  -- (G_InitNew: respawnmonsters on Nightmare, or with -respawn)
-  IF (MOD(tic, 32) = 0 AND EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND (g.skill = 5 OR g.respawn = 1))) THEN
-    EXECUTE PROCEDURE nightmare_respawn(tic);
-  EXECUTE PROCEDURE lights_think(tic);
+  -- P_RunThinkers: the lights' countdowns (no draws: all at once), then every thinker in the
+  -- list's order – the things (their movement, falls and states; on Nightmare or with -respawn,
+  -- G_InitNew's respawnmonsters, a corpse's chance to rise), the lights whose count ran out,
+  -- the doors, lifts and floors moving (THINK_ALL)
+  EXECUTE PROCEDURE lights_count(tic);
+  EXECUTE PROCEDURE think_all(tic, 'TLM');
   IF ((SELECT g.deathmatch FROM game g WHERE g.id = 1) = 2) THEN EXECUTE PROCEDURE respawn_specials(tic);
   -- -timer: the level ends after that many minutes
   UPDATE game g SET exit_kind = 1
@@ -5975,6 +6321,7 @@ BEGIN
   BEGIN
     UPDATE game g SET tic = g.tic + 1 WHERE g.id = 1;
     SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+    RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', -1);   -- (P_PlayerThink, before the list)
     EXECUTE PROCEDURE player_think(1, fwd, side, turn / tics, fire, use_key, IIF(i = 0, weapon_sel, 0), run, tic);
     EXECUTE PROCEDURE world_tic(tic);
     i = i + 1;
@@ -6016,6 +6363,7 @@ BEGIN
    WHERE e.tic < (SELECT g.tic FROM game g WHERE g.id = 1) - 70;
   UPDATE game g SET tic = g.tic + 1 WHERE g.id = 1;
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', -1);   -- (P_PlayerThink, before the list)
   FOR SELECT p.id, COALESCE(c.fwd, 0), COALESCE(c.side, 0), COALESCE(c.turn, 0), COALESCE(c.fire, 0),
              COALESCE(c.use_key, 0), COALESCE(c.weapon_sel, 0), COALESCE(c.run, 0)
         FROM player p LEFT JOIN ticcmd c ON c.player_id = p.id
@@ -6036,18 +6384,20 @@ END^
 -- the door (closed in the map) waits five minutes, then opens to 4 below the
 -- lowest ceiling around and goes on as a normal door (VDOORWAIT, then down).
 -- Either way the sector's special is spent.
-CREATE OR ALTER PROCEDURE spawn_door_specials
+CREATE OR ALTER PROCEDURE spawn_door_specials (sid INTEGER = NULL)
 AS
 BEGIN
   INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, wait_left, stay)
   SELECT s.id, 'door', 0, 2, s.ceil_h, s.floor_h, 150, 30 * 35, 0
     FROM sectors s
-   WHERE s.special = 10 AND NOT EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = s.id);
+   WHERE s.special = 10 AND (s.id = :sid OR :sid IS NULL) AND NOT EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = s.id)
+   ORDER BY s.id;
   INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, wait_left, stay)
   SELECT s.id, 'door', 2, 2, COALESCE(neighbor_h(s.id, 'min_ceil'), s.ceil_h + 64) - 4, s.floor_h, 150, 5 * 60 * 35, 0
     FROM sectors s
-   WHERE s.special = 14 AND NOT EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = s.id);
-  UPDATE sectors SET special = 0 WHERE special IN (10, 14);
+   WHERE s.special = 14 AND (s.id = :sid OR :sid IS NULL) AND NOT EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = s.id)
+   ORDER BY s.id;
+  UPDATE sectors SET special = 0 WHERE special IN (10, 14) AND (id = :sid OR :sid IS NULL);
 END^
 
 -- ── level setup ───────────────────────────────────────────────────────────
@@ -6086,6 +6436,7 @@ DECLARE mtype INTEGER;
 DECLARE lastlook INTEGER;
 DECLARE lsec INTEGER;
 DECLARE lspec INTEGER;
+DECLARE pstart INTEGER;
 BEGIN
   MERGE INTO linedefs l
   USING (SELECT l2.id, a.x ax, a.y ay, b.x bx, b.y bby, fs.sector_id fsec, bs.sector_id bsec
@@ -6171,8 +6522,7 @@ BEGIN
    WHERE id = 1;
 
   UPDATE sectors s SET sky = IIF(EXISTS (SELECT 1 FROM flats f WHERE f.id = s.ceil_flat AND f.is_sky = 1), 1, 0);
-  UPDATE sectors s SET lfx = NULL, lfx_count = 0;
-  EXECUTE PROCEDURE spawn_door_specials;
+  UPDATE sectors s SET lfx = NULL, lfx_count = 0, lfx_key = NULL;
 
   -- the players in the game: rows 1…GAME.PLAYERS
   SELECT g.players, g.deathmatch, g.nomonsters FROM game g WHERE g.id = 1 INTO np, dm, nomon;
@@ -6234,8 +6584,11 @@ BEGIN
   WHILE (i <= np) DO
   BEGIN
     px = NULL;
+    pstart = NULL;
     IF (dm > 0) THEN SELECT d.sx, d.sy, d.sa FROM deathmatch_spot(:i, NULL) d INTO px, py, pa;
-    ELSE SELECT FIRST 1 x, y, TRUNC(angle / 45) * PI() / 4 FROM map_things WHERE ttype = :i INTO px, py, pa;
+    -- (P_SpawnMapThing spawns a player at every start of its number: the last is where it plays)
+    ELSE SELECT FIRST 1 m.x, m.y, TRUNC(m.angle / 45) * PI() / 4, m.id FROM map_things m WHERE m.ttype = :i ORDER BY m.id DESC
+      INTO px, py, pa, pstart;
     IF (px IS NULL) THEN
     BEGIN
       SELECT FIRST 1 x, y, angle * PI() / 180 FROM map_things WHERE ttype = 1 INTO px, py, pa;
@@ -6250,23 +6603,30 @@ BEGIN
             (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1),
             (SELECT IIF(:skill = 5, 0, tt.reaction_time) FROM thing_types tt WHERE tt.thing_type = 1));
     UPDATE player SET thing_id = :tid WHERE id = :i;
+    -- its place in the thinkers' list: among the map's things, where its start is (P_LoadThings'
+    -- order); in deathmatch, after them all (G_DeathMatchSpawnPlayer), as its id says
+    IF (pstart IS NOT NULL) THEN
+      UPDATE things t SET think_key = 2 * COALESCE((SELECT MAX(o.id) FROM things o WHERE o.mthing < :pstart), 0) + 1
+       WHERE t.id = :tid;
     i = i + 1;
   END
 
-  -- P_SpawnSpecials: the light specials' thinkers, in sector order (after the things: their
-  -- draws come after the things')
-  FOR SELECT s.id, s.special FROM sectors s WHERE s.special IN (1, 2, 3, 4, 8, 12, 13, 17) ORDER BY s.id
+  -- P_SpawnSpecials: the sectors' thinkers, in sector order, after the things in the list (their
+  -- draws come after the things'): the lights, and the doors of specials 10 and 14
+  FOR SELECT s.id, s.special FROM sectors s WHERE s.special IN (1, 2, 3, 4, 8, 10, 12, 13, 14, 17) ORDER BY s.id
       INTO lsec, lspec
   DO
-    EXECUTE PROCEDURE spawn_light(lsec, lspec);
+    IF (lspec IN (10, 14)) THEN EXECUTE PROCEDURE spawn_door_specials(lsec);
+    ELSE EXECUTE PROCEDURE spawn_light(lsec, lspec);
 
   -- Every thing's sector in one set-based pass: a recursive CTE walks the BSP
-  -- tree for all of them at once.
+  -- tree for all of them at once (R_PointOnSide in 16.16, as P_SetThingPosition finds it).
   FOR WITH RECURSIVE walk (tid, px, py, node) AS (
         SELECT t.id, t.x, t.y, g.root_node FROM things t CROSS JOIN game g WHERE g.id = 1
         UNION ALL
         SELECT w.tid, w.px, w.py,
-               IIF((w.py - n.y) * n.dx < n.dy * (w.px - n.x), n.right_child, n.left_child)
+               IIF(point_on_node_side(fx_of(w.px), fx_of(w.py), CAST(n.x AS BIGINT) * 65536, CAST(n.y AS BIGINT) * 65536,
+                                      CAST(n.dx AS BIGINT) * 65536, CAST(n.dy AS BIGINT) * 65536) = 0, n.right_child, n.left_child)
           FROM walk w JOIN nodes n ON n.id = w.node
       )
       SELECT w.tid, ss.sector_id FROM walk w JOIN ssectors ss ON ss.id = w.node - 32768

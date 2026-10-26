@@ -9,20 +9,90 @@
 //
 // Positions are 16.16 fixed point and the angle a BAM, as DOOM keeps them; the sums don't
 // depend on the thinker list's order.
+//
+// With $ORACLE_MOBJS, every thinker too, in the list's order (P_RunThinkers'), at the level's
+// setup ($ORACLE_MOBJS_TICS: "all", or the leveltimes to write, as "0,35,70"; 0 alone by
+// default): a mobj as
+//   leveltime k M type  spawnpoint x y type options  x y z angle momx momy momz health
+//   statenum tics flags floorz ceilingz reactiontime movedir movecount threshold lastlook
+// and any other thinker as  leveltime k T name  (T_LightFlash, T_StrobeFlash, …).
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "doomdef.h"
 #include "doomstat.h"
 #include "d_player.h"
 #include "info.h"
 #include "p_local.h"
+#include "p_spec.h"
 
 extern int prndindex;
 void __real_G_Ticker(void);
 void __real_P_SetupLevel(int episode, int map, int playermask, skill_t skill);
 
 static FILE *out;
+static FILE *mobjs;
+
+static int want_tic(int t)
+{
+    const char *tics = getenv("ORACLE_MOBJS_TICS");
+    const char *p;
+    if (!tics) return t == 0;
+    if (!strcmp(tics, "all")) return 1;
+    for (p = tics; *p; )
+    {
+        if (atoi(p) == t) return 1;
+        while (*p && *p != ',') p++;
+        if (*p == ',') p++;
+    }
+    return 0;
+}
+
+void T_FireFlicker(fireflicker_t *flick);   // (p_lights.c's, not in p_spec.h)
+
+static const char *thinker_name(thinker_t *th)
+{
+    actionf_p1 f = th->function.acp1;
+    if (f == (actionf_p1) T_LightFlash) return "T_LightFlash";
+    if (f == (actionf_p1) T_StrobeFlash) return "T_StrobeFlash";
+    if (f == (actionf_p1) T_Glow) return "T_Glow";
+    if (f == (actionf_p1) T_FireFlicker) return "T_FireFlicker";
+    if (f == (actionf_p1) T_VerticalDoor) return "T_VerticalDoor";
+    if (f == (actionf_p1) T_PlatRaise) return "T_PlatRaise";
+    if (f == (actionf_p1) T_MoveCeiling) return "T_MoveCeiling";
+    if (f == (actionf_p1) T_MoveFloor) return "T_MoveFloor";
+    if (th->function.acv == (actionf_v) (-1)) return "removed";
+    return "other";
+}
+
+static void dump_mobjs(void)
+{
+    thinker_t *th;
+    int k = 0;
+    if (!mobjs)
+    {
+        const char *path = getenv("ORACLE_MOBJS");
+        if (!path || !(mobjs = fopen(path, "w"))) return;
+    }
+    if (!want_tic(leveltime)) return;
+    for (th = thinkercap.next; th != &thinkercap; th = th->next, k++)
+    {
+        mobj_t *m;
+        if (th->function.acp1 != (actionf_p1) P_MobjThinker)
+        {
+            fprintf(mobjs, "%d %d T %s\n", leveltime, k, thinker_name(th));
+            continue;
+        }
+        m = (mobj_t *) th;
+        fprintf(mobjs, "%d %d M %d %d %d %d %d %d %d %d %u %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+                leveltime, k, (int) m->type, m->spawnpoint.x, m->spawnpoint.y, m->spawnpoint.type,
+                m->spawnpoint.options, m->x, m->y, m->z, (unsigned) m->angle, m->momx, m->momy, m->momz,
+                m->health, m->state ? (int) (m->state - states) : -1, m->tics, m->flags, m->floorz,
+                m->ceilingz, m->reactiontime, m->movedir, m->movecount, m->threshold, m->lastlook);
+    }
+    fflush(mobjs);
+}
 
 static void dump(void)
 {
@@ -55,6 +125,7 @@ static void dump(void)
             leveltime, prndindex, mo->x, mo->y, mo->z, (unsigned) mo->angle, mo->momx, mo->momy,
             pl->health, n, sx, sy, sz, shp, sst);
     fflush(out);
+    if (getenv("ORACLE_MOBJS")) dump_mobjs();
 }
 
 void __wrap_G_Ticker(void)

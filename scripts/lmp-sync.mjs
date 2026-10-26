@@ -15,6 +15,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseLmp, lmpMapName, portCmd } from '../src/lmp.js';
+import { MOBJINFO } from '../src/states.js';
+import { MOBJ_TYPE } from '../src/thinginfo.js';
 
 export const FIELDS = ['leveltime', 'prndindex', 'x', 'y', 'z', 'angle', 'momx', 'momy', 'health',
   'mobjs', 'sumx', 'sumy', 'sumz', 'sumhealth', 'sumstate'];
@@ -80,6 +82,71 @@ export async function playAgainst(db, demo, trace, { limit = Infinity } = {}) {
     await compare(t + 1, trace[t + setup]);
   }
   return { tics: n, first, synced: synced ?? n };
+}
+
+// ── every thinker, one by one (dump.c's ORACLE_MOBJS: NAME.mobjs) ──
+const MT_NAMES = Object.keys(MOBJINFO);
+const MT_BY_ED = new Map(Object.entries(MOBJINFO).filter(([, m]) => m.ednum > 0).map(([k, m]) => [m.ednum, k]));
+export const MOBJ_FIELDS = ['x', 'y', 'z', 'angle', 'health', 'state', 'tics'];
+const THINKER_NAME = { flash: 'T_LightFlash', strobe: 'T_StrobeFlash', glow: 'T_Glow', flicker: 'T_FireFlicker',
+  door: 'T_VerticalDoor', lift: 'T_PlatRaise', floor: 'T_MoveFloor', crush: 'T_MoveCeiling' };
+
+/** NAME.mobjs → Map leveltime → the thinkers in the list's order, from the level's first life
+ * (when vanilla's player dies the level starts again from leveltime 0) */
+export function parseMobjs(text) {
+  const byTic = new Map();
+  let prev = -1;
+  let life = 0;
+  for (const l of text.trim().split('\n')) {
+    const v = l.split(' ');
+    const t = Number(v[0]);
+    if (t < prev || (t === prev && v[1] === '0')) life++;
+    prev = t;
+    if (life > 0) continue;
+    if (!byTic.has(t)) byTic.set(t, []);
+    if (v[2] === 'T') { if (v[3] !== 'removed') byTic.get(t).push({ kind: v[3] }); continue; }
+    const n = v.map(Number);
+    byTic.get(t).push({ kind: 'mobj', type: MT_NAMES[n[3]], spawn: n[6] ? `${n[4]},${n[5]},${n[6]}` : null,
+      x: n[8], y: n[9], z: n[10], angle: n[11], health: n[15], state: n[16], tics: n[17] });
+  }
+  return byTic;
+}
+
+/** The port's thinkers now, in the list's order (RUN_THINKERS' keys), as parseMobjs gives vanilla's */
+export async function portThinkers(db) {
+  const tic = (await db.query('SELECT tic FROM game WHERE id = 1')).rows[0].TIC;
+  const rows = (await db.query(`SELECT 'T' w, COALESCE(t.think_key, 2 * t.id) k, t.thing_type, m.x mx, m.y my, m.ttype,
+       t.x, t.y, t.z, t.angle, t.hp, t.state, t.state_tic, CAST(NULL AS VARCHAR(8)) lfx
+       FROM things t LEFT JOIN map_things m ON m.id = t.mthing
+     UNION ALL SELECT 'L', s.lfx_key, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, s.lfx FROM sectors s WHERE s.lfx IS NOT NULL
+     UNION ALL SELECT 'D', m.think_key, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, m.kind FROM movers m
+     ORDER BY 2`)).rows;
+  return rows.map((r) => (r.W.trim() !== 'T' ? { kind: THINKER_NAME[r.LFX.trim()] ?? r.LFX.trim() } : {
+    kind: 'mobj', type: MOBJ_TYPE[r.THING_TYPE] ?? MT_BY_ED.get(r.THING_TYPE) ?? `?${r.THING_TYPE}`,
+    spawn: r.MX == null ? null : `${r.MX},${r.MY},${r.TTYPE}`,
+    x: fixed(r.X), y: fixed(r.Y), z: fixed(r.Z), angle: bam(r.ANGLE), health: r.HP, state: r.STATE,
+    tics: r.STATE_TIC == null ? -1 : r.STATE_TIC - tic,
+  }));
+}
+
+/**
+ * Vanilla's thinkers against the port's, one by one in the list's order: where the order first
+ * differs (a kind, a mobj's type or map spot), and for each of MOBJ_FIELDS the mobjs that differ
+ * ([index, port, vanilla, its type]).
+ */
+export function compareThinkers(van, port) {
+  const label = (t) => (t ? (t.kind === 'mobj' ? `${t.type}@${t.spawn ?? 'new'}` : t.kind) : 'none');
+  let order = null;
+  const fields = Object.fromEntries(MOBJ_FIELDS.map((f) => [f, []]));
+  const n = Math.max(van.length, port.length);
+  for (let i = 0; i < n; i++) {
+    const v = van[i];
+    const p = port[i];
+    if (label(v) !== label(p)) { order = { at: i, port: label(p), vanilla: label(v) }; break; }
+    if (v.kind !== 'mobj') continue;
+    for (const f of MOBJ_FIELDS) if (p[f] !== v[f]) fields[f].push([i, p[f], v[f], label(v)]);
+  }
+  return { order, fields, count: [port.length, van.length] };
 }
 
 /** Load the demo's map in the port as the demo starts it (G_InitNew: skill, options; M_ClearRandom) */

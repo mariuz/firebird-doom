@@ -752,7 +752,9 @@ P = 5800;
 await atTic(P);
 const plMe = (await one('SELECT thing_id t FROM player WHERE id = 1')).T;
 const plState = async () => NAME((await thing(plMe)).STATE);
+// (a tic as DOOM_TIC runs it: P_PlayerThink before the thinkers' list – THINK_KEY -1 – then the list)
 const plThink = (t, fwd, fire = 0) => db.query(`EXECUTE BLOCK AS BEGIN UPDATE game SET tic = ${t} WHERE id = 1;
+  RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', -1);
   EXECUTE PROCEDURE player_think(1, ${fwd}, 0, 0, ${fire}, 0, 0, 0, ${t}); EXECUTE PROCEDURE states_think(${t}); END`);
 await db.exec(`UPDATE things SET momx = 0, momy = 0, reaction = 0 WHERE id = ${plMe}`);
 await setState(plMe, 'S_PLAY', P);

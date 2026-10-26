@@ -29,7 +29,7 @@ npm run test:attract       # the title loop's demos (public/demos/) replay to th
 npm run test:dehacked      # DeHackEd patches
 npm run test:lmp           # .lmp demos: the format, and how long the port keeps step with vanilla (a ratchet: -- --update)
 npm run oracle             # vanilla as a reference: Chocolate Doom built headless into oracle-build/ (needs SDL2 -dev packages)
-npm run lmp-fixtures       # the .lmp fixtures and vanilla's trace of each (needs the oracle)
+npm run lmp-fixtures       # the .lmp fixtures and vanilla's trace of each (needs the oracle); -- NAME … for only those
 npm run test:pwad          # PWADs over the IWAD
 npm run test:automap       # the automap's zoom, follow, grid, marks
 npm run test:light         # light diminishing vs DOOM's fixed point
@@ -130,6 +130,11 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   Row order counts too: every `FOR SELECT` whose order affects state needs an `ORDER BY`, and
   never call `p_random()` in a multi-row `UPDATE`. Physical row order changes when a reload
   reuses pages, so a replay drifts only sometimes (it failed on CI, not locally).
+- **Thinker order:** `WORLD_TIC` runs DOOM's thinkers in their list's order (`RUN_THINKERS`, keyed by
+  `THINK_KEY`s; see ARCHITECTURE, *A tic*). A test that calls `PLAYER_THINK` directly, outside
+  `DOOM_TIC`, should set `RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', -1)` first as `DOOM_TIC`
+  does, or a state the player sets ends a tic late. New thinkers (a sector effect, a new kind of
+  mobj movement) get a step procedure and a place in `RUN_THINKERS`, not a pass of their own.
 - **Tests:** physics-test and weapons-test share one database through many sections. A monster
   woken by an earlier section can hurt the player later, so read state right after the action,
   before another tic. Make statistical assertions robust (bigger samples, fixed bounds rather than

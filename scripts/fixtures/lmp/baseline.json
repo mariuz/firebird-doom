@@ -12,11 +12,11 @@
       "momx": 76,
       "momy": 76,
       "health": 76,
-      "mobjs": 64,
+      "mobjs": 76,
       "sumx": 57,
       "sumy": 57,
-      "sumz": 0,
-      "sumhealth": 0,
+      "sumz": 57,
+      "sumhealth": 76,
       "sumstate": 57
     }
   },
@@ -36,8 +36,29 @@
       "mobjs": null,
       "sumx": null,
       "sumy": null,
-      "sumz": 0,
-      "sumhealth": 0,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "e1m1-shoot": {
+    "tics": 102,
+    "synced": 102,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": 35,
+      "sumy": 35,
+      "sumz": 35,
+      "sumhealth": null,
       "sumstate": null
     }
   },
@@ -54,11 +75,11 @@
       "momx": null,
       "momy": null,
       "health": null,
-      "mobjs": 132,
+      "mobjs": 117,
       "sumx": 55,
       "sumy": 55,
-      "sumz": 0,
-      "sumhealth": 0,
+      "sumz": 105,
+      "sumhealth": 117,
       "sumstate": 55
     }
   },
@@ -75,12 +96,12 @@
       "momx": 573,
       "momy": 573,
       "health": 513,
-      "mobjs": 52,
+      "mobjs": 279,
       "sumx": 37,
       "sumy": 37,
       "sumz": 37,
-      "sumhealth": 0,
-      "sumstate": 40
+      "sumhealth": 279,
+      "sumstate": 269
     }
   }
 }

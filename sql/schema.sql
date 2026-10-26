@@ -232,6 +232,7 @@ CREATE TABLE sectors (
   lfx_max    INTEGER,
   lfx_dark   INTEGER,
   lfx_dir    SMALLINT,
+  lfx_key    BIGINT,                         -- its place in the thinkers' list, as it was made
   tag        INTEGER NOT NULL,
   sky        SMALLINT DEFAULT 0 NOT NULL,
   sound_heard SMALLINT DEFAULT 0 NOT NULL     -- soundtarget: the player whose gunfire reached this sector (0: none)
@@ -401,7 +402,10 @@ CREATE TABLE things (
   floorz      DOUBLE PRECISION,
   ceilz       DOUBLE PRECISION,
   fz_x        DOUBLE PRECISION,
-  fz_y        DOUBLE PRECISION
+  fz_y        DOUBLE PRECISION,
+  -- its place in P_RunThinkers' list (RUN_THINKERS): NULL is twice its id, the order things are
+  -- made in; a player's body at the level's start sits among the map's things, where its start is
+  think_key   BIGINT
 );
 CREATE INDEX things_kind ON things (kind);
 CREATE INDEX things_sector ON things (sector_id);
@@ -447,6 +451,8 @@ CREATE TABLE player (
   buttons      SMALLINT DEFAULT 0 NOT NULL,     -- this tic's BT_ATTACK, for A_WeaponReady and A_ReFire
   extralight   SMALLINT DEFAULT 0 NOT NULL,     -- 0–2 while a muzzle flash lights the view (A_Light1, A_Light2)
   bob          DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- player->bob: P_CalcHeight's, for A_WeaponReady's sway
+  cmd_fwd      SMALLINT DEFAULT 0 NOT NULL,   -- this tic's ticcmd forwardmove and sidemove, for the body's P_XYMovement
+  cmd_side     SMALLINT DEFAULT 0 NOT NULL,
   delta_vh     DOUBLE PRECISION DEFAULT 0 NOT NULL,   -- player->deltaviewheight: the view coming back up after a step or a landing
   damage_count INTEGER DEFAULT 0 NOT NULL,
   bonus_count  INTEGER DEFAULT 0 NOT NULL,
@@ -542,5 +548,13 @@ CREATE TABLE movers (
   crush     SMALLINT DEFAULT 0 NOT NULL, -- damages what it squeezes
   silent    SMALLINT DEFAULT 0 NOT NULL, -- type 141: no grinding noise
   new_flat  INTEGER,                     -- a floor's flat when it arrives (lowerAndChange, donut)
-  new_special INTEGER                    -- …and its new sector special
+  new_special INTEGER,                   -- …and its new sector special
+  think_key BIGINT                       -- its place in the thinkers' list, as it was made (MOVERS_KEY)
 );
+SET TERM ^ ;
+-- A mover is a new thinker: it takes its place at the end of the list (twice the next THING_SEQ)
+CREATE TRIGGER movers_key FOR movers BEFORE INSERT AS
+BEGIN
+  IF (NEW.think_key IS NULL) THEN NEW.think_key = 2 * NEXT VALUE FOR thing_seq;
+END^
+SET TERM ; ^

@@ -34,6 +34,10 @@ export function stateModes(states = STATES, mobjinfo = MOBJINFO) {
   }
   return mode;
 }
+/** mobjinfo's spawnhealth for a thing type (every mobj has one: an item's or a decoration's is 1000), or null */
+export function typeHealth(type, mobjinfo = MOBJINFO) {
+  return mobjinfo[MOBJ_TYPE[type] ?? MOBJ_BY_ED.get(type)]?.health ?? null;
+}
 export function typeStates(type, mobjinfo = MOBJINFO) {
   const m = mobjinfo[MOBJ_TYPE[type] ?? MOBJ_BY_ED.get(type)];
   if (!m) return [0, 0, 0, 0, 0, 0, 0, 0];
@@ -150,7 +154,7 @@ export async function loadResources(db, wad, { width = 320, height = 168, projy 
       'count_kill', 'count_item', 'reaction_time', 'spawn_state', 'see_state', 'pain_state', 'melee_state', 'missile_state',
       'death_state', 'xdeath_state', 'raise_state', 'on_states'],
     deh.types.map((t) => [
-      t.type, t.sprite, t.kind, t.radius, t.height, t.solid ?? 0, t.hp ?? null, t.speed ?? null, t.painChance ?? null,
+      t.type, t.sprite, t.kind, t.radius, t.height, t.solid ?? 0, t.hp ?? typeHealth(t.base ?? t.type, deh.mobjinfo), t.speed ?? null, t.painChance ?? null,
       t.dmgLo ?? null, t.drop ?? null, t.pickup ?? null, t.amount ?? null, itemMessage(t.sprite, strings),
       t.seeSnd ?? null, t.atkSnd ?? null, t.painSnd ?? null, t.deathSnd ?? null, t.hang ?? 0,
       t.mass ?? 100, t.floats ?? 0, t.nogravity ?? 0, t.shadow ?? 0, t.activeSnd ?? null, t.countKill ?? 0, t.countItem ?? 0,

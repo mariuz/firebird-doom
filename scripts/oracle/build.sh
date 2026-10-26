@@ -26,5 +26,6 @@ cd "$dir/build"
 cmake -S "$src" -B . -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_EXE_LINKER_FLAGS="-Wl,--wrap=G_Ticker -Wl,--wrap=P_SetupLevel" -DCMAKE_C_STANDARD_LIBRARIES="$dir/build/dump.o" >/dev/null
 cc -c -O1 -I"$src/src" -I"$src/src/doom" -I"$dir/build" -o dump.o "$here/dump.c"
+rm -f src/chocolate-doom   # (CMake doesn't know the binary depends on dump.o: link it again)
 cmake --build . --target chocolate-doom -j "$(nproc)" >/dev/null
 echo "$dir/build/src/chocolate-doom"

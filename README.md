@@ -775,7 +775,7 @@ measured against vanilla itself:
 - **The reference:** `npm run oracle` builds Chocolate Doom 3.1.0 headless. It's unmodified:
   one small file of ours, `scripts/oracle/dump.c`, is linked in around `G_Ticker`. After every
   tic it writes down the random index, where the player is, how fast they're moving, their
-  health, and sums over every thing on the map.
+  health, and sums over every thing on the map; and, when asked, every thinker in its list.
 - **The demos:** `npm run lmp-fixtures` makes a few demos on Freedoom's maps and records
   vanilla's trace of each, in `scripts/fixtures/lmp/`.
 - **The ratchet:** `npm run test:lmp` plays them in the port and reports the first tic each
@@ -790,11 +790,17 @@ measured against vanilla itself:
   friction and `STOPSPEED`, `P_TryMove` and `P_CheckPosition` through the map's own `BLOCKMAP`
   lump in its order, `P_SlideMove`'s traced slide along walls, gravity and the view's bob and
   squat (`P_ZMovement`, `P_CalcHeight`), and a moving floor carrying it in the same tic.
-- **Where it stands:** standing still on E1M1 it keeps step for all 350 tics: the player, the
-  things' states and the random index, from the level's setup on. On the scripted walk (turns,
-  runs, strafes, along walls, down a lowering stair) the player stays in step for all 215
-  tics. On the attract demos it does until a monster hurts it (75 tics on E1M1, 512 on MAP01):
-  the monsters themselves still move in doubles (phase L4), and a hit's thrust is missing (L5).
+- **The map and its thinkers (phase L3, done):** every thing spawns as DOOM spawns it (its
+  spawn health, its height on the floor where R_PointInSubsector puts it), and every tic runs
+  DOOM's thinkers in their list's order: the map's things in the order the map lists them, the
+  player's body among them, then the lights and doors, then everything made since, each thing's
+  movement, fall and animation together, and what one makes running that same tic.
+- **Where it stands:** standing still on E1M1 it keeps step for all 350 tics, every column, and
+  the oracle's list of every thinker agrees with the port's one by one. So does a demo firing a
+  shot, but for the puff's position. On the scripted walk (turns, runs, strafes, along walls,
+  down a lowering stair) the player stays in step for all 215 tics. On the attract demos it
+  does until a monster hurts it (75 tics on E1M1, 512 on MAP01): the monsters still see and
+  move in doubles (phase L4), and a hit's thrust is missing (L5).
 
 ### Co-op and deathmatch over the network
 
