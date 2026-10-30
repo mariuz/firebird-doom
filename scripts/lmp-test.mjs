@@ -16,7 +16,7 @@ import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
 import { parseLmp, writeLmp, portCmd, lmpMapName, BT_ATTACK, BT_USE, BT_CHANGE } from '../src/lmp.js';
-import { FIELDS, parseTrace, playAgainst, startDemo, parseMobjs, portThinkers, compareThinkers } from './lmp-sync.mjs';
+import { FIELDS, parseTrace, playAgainst, startDemo, restartDemo, parseMobjs, portThinkers, compareThinkers } from './lmp-sync.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -71,7 +71,7 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.lmp')).sort())
   const w = wads.get(wadFile);
   w.res = await loadResources(db, w.wad);   // (each WAD's resources again: they share one database)
   await startDemo(db, w.wad, w.res, demo, loadMap);
-  const r = await playAgainst(db, demo, trace);
+  const r = await playAgainst(db, demo, trace, { restart: () => restartDemo(db, w.wad, w.res, demo, loadMap) });
   const firsts = Object.fromEntries(FIELDS.map((f) => [f, r.first[f]?.tic ?? null]));
   results[name] = { tics: r.tics, synced: r.synced, first: firsts };
   const was = baseline[name];
@@ -95,9 +95,8 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.lmp')).sort())
 }
 // phase L3: the map as DOOM spawns it, and the thinkers in its order – every thinker one by one
 // (NAME.mobjs: the oracle's list at a few leveltimes) in the same order, each mobj with the same
-// position, angle, health, state and tics left. (The shot's puff is where the port's hitscan put
-// it, phase L5: its position alone may differ.)
-const ALLOWED = { 'e1m1-shoot': (f, d) => ['x', 'y', 'z'].includes(f) && d[3].startsWith('MT_PUFF') };
+// position, angle, health, state and tics left – the shot's puff and blood too (phase L5)
+const ALLOWED = {};
 for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.mobjs')).sort()) {
   const name = file.replace(/\.mobjs$/, '');
   const demo = parseLmp(fs.readFileSync(path.join(dir, `${name}.lmp`)));
@@ -132,6 +131,15 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.mobjs')).sort(
   const w = results['e1m1-wake'];
   const off = w ? FIELDS.filter((f) => w.first[f] !== null) : ['no e1m1-wake'];
   assert(w && off.length === 0, `the monsters in fixed point: on e1m1-wake they wake, chase and stay in step with vanilla for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
+}
+
+// phase L5: the attacks – hitscan (P_AimLineAttack, P_LineAttack, puffs and blood), P_DamageMobj's
+// thrust and pain, a monster thrown back in its own turn, the player killed, turned to the killer
+// and the level restarted: the scripted shots and both title demos agree in every column to the end
+for (const name of ['e1m1-shoot', 'e1m1-walk', 'e1m1-attract', 'map01-attract']) {
+  const w = results[name];
+  const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
+  assert(w && off.length === 0, `the attacks in fixed point: ${name} stays in step with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
 }
 
 // phase L2: the scripted walk (turns, runs, strafes, a wall) keeps the player in step all the way

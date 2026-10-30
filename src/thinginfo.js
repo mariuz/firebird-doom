@@ -29,9 +29,10 @@ export const THING_TYPES = [
   { type: 9008, sprite: 'APLS', kind: 'missile', radius: 13, height: 8, speed: 25, dmgLo: 5, deathSnd: 'DSFIRXPL', seeSnd: 'DSPLASMA' },
   // the arch-vile's fire (A_VileTarget / A_Fire)
   { type: 9015, sprite: 'FIRE', kind: 'flame', radius: 1, height: 1 },
-  { type: 9012, sprite: 'BFE2', kind: 'fx', radius: 1, height: 1 },
-  { type: 9010, sprite: 'PUFF', kind: 'fx', radius: 1, height: 1 },
-  { type: 9011, sprite: 'BLUD', kind: 'fx', radius: 1, height: 1 },
+  // (info.c's 20 round and 16 tall: a puff rising under a low ceiling stops 16 below it)
+  { type: 9012, sprite: 'BFE2', kind: 'fx', radius: 20, height: 16 },
+  { type: 9010, sprite: 'PUFF', kind: 'fx', radius: 20, height: 16 },
+  { type: 9011, sprite: 'BLUD', kind: 'fx', radius: 20, height: 16 },
 
   // monsters
   M(3004, 'POSS', { hp: 20, speed: 8, painChance: 200, drop: 2007, seeSnd: 'DSPOSIT1', atkSnd: 'DSPISTOL', painSnd: 'DSPOPAIN', deathSnd: 'DSPODTH1', activeSnd: 'DSPOSACT' }),

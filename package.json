@@ -16,6 +16,7 @@
     "save-fixtures": "node scripts/record-saves.mjs",
     "oracle": "sh scripts/oracle/build.sh",
     "lmp-fixtures": "node scripts/lmp-fixtures.mjs",
+    "lmp-rnglog": "node scripts/lmp-rnglog.mjs",
     "test:weapons": "node scripts/weapons-test.mjs",
     "test:specials": "node scripts/specials-test.mjs",
     "test:physics": "node scripts/physics-test.mjs",

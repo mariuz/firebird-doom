@@ -40,7 +40,8 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   fidelity ends (the README lists "no `.lmp` demos" as a deviation). *Under way*, in phases
   (under **Simulation** below: *Original `.lmp` demos, in phases*): phases L0, the yardstick,
   L1, DOOM's random numbers, L2, the player in fixed point, L3, the map as DOOM spawns it
-  and its thinkers' order, and L4, the monsters' sight and walk, are done.
+  and its thinkers' order, and L4, the monsters' sight and walk, are done; L5, the attacks, is
+  under way (the shots and the damage are done; the missiles and the blasts are next).
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
@@ -446,9 +447,35 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   609 (was 237) and the mobjs to 647 (was 279). What's left starts at the shots (L5). The lost
   soul's charge still moves in doubles (L5, with PIT_CheckThing's slam).
 
-**Phase L5: attacks.** P_AimLineAttack and P_LineAttack through P_PathTraverse's intercepts,
-P_SpawnMissile and missiles in fixed point, P_RadiusAttack over the blockmap, P_DamageMobj's
-thrust. Test: the attract demos stay in step through the fighting.
+**Phase L5: attacks.** *Under way.* Test: the attract demos stay in step through the fighting.
+- **The shots (done):** P_PathTraverse in 16.16 (`PATH_INTERCEPTS`: the blocks as DOOM steps
+  through them, each block's lines in BLOCKMAP order, then its shootable things, those whose
+  middle is in it and whose corner-to-corner diagonal the trace crosses), P_AimLineAttack
+  (`AIM_LINE_ATTACK`: the slopes narrowed by each opening, the first thing met within them) and
+  P_LineAttack (`LINE_ATTACK`: the shootable special lines, the wall puff 4 units short and none
+  into a sky, a thing's blood – a barrel's puff – 10 short, then the damage). P_BulletSlope,
+  P_GunShot, the shotguns, the chaingun, A_Punch and A_Saw (its lunge) and the monsters' bullets
+  on them, each P_SubRandom drawn as DOOM draws it (`BIN_AND` evaluates its argument twice: a
+  draw inside one drew twice).
+- **The damage (done):** P_DamageMobj in order: a charging lost soul stopped, half on the
+  easiest skill, the thrust – damage × 12.5 / mass along R_PointToAngle2 from what hit (the
+  shooter, the missile), C's 32-bit wrap included, none from the chainsaw, a blow under 40 that
+  kills from more than 64 below throwing it forwards (P_Random() & 1) – E1M8's floor that never
+  kills, armour, the pain roll, reactiontime, and the retarget under the threshold (the player's
+  and a barrel's never counting down). P_KillMobj: the corpse a quarter as tall, sliding on as
+  thrown; a world's kill of a player counts against them. P_XYMovement for monsters, corpses
+  and barrels (`XY_MOVEMENT_MOBJ`: halved steps, friction and STOPSPEED, none in the air, a
+  corpse half off a step sliding on); a thing set moving before its turn moves in its turn
+  (`LATE_MOVERS`, `RUN_LATE`), as DOOM runs every mobj every tic. P_DeathThink's turn to the
+  killer in BAMs. Puffs and blood are info.c's 16 tall under their own sector's ceiling. The
+  test harness restarts the level when the dead player presses use (G_DoReborn).
+- **Where it stands:** both attract demos, E1M1's (a death and the restart included) and
+  MAP01's, the shot demo and the walk agree with vanilla in every column to the end (700, 700,
+  102, 215 tics; `npm run test:lmp` asserts it).
+- **Next:** P_SpawnMissile and P_SpawnPlayerMissile in 16.16, the missiles' flight through
+  P_TryMove with PIT_CheckThing's missile branch and the ceilingline sky hack, P_ExplodeMissile;
+  P_RadiusAttack over the blockmap; the lost soul's slam through PIT_CheckThing; the BFG's spray
+  by P_AimLineAttack. New fixtures where imps throw and barrels burst.
 
 **Phase L6: the world.** Movers at DOOM's speeds and in its order (T_MoveFloor/T_MoveCeiling,
 the crushers and PIT_ChangeSector's gibs and dropped items), sector specials, lights, switches;

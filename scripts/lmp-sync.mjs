@@ -58,9 +58,11 @@ export async function portRow(db) {
 /**
  * Play DEMO (parsed) in the port, a tic at a time, against TRACE (parsed). The map must be the
  * demo's (loadMap with its skill and options first). → { tics, first: { field: { tic, port, vanilla } | null },
- * synced: tics the player stayed in step (every PLAYER_FIELDS agreeing) }
+ * synced: tics the player stayed in step (every PLAYER_FIELDS agreeing) }. RESTART: how to load the
+ * level again when the player, dead, presses USE (G_DoReborn; RESTARTDEMO) – without it the
+ * port stops there. The trace has a leveltime 0 line for each restart.
  */
-export async function playAgainst(db, demo, trace, { limit = Infinity } = {}) {
+export async function playAgainst(db, demo, trace, { limit = Infinity, restart = null } = {}) {
   const first = Object.fromEntries(FIELDS.map((f) => [f, null]));
   // the trace's first line is the level as P_SetupLevel left it (leveltime 0), before any tic
   const setup = trace[0]?.leveltime === 0 ? 1 : 0;
@@ -76,12 +78,20 @@ export async function playAgainst(db, demo, trace, { limit = Infinity } = {}) {
     if (synced === null && PLAYER_FIELDS.some((f) => first[f])) synced = Math.max(0, tic - 1);
   };
   if (setup) await compare(0, trace[0]);
-  for (let t = 0; t < n; t++) {
+  let off = setup;
+  let t = 0;
+  for (; t < n && t + off < trace.length; t++) {
     const [fwd, side, turn, fire, use, weapon, run] = portCmd(demo.tics[t][demo.consoleplayer] ?? demo.tics[t][0]);
-    await db.query('SELECT * FROM doom_tic(1, ?, ?, ?, ?, ?, ?, ?)', [fwd, side, turn, fire, use, weapon, run]);
-    await compare(t + 1, trace[t + setup]);
+    const hud = (await db.query('SELECT * FROM doom_tic(1, ?, ?, ?, ?, ?, ?, ?)', [fwd, side, turn, fire, use, weapon, run])).rows[0];
+    await compare(t + 1, trace[t + off]);
+    // G_DoReborn: the level again, before the next tic (its P_SetupLevel line in the trace)
+    if (hud?.EXIT_KIND === 3 && restart) {
+      await restart();
+      off++;
+      if (t + off < trace.length) await compare(t + 1, trace[t + off]);
+    }
   }
-  return { tics: n, first, synced: synced ?? n };
+  return { tics: t, first, synced: synced ?? t };
 }
 
 // ── every thinker, one by one (dump.c's ORACLE_MOBJS: NAME.mobjs) ──
@@ -147,6 +157,16 @@ export function compareThinkers(van, port) {
     for (const f of MOBJ_FIELDS) if (p[f] !== v[f]) fields[f].push([i, p[f], v[f], label(v)]);
   }
   return { order, fields, count: [port.length, van.length] };
+}
+
+/** The demo's map again after the player's death (G_DoReborn alone: G_DoLoadLevel, P_Random's
+ * index carrying on, the player reborn) */
+export async function restartDemo(db, wad, res, demo, loadMap) {
+  const commercial = wad.mapNames().some((m) => m.startsWith('MAP'));
+  await loadMap(db, wad, res, lmpMapName(demo, commercial), {
+    skill: demo.skill, players: demo.players.filter(Boolean).length, deathmatch: demo.deathmatch,
+    respawn: demo.respawn, fast: demo.fast, nomonsters: demo.nomonsters,
+  });
 }
 
 /** Load the demo's map in the port as the demo starts it (G_InitNew: skill, options; M_ClearRandom) */

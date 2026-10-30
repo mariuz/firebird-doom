@@ -338,7 +338,9 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   assert((await one('SELECT n FROM frags WHERE killer = 1 AND victim = 1')).N === 1 && h1b.FRAGS === -1, 'player 1 blows themself up: frags[1][1] = 1, and the status bar says -1');
   await db.exec('EXECUTE PROCEDURE damage_player(1000, NULL, 2)');
   const h2b = await tic([IDLE, IDLE], 2);
-  assert(h2b.FRAGS === 1 && (await one('SELECT SUM(n) s FROM frags')).S === 2, "the world (slime, a crusher) killing player 2 is nobody's frag");
+  // (P_KillMobj: with no source, target->player->frags[target->player]++)
+  assert(h2b.FRAGS === 0 && (await one('SELECT n FROM frags WHERE killer = 2 AND victim = 2')).N === 1,
+    'the world (slime, a crusher) killing player 2 counts against them, as a suicide: frags[2][2] = 1, the status bar 1 - 1 = 0');
   // -timer: the level ends after a minute
   await db.exec('UPDATE game SET time_limit = 1 WHERE id = 1');
   await db.exec('UPDATE game SET tic = 2098 WHERE id = 1');

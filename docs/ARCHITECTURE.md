@@ -69,8 +69,11 @@ tics (1–6, catching up to 35 Hz) and returns one row: everything the HUD needs
 Per tic, `DOOM_TIC` runs:
 
 - `PLAYER_THINK`, for each player: `P_PlayerThink` in its order. The turn and thrust
-  (`P_MovePlayer`) and the view (`P_CalcHeight`), sector specials, use lines, weapons (`HITSCAN`
-  with `AIM_SLOPE`, `FIRE_MISSILE`), noise (`NOISE_ALERT`). The fixed-point sums its body moves
+  (`P_MovePlayer`) and the view (`P_CalcHeight`), sector specials, use lines, weapons (the shots:
+  `BULLET_SLOPE` and `AIM_LINE_ATTACK`, `LINE_ATTACK` over `PATH_INTERCEPTS`, P_PathTraverse in
+  16.16; `FIRE_MISSILE`), noise (`NOISE_ALERT`). A hit is `DAMAGE_THING` / `DAMAGE_PLAYER`
+  (P_DamageMobj), whose thrust (`DAMAGE_THRUST`) sets the momentum `XY_MOVEMENT_MOBJ` moves a
+  monster, corpse or barrel by. The fixed-point sums its body moves
   by are PSQL functions next to `P_RANDOM` (`FX_MUL`, `FX_DIV`, `POINT_ON_LINE_SIDE`,
   `POINT_TO_ANGLE2`, …) over the `FINESINE` and `TANTOANGLE` tables; positions stay DOUBLE
   columns, each a whole number of 1/65536ths, so they go to 16.16 and back exactly.
@@ -85,7 +88,7 @@ Per tic, `DOOM_TIC` runs:
     `XY_MOVEMENT_FX` with `TRY_MOVE_FX` through `CHECK_POSITION_FX` over the map's own
     `BLOCKMAP` rows, walk-over lines from its spechit list, `SLIDE_MOVE_FX`'s traced slide;
     `Z_MOVEMENT_FX`; then `TOUCH_SPECIALS`, its pickups), a charging lost soul's
-    (`SKULL_STEP`), a missile's (`MISSILE_STEP`) – its fall or float (`Z_STEP`), then its
+    (`SKULL_STEP`), a missile's (`MISSILE_STEP`), anything else thrown (`XY_MOVEMENT_MOBJ`) – its fall or float (`Z_STEP`), then its
     state's countdown (`SET_STATE`, which calls the next state's action: A_Look, A_Chase, the
     attacks, …), and on Nightmare a corpse's chance to rise (`NIGHTMARE_STEP`). A monster sees
     by `SIGHT_FX` (P_CheckSight through the BSP, in 16.16) and looks by `LOOK_FOR_PLAYERS`; it
@@ -99,7 +102,10 @@ Per tic, `DOOM_TIC` runs:
   rest, as DOOM's new thinkers do at the end of its list. `THINK_KEY`, a context variable,
   says whose turn it is (-1 during `PLAYER_THINK`): a state set on a thing whose turn is still
   to come this tic, or a thing spawned, counts down this tic too (`THINK_AHEAD`), so it ends a
-  tic sooner. `MOVERS_THINK`, `LIGHTS_THINK`, `SKULLS_THINK`, `MISSILES_THINK`,
+  tic sooner. A thing set moving by a thinker before its turn (a monster pushed by a shot) goes
+  in `LATE_MOVERS`, a temporary table, and `RUN_LATE` runs it in its turn, before the next
+  thinker in the list: DOOM runs every mobj every tic, the list here only those with something
+  to do. `MOVERS_THINK`, `LIGHTS_THINK`, `SKULLS_THINK`, `MISSILES_THINK`,
   `NIGHTMARE_RESPAWN` and `STATES_THINK` (the things alone) are the same steps in a loop, for
   the tests.
 - The countdowns: damage and bonus flashes, messages, power-ups.

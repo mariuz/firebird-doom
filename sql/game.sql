@@ -857,35 +857,95 @@ BEGIN
     FROM thing_types tt WHERE tt.thing_type = :ttype;
 END^
 
-CREATE OR ALTER PROCEDURE damage_player (dmg INTEGER, src INTEGER = NULL, pid SMALLINT = 1)
+-- P_DamageMobj's thrust, in 16.16: TID is pushed away from INFLICTOR (what hit it: the shooter,
+-- the missile, the barrel) by DMG × (FRACUNIT >> 3) × 100 / its mass, in C's 32-bit int sums
+-- (a telefrag's 10000 wraps). None with no inflictor (a crusher, a floor), for a player with
+-- no clipping, or from a player holding the chainsaw. HP is its health before the hit: a blow
+-- under 40 that kills it, from more than 64 below it, throws it forwards half the time
+-- (P_Random() & 1), four times as hard.
+CREATE OR ALTER PROCEDURE damage_thrust (tid INTEGER, inflictor INTEGER, src INTEGER, dmg INTEGER, hp INTEGER)
+AS
+DECLARE ix BIGINT;
+DECLARE iy BIGINT;
+DECLARE iz BIGINT;
+DECLARE tx BIGINT;
+DECLARE ty BIGINT;
+DECLARE tz BIGINT;
+DECLARE mass INTEGER;
+DECLARE noclip SMALLINT;
+DECLARE ang BIGINT;
+DECLARE thrust BIGINT;
+DECLARE fa INTEGER;
+DECLARE still SMALLINT;
+DECLARE k BIGINT;
+BEGIN
+  IF (inflictor IS NULL) THEN EXIT;
+  ix = NULL;
+  SELECT fx_of(i.x), fx_of(i.y), fx_of(i.z) FROM things i WHERE i.id = :inflictor INTO ix, iy, iz;
+  IF (ix IS NULL) THEN EXIT;
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), tt.mass, COALESCE((SELECT p.noclip FROM player p WHERE p.thing_id = t.id), 0),
+         IIF(t.momx = 0 AND t.momy = 0 AND BIN_AND(t.flags, 262144) = 0 AND t.kind NOT IN ('player', 'missile', 'cube'), 1, 0),
+         COALESCE(t.think_key, 2 * t.id)
+    FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
+    INTO tx, ty, tz, mass, noclip, still, k;
+  IF (noclip = 1 OR COALESCE(mass, 0) = 0) THEN EXIT;
+  IF (EXISTS (SELECT 1 FROM player p WHERE p.thing_id = :src AND p.weapon = 8)) THEN EXIT;   -- (wp_chainsaw)
+  ang = point_to_angle2(ix, iy, tx, ty);
+  thrust = fx32(fx32(dmg * 8192) * 100) / mass;
+  IF (dmg < 40 AND dmg > hp) THEN
+    IF (tz - iz > 4194304) THEN
+      IF (p_rand_and(1) = 1) THEN
+      BEGIN
+        ang = BIN_AND(ang + 2147483648, 4294967295);                                   -- (ANG180)
+        thrust = fx32(thrust * 4);
+      END
+  fa = BIN_SHR(ang, 19);
+  UPDATE things t SET momx = (fx_of(t.momx) + fx_mul(:thrust, fine_cosine(:fa))) / 65536e0,
+                      momy = (fx_of(t.momy) + fx_mul(:thrust, fine_sine(:fa))) / 65536e0
+   WHERE t.id = :tid;
+  -- (set moving by a thinker before its turn: it moves in its turn, this tic)
+  IF (still = 1 AND think_ahead(k) = 1 AND EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND (t.momx <> 0 OR t.momy <> 0))) THEN
+  BEGIN
+    INSERT INTO late_movers (k, id) VALUES (:k, :tid);
+    RDB$SET_CONTEXT('USER_TRANSACTION', 'LATE', '1');
+  END
+END^
+
+-- P_DamageMobj for a player: DMG from SRC (who did it; NULL: the world – crushers, slime),
+-- by INFLICTOR (what hit: the shooter, a missile; NULL: nothing to be thrown back from)
+CREATE OR ALTER PROCEDURE damage_player (dmg INTEGER, src INTEGER = NULL, pid SMALLINT = 1, inflictor INTEGER = NULL)
 AS
 DECLARE god SMALLINT;
 DECLARE hp INTEGER;
 DECLARE tic INTEGER;
 DECLARE alive SMALLINT;
 DECLARE nst INTEGER;
-DECLARE killed INTEGER;
 DECLARE ptid INTEGER;
-DECLARE px DOUBLE PRECISION;
-DECLARE py DOUBLE PRECISION;
 DECLARE invuln INTEGER;
 DECLARE arm INTEGER;
 DECLARE arm_type SMALLINT;
 DECLARE saved INTEGER = 0;
 DECLARE is_dead SMALLINT;
+DECLARE sspec INTEGER;
+DECLARE thr INTEGER;
+DECLARE fkiller SMALLINT;
 BEGIN
-  SELECT p.armor, p.armor_type, p.dead, p.invuln_tics, p.god, p.thing_id, t.x, t.y
+  SELECT p.armor, p.armor_type, p.dead, p.invuln_tics, p.god, p.thing_id, p.health,
+         (SELECT s.special FROM sectors s WHERE s.id = t.sector_id), t.threshold
     FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = :pid
-    INTO arm, arm_type, is_dead, invuln, god, ptid, px, py;
+    INTO arm, arm_type, is_dead, invuln, god, ptid, hp, sspec, thr;
   IF (ptid IS NULL) THEN EXIT;
-  IF (is_dead = 1 OR COALESCE(dmg, 0) <= 0) THEN EXIT;
-  -- P_DamageMobj: on the easiest skill you take half
-  IF ((SELECT g.skill FROM game g WHERE g.id = 1) = 1) THEN dmg = dmg / 2;
-  -- P_DamageMobj: invulnerable (pw_invulnerability) or in god mode
-  -- (CF_GODMODE), nothing under 1000 gets through – a telefrag (10000) does
+  IF (is_dead = 1 OR hp <= 0 OR COALESCE(dmg, 0) <= 0) THEN EXIT;
+  -- on the easiest skill you take half (damage >>= 1)
+  IF ((SELECT g.skill FROM game g WHERE g.id = 1) = 1) THEN dmg = BIN_SHR(dmg, 1);
+  -- thrown back – god mode or not
+  EXECUTE PROCEDURE damage_thrust(ptid, inflictor, src, dmg, hp);
+  -- the end of game hell hack: on E1M8's exit floor (11) nothing kills you
+  IF (sspec = 11 AND dmg >= hp) THEN dmg = hp - 1;
+  -- invulnerable (pw_invulnerability) or in god mode (CF_GODMODE), nothing under 1000 gets
+  -- through – a telefrag (10000) does
   IF ((invuln > 0 OR god = 1) AND dmg < 1000) THEN EXIT;
-  -- P_DamageMobj: green armour (type 1) takes a third, blue (type 2) half;
-  -- when it's used up, the type goes too
+  -- green armour (type 1) takes a third, blue (type 2) half; when it's used up, the type goes too
   IF (arm_type > 0) THEN
   BEGIN
     saved = IIF(arm_type = 1, dmg / 3, dmg / 2);
@@ -894,63 +954,66 @@ BEGIN
       saved = arm;
       arm_type = 0;
     END
+    dmg = dmg - saved;
   END
+  -- (player->damagecount: the damage after armour, at most 100)
   UPDATE player
      SET armor = armor - :saved, armor_type = :arm_type, attacker_id = :src,   -- (player->attacker = source)
-         health = health - (:dmg - :saved),
+         health = MAXVALUE(health - :dmg, 0),
          damage_count = MINVALUE(damage_count + :dmg, 100)
    WHERE id = :pid;
-  SELECT p.health FROM player p WHERE p.id = :pid INTO hp;
+  hp = hp - dmg;
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
   IF (hp <= 0) THEN
   BEGIN
-    -- P_KillMobj: no longer solid (a player's corpse can be walked over), into the
-    -- xdeathstate below -spawnhealth, else the deathstate, its first frame 0–3 tics
-    -- shorter (at least 1). The body keeps the health it died with: A_PlayerScream
-    -- screams louder below -50. (The cry comes with the second frame: A_PlayerScream,
-    -- or A_XScream when gibbed.)
+    -- P_KillMobj: no longer solid (a player's corpse can be walked over), a quarter as tall
+    -- (MF_CORPSE), sliding on as it was thrown; into the xdeathstate below -spawnhealth, else the
+    -- deathstate, its first frame 0–3 tics shorter (at least 1). The body keeps the health it
+    -- died with: A_PlayerScream screams louder below -50. (The cry comes with the second frame:
+    -- A_PlayerScream, or A_XScream when gibbed.)
+    -- source->player->frags[target->player]++ – a player's kill of a player, their own self
+    -- included, and the world's kills count against the one killed (the status bar takes them off)
+    fkiller = NULL;
+    IF (src IS NULL) THEN fkiller = pid;
+    ELSE SELECT p.id FROM player p WHERE p.thing_id = :src INTO fkiller;
+    IF (fkiller IS NOT NULL) THEN UPDATE frags f SET f.n = f.n + 1 WHERE f.victim = :pid AND f.killer = :fkiller;
+    UPDATE player SET dead = 1, health = 0, msg = 'You died. Press USE to ' || IIF((SELECT g.players FROM game g WHERE g.id = 1) > 1, 'respawn.', 'restart.'), msg_tics = 100000
+     WHERE id = :pid;
+    -- P_DropWeapon, the weapon goes down (A_Lower keeps it out of sight)
+    EXECUTE PROCEDURE set_psprite(pid, 0, (SELECT wi.down_state FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon
+                                            WHERE p.id = :pid), tic);
     SELECT IIF(:hp < -100, tt.xdeath_state, tt.death_state) FROM thing_types tt WHERE tt.thing_type = 1 INTO nst;
-    UPDATE things t SET solid = 0, hp = :hp WHERE t.id = :ptid;
+    UPDATE things t SET solid = 0, hp = :hp, height = t.height / 4 WHERE t.id = :ptid;
     EXECUTE PROCEDURE set_state(ptid, nst, tic) RETURNING_VALUES alive;
     UPDATE things t SET state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1)
      WHERE t.id = :ptid AND t.state_tic IS NOT NULL;
+    EXIT;
   END
-  ELSE
+  UPDATE things t SET hp = :hp WHERE t.id = :ptid;
+  -- a player's painchance is 255 (P_Random() < 255: all but one roll in 256); A_Pain cries in
+  -- S_PLAY_PAIN2
+  IF (p_rand256() < 255) THEN
+    EXECUTE PROCEDURE set_state(ptid, (SELECT tt.pain_state FROM thing_types tt WHERE tt.thing_type = 1), tic)
+      RETURNING_VALUES alive;
+  -- the pain ends a teleport's freeze (reactiontime = 0)
+  UPDATE things t SET reaction = 0 WHERE t.id = :ptid;
+  -- then, as for a monster: hurt by someone else (not an arch-vile) with no threshold – the
+  -- first time only, for nothing counts a player's down – it's after them (BASETHRESHOLD), and
+  -- standing in its spawn state, it goes to its see state, S_PLAY_RUN1
+  IF (thr = 0 AND src IS NOT NULL AND src <> ptid
+      AND NOT EXISTS (SELECT 1 FROM things v WHERE v.id = :src AND v.thing_type = 64)) THEN
   BEGIN
-    UPDATE things t SET hp = :hp WHERE t.id = :ptid;
-    -- P_DamageMobj: a player's painchance is 255 (P_Random() < 255: all but one roll in 256),
-    -- and the pain ends a teleport's freeze (reactiontime = 0); A_Pain cries in S_PLAY_PAIN2
-    IF (p_rand256() < 255) THEN
-    BEGIN
-      UPDATE things t SET reaction = 0 WHERE t.id = :ptid;
-      EXECUTE PROCEDURE set_state(ptid, (SELECT tt.pain_state FROM thing_types tt WHERE tt.thing_type = 1), tic)
-        RETURNING_VALUES alive;
-    END
-    -- (then, as for a monster: hurt by someone else (not an arch-vile) while standing in its
-    -- spawn state, it goes to its see state – S_PLAY_RUN1)
-    ELSE IF (src IS NOT NULL AND src <> ptid
-             AND NOT EXISTS (SELECT 1 FROM things v WHERE v.id = :src AND v.thing_type = 64)
-             AND EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-                          WHERE t.id = :ptid AND t.state = tt.spawn_state)) THEN
+    UPDATE things t SET threshold = 100 WHERE t.id = :ptid;
+    IF (EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+                 WHERE t.id = :ptid AND t.state = tt.spawn_state)) THEN
       EXECUTE PROCEDURE set_state(ptid, (SELECT tt.see_state FROM thing_types tt WHERE tt.thing_type = 1), tic)
         RETURNING_VALUES alive;
   END
-  UPDATE player SET dead = 1, health = 0, msg = 'You died. Press USE to ' || IIF((SELECT g.players FROM game g WHERE g.id = 1) > 1, 'respawn.', 'restart.'), msg_tics = 100000
-   WHERE id = :pid AND health <= 0;
-  killed = ROW_COUNT;
-  -- P_KillMobj: P_DropWeapon, the weapon goes down (A_Lower keeps it out of sight)
-  IF (killed > 0) THEN
-    EXECUTE PROCEDURE set_psprite(pid, 0, (SELECT wi.down_state FROM player p JOIN weapon_info wi ON wi.weapon = p.weapon
-                                            WHERE p.id = :pid), tic);
-  -- P_KillMobj: source->player->frags[target->player]++ – a player's kill of a
-  -- player, their own self included (the status bar counts that one against them)
-  IF (killed > 0) THEN
-    UPDATE frags f SET f.n = f.n + 1
-     WHERE f.victim = :pid AND f.killer = (SELECT p.id FROM player p WHERE p.thing_id = :src);
 END^
 
--- P_DamageMobj. SRC is who did it (NULL: the world – crushers, slime).
-CREATE OR ALTER PROCEDURE damage_thing (tid INTEGER, dmg INTEGER, src INTEGER = NULL)
+-- P_DamageMobj for anything else shootable. SRC is who did it (NULL: the world – crushers),
+-- INFLICTOR what hit it (thrown back from it; NULL: not thrown).
+CREATE OR ALTER PROCEDURE damage_thing (tid INTEGER, dmg INTEGER, src INTEGER = NULL, inflictor INTEGER = NULL)
 AS
 DECLARE k VARCHAR(10);
 DECLARE hp INTEGER;
@@ -978,69 +1041,68 @@ DECLARE spid SMALLINT;
 DECLARE skullfly INTEGER;
 DECLARE painroll INTEGER;
 BEGIN
-  SELECT t.kind, t.hp, t.st, tt.pain_chance, tt.drop_type, t.x, t.y, tt.count_kill, t.thing_type,
-         tt.hp, t.state, tt.spawn_state, tt.see_state, tt.pain_state, tt.death_state, tt.xdeath_state
+  SELECT t.kind, t.hp, t.st, tt.pain_chance, tt.drop_type, tt.count_kill, t.thing_type,
+         tt.hp, t.state, tt.spawn_state, tt.see_state, tt.pain_state, tt.death_state, tt.xdeath_state,
+         BIN_AND(t.flags, 262144), t.threshold
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
    WHERE t.id = :tid
-    INTO k, hp, st, pain_chance, drop_type, tx, ty, count_kill, ttype,
-         spawn_hp, state, spawn_state, see_state, pain_state, death_state, xdeath_state;
+    INTO k, hp, st, pain_chance, drop_type, count_kill, ttype,
+         spawn_hp, state, spawn_state, see_state, pain_state, death_state, xdeath_state, skullfly, thr;
   -- (only what's shootable: a living monster, barrel, Keen or boss brain on the frame tables)
   IF (k IS NULL OR k NOT IN ('monster', 'barrel', 'keen', 'brain') OR st IN ('dying', 'dead') OR state IS NULL
-      OR COALESCE(dmg, 0) <= 0) THEN EXIT;
+      OR hp <= 0 OR COALESCE(dmg, 0) <= 0) THEN EXIT;
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  -- MF_SKULLFLY (262144 in THINGS.FLAGS): a charging lost soul hit in flight stops dead
+  -- (P_XYMovement then puts it back in its spawn state) – before the hit's thrust
+  IF (skullfly <> 0) THEN UPDATE things t SET momx = 0, momy = 0, momz = 0 WHERE t.id = :tid;
+  EXECUTE PROCEDURE damage_thrust(tid, inflictor, src, dmg, hp);
   hp = hp - dmg;
-  -- P_DamageMobj, P_KillMobj
+  IF (hp <= 0) THEN
   BEGIN
-    SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
-    -- MF_SKULLFLY (262144 in THINGS.FLAGS): a charging lost soul hit in flight stops dead
-    -- (P_XYMovement then puts it back in its spawn state). (DOOM's thrust from the hit,
-    -- which this port gives no monster, would set it drifting again.)
-    skullfly = 0;
-    SELECT BIN_AND(t.flags, 262144) FROM things t WHERE t.id = :tid INTO skullfly;
-    IF (skullfly <> 0) THEN UPDATE things t SET momx = 0, momy = 0, momz = 0 WHERE t.id = :tid;
-    IF (hp <= 0) THEN
+    -- P_KillMobj: no longer shootable (its state's mode, 'dying', says so) nor charging; solid
+    -- until A_Fall; a quarter as tall (MF_CORPSE), and it slides on as it was thrown
+    UPDATE things t SET hp = :hp, height = t.height / 4, flags = BIN_AND(t.flags, BIN_NOT(262144)) WHERE id = :tid;
+    IF (count_kill = 1) THEN
+      UPDATE player p SET kills = kills + 1
+       WHERE p.id = COALESCE((SELECT pk.id FROM player pk WHERE pk.thing_id = :src),
+                             IIF((SELECT g.players FROM game g WHERE g.id = 1) = 1, 1, 0));
+    -- gibbed below minus its spawn health (if it has the frames), else its death; the
+    -- first frame 0–3 tics shorter (at least 1). The cry is A_Scream's, in those frames.
+    EXECUTE PROCEDURE set_state(tid, IIF(hp < -spawn_hp AND xdeath_state > 0, xdeath_state, death_state), tic)
+      RETURNING_VALUES alive;
+    UPDATE things t SET state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1)
+     WHERE t.id = :tid AND t.state_tic IS NOT NULL;
+    -- what it drops (a clip, a shotgun, a chaingun), on the floor where it died (MF_DROPPED)
+    IF (drop_type IS NOT NULL) THEN
     BEGIN
-      -- P_KillMobj: no longer shootable (its state's mode, 'dying', says so); solid until A_Fall
-      UPDATE things t SET hp = :hp, momx = 0, momy = 0, flags = BIN_AND(t.flags, BIN_NOT(262144)) WHERE id = :tid;
-      IF (count_kill = 1) THEN
-        UPDATE player p SET kills = kills + 1
-         WHERE p.id = COALESCE((SELECT pk.id FROM player pk WHERE pk.thing_id = :src),
-                               IIF((SELECT g.players FROM game g WHERE g.id = 1) = 1, 1, 0));
-      -- gibbed below minus its spawn health (if it has the frames), else its death; the
-      -- first frame 0–3 tics shorter (at least 1). The cry is A_Scream's, in those frames.
-      EXECUTE PROCEDURE set_state(tid, IIF(hp < -spawn_hp AND xdeath_state > 0, xdeath_state, death_state), tic)
-        RETURNING_VALUES alive;
-      UPDATE things t SET state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1)
-       WHERE t.id = :tid AND t.state_tic IS NOT NULL;
-      IF (drop_type IS NOT NULL) THEN
-      BEGIN
-        EXECUTE PROCEDURE spawn_thing(drop_type, tx, ty, NULL, 0) RETURNING_VALUES dummy;
-        UPDATE things t SET flags = BIN_OR(t.flags, 65536) WHERE t.id = :dummy;
-      END
-      EXIT;
+      SELECT t.x, t.y FROM things t WHERE t.id = :tid INTO tx, ty;
+      EXECUTE PROCEDURE spawn_thing(drop_type, tx, ty, NULL, 0) RETURNING_VALUES dummy;
+      UPDATE things t SET flags = BIN_OR(t.flags, 65536) WHERE t.id = :dummy;
     END
-    UPDATE things t SET hp = :hp WHERE t.id = :tid;
-    -- the pain chance: into its pain state, and it'll fight back (MF_JUSTHIT)
-    -- (P_Random() is drawn first, flying or not)
-    painroll = p_rand256();
-    IF (pain_state > 0 AND painroll < pain_chance AND skullfly = 0) THEN
+    EXIT;
+  END
+  UPDATE things t SET hp = :hp WHERE t.id = :tid;
+  -- the pain chance: into its pain state, and it'll fight back (MF_JUSTHIT)
+  -- (P_Random() is drawn first, flying or not)
+  painroll = p_rand256();
+  IF (pain_state > 0 AND painroll < pain_chance AND skullfly = 0) THEN
+  BEGIN
+    UPDATE things t SET just_hit = 1 WHERE t.id = :tid;
+    EXECUTE PROCEDURE set_state(tid, pain_state, tic) RETURNING_VALUES alive;
+  END
+  UPDATE things t SET reaction = 0 WHERE t.id = :tid;
+  -- whoever hurt it becomes its target – unless it's still bound to another (its threshold;
+  -- an arch-vile never is), or the source is an arch-vile (MT_VILE, 64: its attacks provoke
+  -- nobody) – for BASETHRESHOLD, and still in its spawn state, it wakes. A barrel's target
+  -- (the first to hurt it: nothing counts its threshold down) is credited with its blast
+  -- (A_Explode); burst at one go, it has none (P_KillMobj sets no target).
+  IF (src IS NOT NULL AND src <> tid AND (thr = 0 OR ttype = 64) AND k IN ('monster', 'barrel')) THEN
+  BEGIN
+    SELECT s.kind, s.thing_type FROM things s WHERE s.id = :src INTO skind, stype;
+    IF (stype IS DISTINCT FROM 64) THEN
     BEGIN
-      UPDATE things t SET just_hit = 1 WHERE t.id = :tid;
-      EXECUTE PROCEDURE set_state(tid, pain_state, tic) RETURNING_VALUES alive;
-    END
-    UPDATE things t SET reaction = 0 WHERE t.id = :tid;
-    -- a barrel hurt but not burst: whoever did it becomes its target, credited with its blast
-    -- (A_Explode); burst at one go, it has none (P_KillMobj sets no target)
-    IF (k = 'barrel' AND src IS NOT NULL AND src <> tid
-        AND NOT EXISTS (SELECT 1 FROM things s WHERE s.id = :src AND s.thing_type = 64)) THEN
-      UPDATE things t SET owner_id = :src WHERE t.id = :tid;
-    -- whoever hurt it becomes its target (unless it's still bound to another, or the
-    -- source is an arch-vile), for BASETHRESHOLD; still in its spawn state, it wakes
-    IF (src IS NOT NULL AND src <> tid AND k = 'monster') THEN
-    BEGIN
-      SELECT s.kind, s.thing_type FROM things s WHERE s.id = :src INTO skind, stype;
-      SELECT t.threshold FROM things t WHERE t.id = :tid INTO thr;
-      -- (MT_VILE, 64: an arch-vile's attacks provoke nobody; a hurt arch-vile turns on anyone)
-      IF ((thr = 0 OR ttype = 64) AND stype IS DISTINCT FROM 64 AND skind IN ('player', 'monster')) THEN
+      IF (k = 'barrel') THEN UPDATE things t SET owner_id = :src, threshold = 100 WHERE t.id = :tid;
+      ELSE
       BEGIN
         spid = NULL;
         IF (skind = 'player') THEN SELECT p.id FROM player p WHERE p.thing_id = :src INTO spid;
@@ -1133,8 +1195,8 @@ BEGIN
        ORDER BY t.id
         INTO vid, vk
   DO
-    IF (vk = 'player') THEN EXECUTE PROCEDURE damage_player(10000, tid, (SELECT p.id FROM player p WHERE p.thing_id = :vid));
-    ELSE EXECUTE PROCEDURE damage_thing(vid, 10000, IIF(:k = 'player', NULL, :tid));
+    IF (vk = 'player') THEN EXECUTE PROCEDURE damage_player(10000, tid, (SELECT p.id FROM player p WHERE p.thing_id = :vid), tid);
+    ELSE EXECUTE PROCEDURE damage_thing(vid, 10000, IIF(:k = 'player', NULL, :tid), tid);
   sec = sector_at(dx, dy);
   SELECT floor_h FROM sectors WHERE id = :sec INTO fz;
   UPDATE things t
@@ -1884,76 +1946,382 @@ BEGIN
     EXECUTE PROCEDURE set_state(mid, (SELECT s.id FROM states s WHERE s.name = 'S_BLOOD3'), tic) RETURNING_VALUES alive;
 END^
 
-CREATE OR ALTER PROCEDURE hitscan (
-  sx DOUBLE PRECISION, sy DOUBLE PRECISION, sz DOUBLE PRECISION,
-  ang DOUBLE PRECISION, rng DOUBLE PRECISION, dmg INTEGER, shooter INTEGER, slope DOUBLE PRECISION)
-RETURNS (hit SMALLINT)
+-- ── DOOM's hitscan (p_map.c, p_maputl.c), in 16.16 ──────────────────────
+-- P_PathTraverse with PT_ADDLINES | PT_ADDTHINGS, for P_AimLineAttack and P_LineAttack: the blocks
+-- from (X1, Y1) to (X2, Y2) as DOOM steps through them; in each, its lines (each once,
+-- PIT_AddLineIntercepts) and then the things linked in it – those whose middle is in it, so one
+-- standing in a block the trace misses isn't met, however wide – that its corner-to-corner
+-- diagonal crosses (PIT_AddThingIntercepts). Only shootable things are listed (the shots pass
+-- the rest by), the most recently placed first in a block. → each intercept: FRAC along the
+-- trace (16.16), ORD the order it was met in (P_TraverseIntercepts takes the nearest, the
+-- first met of equal ones), KIND L or T, ID; and TX, TY, TDX, TDY, the trace itself (its start
+-- moved a unit off a block's edge).
+CREATE OR ALTER PROCEDURE path_intercepts (x1 BIGINT, y1 BIGINT, x2 BIGINT, y2 BIGINT)
+RETURNS (frac BIGINT, ord INTEGER, kind CHAR(1), id INTEGER, tx BIGINT, ty BIGINT, tdx BIGINT, tdy BIGINT)
 AS
-DECLARE ddx DOUBLE PRECISION;
-DECLARE ddy DOUBLE PRECISION;
-DECLARE wall_s DOUBLE PRECISION;
-DECLARE wall_line INTEGER;
-DECLARE wall_sp INTEGER;
-DECLARE tgt INTEGER;
-DECLARE tgt_s DOUBLE PRECISION;
-DECLARE dummy INTEGER;
+DECLARE orgx BIGINT;
+DECLARE orgy BIGINT;
+DECLARE bw INTEGER;
+DECLARE bh INTEGER;
+DECLARE xt1 BIGINT;
+DECLARE yt1 BIGINT;
+DECLARE xt2 BIGINT;
+DECLARE yt2 BIGINT;
+DECLARE mapxstep INTEGER;
+DECLARE mapystep INTEGER;
+DECLARE partial BIGINT;
+DECLARE xstep BIGINT;
+DECLARE ystep BIGINT;
+DECLARE xintercept BIGINT;
+DECLARE yintercept BIGINT;
+DECLARE mapx BIGINT;
+DECLARE mapy BIGINT;
+DECLARE cnt INTEGER;
+DECLARE seen VARCHAR(8000);
+DECLARE lid INTEGER;
+DECLARE lx BIGINT;
+DECLARE ly BIGINT;
+DECLARE ldx BIGINT;
+DECLARE ldy BIGINT;
+DECLARE s1 SMALLINT;
+DECLARE s2 SMALLINT;
+DECLARE f BIGINT;
+DECLARE positive SMALLINT;
+DECLARE mx BIGINT;
+DECLARE my BIGINT;
+DECLARE mr BIGINT;
+DECLARE cx1 BIGINT;
+DECLARE cy1 BIGINT;
+DECLARE cx2 BIGINT;
+DECLARE cy2 BIGINT;
+DECLARE tid INTEGER;
 BEGIN
-  ddx = COS(ang) * rng;
-  ddy = SIN(ang) * rng;
-  SELECT FIRST 1 i.s, i.id, i.special
-    FROM (SELECT q.id, q.special, q.back_sector, q.front_sector,
-                 ((q.x1 - :sx) * q.dy - (q.y1 - :sy) * q.dx) / q.den s,
-                 ((q.x1 - :sx) * :ddy - (q.y1 - :sy) * :ddx) / q.den u
-            FROM (SELECT l.*, (:ddx * l.dy - :ddy * l.dx) den
-                    FROM lines_in_box(MINVALUE(:sx, :sx + :ddx), MINVALUE(:sy, :sy + :ddy),
-                                      MAXVALUE(:sx, :sx + :ddx), MAXVALUE(:sy, :sy + :ddy)) lb
-                    LEFT JOIN linedefs l ON l.id = lb.line_id
-                   WHERE l.minx <= MAXVALUE(:sx, :sx + :ddx) AND l.maxx >= MINVALUE(:sx, :sx + :ddx)
-                     AND l.miny <= MAXVALUE(:sy, :sy + :ddy) AND l.maxy >= MINVALUE(:sy, :sy + :ddy)) q
-           WHERE q.den <> 0) i
-    LEFT JOIN sectors f ON f.id = i.front_sector
-    LEFT JOIN sectors b ON b.id = i.back_sector
-   WHERE i.s > 0 AND i.s < 1 AND i.u >= 0 AND i.u <= 1
-     AND (i.back_sector IS NULL
-          OR MINVALUE(f.ceil_h, b.ceil_h) <= MAXVALUE(f.floor_h, b.floor_h)
-          OR MAXVALUE(f.floor_h, b.floor_h) > :sz + :slope * i.s * :rng
-          OR MINVALUE(f.ceil_h, b.ceil_h) < :sz + :slope * i.s * :rng)
-   ORDER BY i.s
-    INTO wall_s, wall_line, wall_sp;
-  wall_s = COALESCE(wall_s, 1);
-
-  SELECT FIRST 1 q.id, q.along
-    FROM (SELECT t.id, t.radius, t.z, t.height,
-                 ((t.x - :sx) * :ddx + (t.y - :sy) * :ddy) / (:rng * :rng) along,
-                 ABS((t.x - :sx) * :ddy - (t.y - :sy) * :ddx) / :rng perp
-            FROM things t
-           WHERE t.kind IN ('monster', 'barrel', 'keen', 'brain', 'player') AND t.st NOT IN ('dying', 'dead') AND t.id <> :shooter) q
-   WHERE q.along > 0 AND q.along < :wall_s AND q.perp < q.radius
-     AND :sz + :slope * q.along * :rng BETWEEN q.z AND q.z + q.height
-   ORDER BY q.along
-    INTO tgt, tgt_s;
-
-  hit = IIF(tgt IS NOT NULL, 1, 0);
-  IF (tgt IS NOT NULL) THEN
+  ord = 0;
+  SELECT CAST(b.org_x AS BIGINT) * 65536, CAST(b.org_y AS BIGINT) * 65536, b.w, b.h
+    FROM blockmap_info b WHERE b.id = 1 INTO orgx, orgy, bw, bh;
+  IF (BIN_AND(x1 - orgx, 8388607) = 0) THEN x1 = x1 + 65536;
+  IF (BIN_AND(y1 - orgy, 8388607) = 0) THEN y1 = y1 + 65536;
+  tx = x1;
+  ty = y1;
+  tdx = fx32(x2 - x1);
+  tdy = fx32(y2 - y1);
+  -- (tracepositive: (trace.dx ^ trace.dy) > 0, as 32-bit ints)
+  positive = IIF(BIN_XOR(BIN_AND(tdx, 4294967295), BIN_AND(tdy, 4294967295)) BETWEEN 1 AND 2147483647, 1, 0);
+  x1 = x1 - orgx;
+  y1 = y1 - orgy;
+  xt1 = BIN_SHR(x1, 23);
+  yt1 = BIN_SHR(y1, 23);
+  x2 = x2 - orgx;
+  y2 = y2 - orgy;
+  xt2 = BIN_SHR(x2, 23);
+  yt2 = BIN_SHR(y2, 23);
+  IF (xt2 > xt1) THEN
   BEGIN
-    IF (EXISTS (SELECT 1 FROM player p WHERE p.thing_id = :tgt)) THEN
-      EXECUTE PROCEDURE damage_player(dmg, shooter, (SELECT p.id FROM player p WHERE p.thing_id = :tgt));
-    ELSE EXECUTE PROCEDURE damage_thing(tgt, dmg, shooter);
-    -- (MF_NOBLOOD: a barrel puffs; anything else bleeds)
-    IF (EXISTS (SELECT 1 FROM things b WHERE b.id = :tgt AND b.kind = 'barrel')) THEN
-      EXECUTE PROCEDURE spawn_puff(sx + ddx * tgt_s - COS(ang) * 8, sy + ddy * tgt_s - SIN(ang) * 8,
-                                   sz + slope * tgt_s * rng - 8, IIF(rng <= 64, 1, 0))
-        RETURNING_VALUES dummy;
-    ELSE EXECUTE PROCEDURE spawn_blood(sx + ddx * tgt_s - COS(ang) * 8, sy + ddy * tgt_s - SIN(ang) * 8,
-                                  sz + slope * tgt_s * rng - 8, dmg)
-      RETURNING_VALUES dummy;
+    mapxstep = 1;
+    partial = 65536 - BIN_AND(BIN_SHR(x1, 7), 65535);
+    ystep = fx_div(fx32(y2 - y1), ABS(fx32(x2 - x1)));
   END
-  ELSE IF (wall_s < 1) THEN
+  ELSE IF (xt2 < xt1) THEN
   BEGIN
-    EXECUTE PROCEDURE spawn_puff(sx + ddx * wall_s - COS(ang) * 4, sy + ddy * wall_s - SIN(ang) * 4,
-                                 sz + slope * wall_s * rng - 4, IIF(rng <= 64, 1, 0))
-      RETURNING_VALUES dummy;
-    IF (wall_sp IN (24, 46, 47)) THEN EXECUTE PROCEDURE activate_line(wall_line, 'shoot');
+    mapxstep = -1;
+    partial = BIN_AND(BIN_SHR(x1, 7), 65535);
+    ystep = fx_div(fx32(y2 - y1), ABS(fx32(x2 - x1)));
+  END
+  ELSE
+  BEGIN
+    mapxstep = 0;
+    partial = 65536;
+    ystep = 16777216;
+  END
+  yintercept = fx32(BIN_SHR(y1, 7) + fx_mul(partial, ystep));
+  IF (yt2 > yt1) THEN
+  BEGIN
+    mapystep = 1;
+    partial = 65536 - BIN_AND(BIN_SHR(y1, 7), 65535);
+    xstep = fx_div(fx32(x2 - x1), ABS(fx32(y2 - y1)));
+  END
+  ELSE IF (yt2 < yt1) THEN
+  BEGIN
+    mapystep = -1;
+    partial = BIN_AND(BIN_SHR(y1, 7), 65535);
+    xstep = fx_div(fx32(x2 - x1), ABS(fx32(y2 - y1)));
+  END
+  ELSE
+  BEGIN
+    mapystep = 0;
+    partial = 65536;
+    xstep = 16777216;
+  END
+  xintercept = fx32(BIN_SHR(x1, 7) + fx_mul(partial, xstep));
+  mapx = xt1;
+  mapy = yt1;
+  cnt = 0;
+  seen = ',';
+  WHILE (cnt < 64) DO
+  BEGIN
+    IF (mapx >= 0 AND mapy >= 0 AND mapx < bw AND mapy < bh) THEN
+    BEGIN
+      -- P_BlockLinesIterator (mapx, mapy, PIT_AddLineIntercepts)
+      FOR SELECT l.id, l.fx, l.fy, l.fdx, l.fdy
+            FROM blockmap b JOIN linedefs l ON l.id = b.line_id
+           WHERE b.bx = :mapx AND b.by_ = :mapy
+           ORDER BY b.seq
+            INTO lid, lx, ly, ldx, ldy
+      DO
+      BEGIN
+        IF (POSITION(',' || lid || ',' IN seen) > 0) THEN CONTINUE;
+        seen = seen || lid || ',';
+        IF (tdx > 1048576 OR tdy > 1048576 OR tdx < -1048576 OR tdy < -1048576) THEN
+        BEGIN
+          s1 = point_on_divline_side(lx, ly, tx, ty, tdx, tdy);
+          s2 = point_on_divline_side(fx32(lx + ldx), fx32(ly + ldy), tx, ty, tdx, tdy);
+        END
+        ELSE
+        BEGIN
+          s1 = point_on_line_side(tx, ty, lx, ly, ldx, ldy);
+          s2 = point_on_line_side(fx32(tx + tdx), fx32(ty + tdy), lx, ly, ldx, ldy);
+        END
+        IF (s1 = s2) THEN CONTINUE;
+        f = intercept_vector(tx, ty, tdx, tdy, lx, ly, ldx, ldy);
+        IF (f < 0) THEN CONTINUE;
+        frac = f;
+        ord = ord + 1;
+        kind = 'L';
+        id = lid;
+        SUSPEND;
+      END
+      -- P_BlockThingsIterator (mapx, mapy, PIT_AddThingIntercepts): the shootable things whose
+      -- middle is in this block
+      FOR SELECT t.id, fx_of(t.x), fx_of(t.y), fx_of(t.radius)
+            FROM things t
+           WHERE t.kind IN ('monster', 'barrel', 'keen', 'brain', 'player') AND t.st NOT IN ('dying', 'dead')
+             AND t.x >= (:mapx * 8388608 + :orgx) / 65536e0 AND t.x < ((:mapx + 1) * 8388608 + :orgx) / 65536e0
+             AND t.y >= (:mapy * 8388608 + :orgy) / 65536e0 AND t.y < ((:mapy + 1) * 8388608 + :orgy) / 65536e0
+           ORDER BY t.id DESC
+            INTO tid, mx, my, mr
+      DO
+      BEGIN
+        IF (BIN_SHR(mx - orgx, 23) <> mapx OR BIN_SHR(my - orgy, 23) <> mapy) THEN CONTINUE;
+        cx1 = mx - mr;
+        cx2 = mx + mr;
+        IF (positive = 1) THEN
+        BEGIN
+          cy1 = my + mr;
+          cy2 = my - mr;
+        END
+        ELSE
+        BEGIN
+          cy1 = my - mr;
+          cy2 = my + mr;
+        END
+        IF (point_on_divline_side(cx1, cy1, tx, ty, tdx, tdy) = point_on_divline_side(cx2, cy2, tx, ty, tdx, tdy)) THEN CONTINUE;
+        f = intercept_vector(tx, ty, tdx, tdy, cx1, cy1, fx32(cx2 - cx1), fx32(cy2 - cy1));
+        IF (f < 0) THEN CONTINUE;
+        frac = f;
+        ord = ord + 1;
+        kind = 'T';
+        id = tid;
+        SUSPEND;
+      END
+    END
+    IF (mapx = xt2 AND mapy = yt2) THEN LEAVE;
+    IF (BIN_SHR(yintercept, 16) = mapy) THEN
+    BEGIN
+      yintercept = fx32(yintercept + ystep);
+      mapx = mapx + mapxstep;
+    END
+    ELSE IF (BIN_SHR(xintercept, 16) = mapx) THEN
+    BEGIN
+      xintercept = fx32(xintercept + xstep);
+      mapy = mapy + mapystep;
+    END
+    cnt = cnt + 1;
+  END
+END^
+
+-- P_AimLineAttack: from SHOOTER's middle plus 8 (shootz) along ANG (a BAM) for DIST (16.16),
+-- the first shootable thing in the window between DOOM's slopes (±100/160), narrowed by every
+-- opening the line of fire passes (PTR_AimTraverse; a one-sided line, or a closed one, ends it).
+-- → SLOPE to its middle part in view (0 if none), TARGET (linetarget, NULL if none).
+CREATE OR ALTER PROCEDURE aim_line_attack (shooter INTEGER, ang BIGINT, dist BIGINT)
+RETURNS (slope BIGINT, target INTEGER)
+AS
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE shootz BIGINT;
+DECLARE topslope BIGINT = 40960;
+DECLARE bottomslope BIGINT = -40960;
+DECLARE frac BIGINT;
+DECLARE ord INTEGER;
+DECLARE kind CHAR(1);
+DECLARE id INTEGER;
+DECLARE tx BIGINT;
+DECLARE ty BIGINT;
+DECLARE tdx BIGINT;
+DECLARE tdy BIGINT;
+DECLARE lflags INTEGER;
+DECLARE lback INTEGER;
+DECLARE ff BIGINT;
+DECLARE fc BIGINT;
+DECLARE bf BIGINT;
+DECLARE bc BIGINT;
+DECLARE opentop BIGINT;
+DECLARE openbottom BIGINT;
+DECLARE d BIGINT;
+DECLARE s BIGINT;
+DECLARE thz BIGINT;
+DECLARE thh BIGINT;
+DECLARE tt BIGINT;
+DECLARE tb BIGINT;
+BEGIN
+  slope = 0;
+  target = NULL;
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z) + BIN_SHR(fx_of(t.height), 1) + 524288 FROM things t WHERE t.id = :shooter
+    INTO x, y, shootz;
+  FOR SELECT p.frac, p.ord, p.kind, p.id
+        FROM path_intercepts(:x, :y, :x + BIN_SHR(:dist, 16) * fine_cosine(BIN_SHR(:ang, 19)),
+                             :y + BIN_SHR(:dist, 16) * fine_sine(BIN_SHR(:ang, 19))) p
+       WHERE p.frac <= 65536
+       ORDER BY p.frac, p.ord
+        INTO frac, ord, kind, id
+  DO
+  BEGIN
+    d = fx_mul(dist, frac);
+    IF (kind = 'L') THEN
+    BEGIN
+      SELECT l.flags, l.back_sector, fx_of(fs.floor_h), fx_of(fs.ceil_h), fx_of(bs.floor_h), fx_of(bs.ceil_h)
+        FROM linedefs l JOIN sectors fs ON fs.id = l.front_sector LEFT JOIN sectors bs ON bs.id = l.back_sector
+       WHERE l.id = :id INTO lflags, lback, ff, fc, bf, bc;
+      IF (BIN_AND(lflags, 4) = 0 OR lback IS NULL) THEN EXIT;    -- (not ML_TWOSIDED: the shot stops)
+      opentop = MINVALUE(fc, bc);
+      openbottom = MAXVALUE(ff, bf);
+      IF (openbottom >= opentop) THEN EXIT;
+      IF (ff <> bf) THEN
+      BEGIN
+        s = fx_div(fx32(openbottom - shootz), d);
+        IF (s > bottomslope) THEN bottomslope = s;
+      END
+      IF (fc <> bc) THEN
+      BEGIN
+        s = fx_div(fx32(opentop - shootz), d);
+        IF (s < topslope) THEN topslope = s;
+      END
+      IF (topslope <= bottomslope) THEN EXIT;
+      CONTINUE;
+    END
+    IF (id = shooter) THEN CONTINUE;
+    SELECT fx_of(t.z), fx_of(t.height) FROM things t WHERE t.id = :id INTO thz, thh;
+    tt = fx_div(fx32(thz + thh - shootz), d);
+    IF (tt < bottomslope) THEN CONTINUE;       -- (over it)
+    tb = fx_div(fx32(thz - shootz), d);
+    IF (tb > topslope) THEN CONTINUE;          -- (under it)
+    IF (tt > topslope) THEN tt = topslope;
+    IF (tb < bottomslope) THEN tb = bottomslope;
+    slope = (tt + tb) / 2;                     -- (C's division: towards 0)
+    target = id;
+    EXIT;
+  END
+END^
+
+-- P_LineAttack: SHOOTER's shot along ANG for DIST at SLOPE, doing DMG (PTR_ShootTraverse): a special
+-- line it passes is shot (P_ShootSpecialLine: 24, 46, 47; a monster's only 46); the first wall
+-- in its way – a one-sided line, or an opening it passes over or under – takes a puff 4 units
+-- short (none into a sky); the first shootable thing it meets at its height bleeds 10 units short
+-- (a barrel puffs: MF_NOBLOOD) and is hurt (P_DamageMobj).
+CREATE OR ALTER PROCEDURE line_attack (shooter INTEGER, ang BIGINT, dist BIGINT, slope BIGINT, dmg INTEGER)
+AS
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE shootz BIGINT;
+DECLARE frac BIGINT;
+DECLARE ord INTEGER;
+DECLARE kind CHAR(1);
+DECLARE id INTEGER;
+DECLARE tx BIGINT;
+DECLARE ty BIGINT;
+DECLARE tdx BIGINT;
+DECLARE tdy BIGINT;
+DECLARE lsp INTEGER;
+DECLARE lflags INTEGER;
+DECLARE lback INTEGER;
+DECLARE ff BIGINT;
+DECLARE fc BIGINT;
+DECLARE bf BIGINT;
+DECLARE bc BIGINT;
+DECLARE fsky SMALLINT;
+DECLARE bsky SMALLINT;
+DECLARE d BIGINT;
+DECLARE s BIGINT;
+DECLARE hit SMALLINT;
+DECLARE f BIGINT;
+DECLARE px BIGINT;
+DECLARE py BIGINT;
+DECLARE pz BIGINT;
+DECLARE thz BIGINT;
+DECLARE thh BIGINT;
+DECLARE tk VARCHAR(10);
+DECLARE pid SMALLINT;
+DECLARE dummy INTEGER;
+DECLARE is_player SMALLINT;
+BEGIN
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z) + BIN_SHR(fx_of(t.height), 1) + 524288,
+         IIF(EXISTS (SELECT 1 FROM player p WHERE p.thing_id = t.id), 1, 0)
+    FROM things t WHERE t.id = :shooter INTO x, y, shootz, is_player;
+  FOR SELECT p.frac, p.ord, p.kind, p.id, p.tx, p.ty, p.tdx, p.tdy
+        FROM path_intercepts(:x, :y, :x + BIN_SHR(:dist, 16) * fine_cosine(BIN_SHR(:ang, 19)),
+                             :y + BIN_SHR(:dist, 16) * fine_sine(BIN_SHR(:ang, 19))) p
+       WHERE p.frac <= 65536
+       ORDER BY p.frac, p.ord
+        INTO frac, ord, kind, id, tx, ty, tdx, tdy
+  DO
+  BEGIN
+    d = fx_mul(dist, frac);
+    IF (kind = 'L') THEN
+    BEGIN
+      SELECT l.special, l.flags, l.back_sector, fx_of(fs.floor_h), fx_of(fs.ceil_h), fx_of(bs.floor_h), fx_of(bs.ceil_h), fs.sky, bs.sky
+        FROM linedefs l JOIN sectors fs ON fs.id = l.front_sector LEFT JOIN sectors bs ON bs.id = l.back_sector
+       WHERE l.id = :id INTO lsp, lflags, lback, ff, fc, bf, bc, fsky, bsky;
+      IF (lsp IN (24, 46, 47) AND (is_player = 1 OR lsp = 46)) THEN EXECUTE PROCEDURE activate_line(id, 'shoot');
+      hit = 0;
+      IF (BIN_AND(lflags, 4) = 0 OR lback IS NULL) THEN hit = 1;
+      ELSE
+      BEGIN
+        IF (ff <> bf AND fx_div(fx32(MAXVALUE(ff, bf) - shootz), d) > slope) THEN hit = 1;
+        IF (fc <> bc AND fx_div(fx32(MINVALUE(fc, bc) - shootz), d) < slope) THEN hit = 1;
+      END
+      IF (hit = 0) THEN CONTINUE;
+      f = fx32(frac - fx_div(262144, dist));
+      px = fx32(tx + fx_mul(tdx, f));
+      py = fx32(ty + fx_mul(tdy, f));
+      pz = fx32(shootz + fx_mul(slope, fx_mul(f, dist)));
+      -- (into the sky: no puff)
+      IF (fsky = 1) THEN
+      BEGIN
+        IF (pz > fc) THEN EXIT;
+        IF (bsky = 1) THEN EXIT;
+      END
+      EXECUTE PROCEDURE spawn_puff(px / 65536e0, py / 65536e0, pz / 65536e0, IIF(dist = 4194304, 1, 0)) RETURNING_VALUES dummy;
+      EXIT;
+    END
+    IF (id = shooter) THEN CONTINUE;
+    SELECT fx_of(t.z), fx_of(t.height), t.kind FROM things t WHERE t.id = :id INTO thz, thh, tk;
+    IF (fx_div(fx32(thz + thh - shootz), d) < slope) THEN CONTINUE;   -- (over it)
+    IF (fx_div(fx32(thz - shootz), d) > slope) THEN CONTINUE;         -- (under it)
+    f = fx32(frac - fx_div(655360, dist));
+    px = fx32(tx + fx_mul(tdx, f));
+    py = fx32(ty + fx_mul(tdy, f));
+    pz = fx32(shootz + fx_mul(slope, fx_mul(f, dist)));
+    IF (tk = 'barrel') THEN
+      EXECUTE PROCEDURE spawn_puff(px / 65536e0, py / 65536e0, pz / 65536e0, IIF(dist = 4194304, 1, 0)) RETURNING_VALUES dummy;
+    ELSE EXECUTE PROCEDURE spawn_blood(px / 65536e0, py / 65536e0, pz / 65536e0, dmg) RETURNING_VALUES dummy;
+    IF (dmg <> 0) THEN
+    BEGIN
+      pid = NULL;
+      SELECT p.id FROM player p WHERE p.thing_id = :id INTO pid;
+      IF (pid IS NOT NULL) THEN EXECUTE PROCEDURE damage_player(dmg, shooter, pid, shooter);
+      ELSE EXECUTE PROCEDURE damage_thing(id, dmg, shooter, shooter);
+    END
+    EXIT;
   END
 END^
 
@@ -2166,8 +2534,8 @@ BEGIN
     BEGIN
       hitp = NULL;
       SELECT p.id FROM player p WHERE p.thing_id = :hid INTO hitp;
-      IF (hitp IS NOT NULL) THEN EXECUTE PROCEDURE damage_player((MOD(p_rand256(), 8) + 1) * mdmg, owner, hitp);
-      ELSE EXECUTE PROCEDURE damage_thing(hid, (MOD(p_rand256(), 8) + 1) * mdmg, owner);
+      IF (hitp IS NOT NULL) THEN EXECUTE PROCEDURE damage_player((MOD(p_rand256(), 8) + 1) * mdmg, owner, hitp, tid);
+      ELSE EXECUTE PROCEDURE damage_thing(hid, (MOD(p_rand256(), 8) + 1) * mdmg, owner, tid);
     END
     EXECUTE PROCEDURE explode_missile(tid, tic);
     EXIT;
@@ -2305,7 +2673,7 @@ BEGIN
         dmg = dmg + 1 + CAST(FLOOR(p_random() * 8) AS INTEGER);
         j = j + 1;
       END
-      EXECUTE PROCEDURE damage_thing(tgt, dmg, src);
+      EXECUTE PROCEDURE damage_thing(tgt, dmg, src, src);
       EXECUTE PROCEDURE spawn_thing(9012, tx, ty, tz + 16, 0) RETURNING_VALUES dummy;
     END
     i = i + 1;
@@ -2475,35 +2843,42 @@ END^
 -- P_BulletSlope: the slope to a target straight ahead, else 5.625° (1 << 26) to the left, else
 -- as far to the right; 0 if none of the three finds one
 CREATE OR ALTER PROCEDURE bullet_slope (tid INTEGER)
-RETURNS (slope DOUBLE PRECISION)
+RETURNS (slope BIGINT)
 AS
-DECLARE x DOUBLE PRECISION;
-DECLARE y DOUBLE PRECISION;
-DECLARE z DOUBLE PRECISION;
-DECLARE ang DOUBLE PRECISION;
+DECLARE an BIGINT;
+DECLARE tgt INTEGER;
 BEGIN
-  SELECT t.x, t.y, t.z, t.angle FROM things t WHERE t.id = :tid INTO x, y, z, ang;
-  EXECUTE PROCEDURE aim_slope(x, y, z + 32, ang, 1024, tid) RETURNING_VALUES slope;
-  IF (slope IS NULL) THEN EXECUTE PROCEDURE aim_slope(x, y, z + 32, ang + PI() / 32, 1024, tid) RETURNING_VALUES slope;
-  IF (slope IS NULL) THEN EXECUTE PROCEDURE aim_slope(x, y, z + 32, ang - PI() / 32, 1024, tid) RETURNING_VALUES slope;
-  slope = COALESCE(slope, 0);
+  SELECT bam_of(t.angle) FROM things t WHERE t.id = :tid INTO an;
+  EXECUTE PROCEDURE aim_line_attack(tid, an, 67108864) RETURNING_VALUES slope, tgt;      -- (16 × 64 units)
+  IF (tgt IS NULL) THEN
+  BEGIN
+    an = BIN_AND(an + 67108864, 4294967295);                                            -- (1 << 26)
+    EXECUTE PROCEDURE aim_line_attack(tid, an, 67108864) RETURNING_VALUES slope, tgt;
+    IF (tgt IS NULL) THEN
+    BEGIN
+      an = BIN_AND(an - 134217728, 4294967295);                                         -- (2 << 26)
+      EXECUTE PROCEDURE aim_line_attack(tid, an, 67108864) RETURNING_VALUES slope, tgt;
+    END
+  END
 END^
 
 -- P_GunShot: 5 × (P_Random() % 3 + 1) along SLOPE, MISSILERANGE away; a little off line
 -- (P_SubRandom() << 18) unless ACCURATE
-CREATE OR ALTER PROCEDURE gun_shot (tid INTEGER, slope DOUBLE PRECISION, accurate SMALLINT)
+CREATE OR ALTER PROCEDURE gun_shot (tid INTEGER, slope BIGINT, accurate SMALLINT)
 AS
 DECLARE dmg INTEGER;
-DECLARE ang DOUBLE PRECISION;
-DECLARE x DOUBLE PRECISION;
-DECLARE y DOUBLE PRECISION;
-DECLARE z DOUBLE PRECISION;
-DECLARE hit SMALLINT;
+DECLARE ang BIGINT;
+DECLARE r INTEGER;
 BEGIN
   dmg = 5 * (MOD(p_rand256(), 3) + 1);
-  SELECT t.x, t.y, t.z, t.angle FROM things t WHERE t.id = :tid INTO x, y, z, ang;
-  IF (accurate = 0) THEN ang = ang + sub_random_angle(18);
-  EXECUTE PROCEDURE hitscan(x, y, z + 32, ang, 2048, dmg, tid, slope) RETURNING_VALUES hit;
+  SELECT bam_of(t.angle) FROM things t WHERE t.id = :tid INTO ang;
+  IF (accurate = 0) THEN
+  BEGIN
+    r = p_rand256();
+    r = r - p_rand256();   -- (a variable: BIN_AND would draw twice)
+    ang = BIN_AND(ang + r * 262144, 4294967295);                         -- (P_SubRandom() << 18)
+  END
+  EXECUTE PROCEDURE line_attack(tid, ang, 134217728, slope, dmg);                         -- (MISSILERANGE: 2048)
 END^
 
 -- A_Punch: (P_Random() % 10 + 1) × 2, ten times that when berserk, a little off line, at
@@ -2514,44 +2889,53 @@ END^
 CREATE OR ALTER PROCEDURE a_melee_weapon (pid SMALLINT, saw SMALLINT)
 AS
 DECLARE tid INTEGER;
-DECLARE x DOUBLE PRECISION;
-DECLARE y DOUBLE PRECISION;
-DECLARE z DOUBLE PRECISION;
-DECLARE ang DOUBLE PRECISION;
-DECLARE aim DOUBLE PRECISION;
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE ang BIGINT;
+DECLARE aim BIGINT;
 DECLARE dmg INTEGER;
-DECLARE slope DOUBLE PRECISION;
+DECLARE slope BIGINT;
 DECLARE tgt INTEGER;
-DECLARE tx DOUBLE PRECISION;
-DECLARE ty DOUBLE PRECISION;
-DECLARE hit SMALLINT;
-DECLARE d DOUBLE PRECISION;
-DECLARE rng DOUBLE PRECISION;
+DECLARE rng BIGINT;
+DECLARE r INTEGER;
+DECLARE a BIGINT;
+DECLARE d BIGINT;
+DECLARE px DOUBLE PRECISION;
+DECLARE py DOUBLE PRECISION;
 BEGIN
-  SELECT p.thing_id, t.x, t.y, t.z, t.angle,
+  SELECT p.thing_id, fx_of(t.x), fx_of(t.y), bam_of(t.angle), t.x, t.y,
          2 * (MOD(p_rand256(), 10) + 1) * IIF(:saw = 0 AND p.strength_tics > 0, 10, 1)
     FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = :pid
-    INTO tid, x, y, z, ang, dmg;
-  rng = IIF(saw = 1, 65, 64);
-  aim = ang + sub_random_angle(18);
-  EXECUTE PROCEDURE aim_target(x, y, z + 32, aim, rng, tid) RETURNING_VALUES slope, tgt, tx, ty;
-  EXECUTE PROCEDURE hitscan(x, y, z + 32, aim, rng, dmg, tid, COALESCE(slope, 0)) RETURNING_VALUES hit;
+    INTO tid, x, y, ang, px, py, dmg;
+  rng = IIF(saw = 1, 4259840, 4194304);                -- (MELEERANGE + 1, MELEERANGE)
+  r = p_rand256();
+  r = r - p_rand256();   -- (a variable: BIN_AND would draw twice)
+  aim = BIN_AND(ang + r * 262144, 4294967295);
+  EXECUTE PROCEDURE aim_line_attack(tid, aim, rng) RETURNING_VALUES slope, tgt;
+  EXECUTE PROCEDURE line_attack(tid, aim, rng, slope, dmg);
   IF (tgt IS NULL) THEN
   BEGIN
-    IF (saw = 1) THEN EXECUTE PROCEDURE play_sound('DSSAWFUL', tid, x, y);
+    IF (saw = 1) THEN EXECUTE PROCEDURE play_sound('DSSAWFUL', tid, px, py);
     EXIT;
   END
-  EXECUTE PROCEDURE play_sound(IIF(saw = 1, 'DSSAWHIT', 'DSPUNCH'), tid, x, y);
-  d = atan2_safe(ty - y, tx - x);
-  IF (saw = 0) THEN ang = d;
+  EXECUTE PROCEDURE play_sound(IIF(saw = 1, 'DSSAWHIT', 'DSPUNCH'), tid, px, py);
+  SELECT point_to_angle2(:x, :y, fx_of(t.x), fx_of(t.y)) FROM things t WHERE t.id = :tgt INTO a;
+  IF (saw = 0) THEN ang = a;
   ELSE
   BEGIN
-    d = d - ang;
-    d = d - 2 * PI() * FLOOR((d + PI()) / (2 * PI()));   -- (to -π…π)
-    IF (d < 0) THEN ang = IIF(d < -PI() / 40, ang + d + PI() / 42, ang - PI() / 40);
-    ELSE ang = IIF(d > PI() / 40, ang + d - PI() / 42, ang + PI() / 40);
+    -- (ANG90 is an int: -ANG90/20 compares signed)
+    d = BIN_AND(a - ang, 4294967295);
+    IF (d > 2147483648) THEN
+    BEGIN
+      IF (fx32(d) < -53687091) THEN ang = a + 51130563; ELSE ang = ang - 53687091;
+    END
+    ELSE
+    BEGIN
+      IF (d > 53687091) THEN ang = a - 51130563; ELSE ang = ang + 53687091;
+    END
   END
-  UPDATE things t SET angle = :ang - 2 * PI() * FLOOR(:ang / (2 * PI())) WHERE t.id = :tid;
+  -- (the saw also pulls the player on: MF_JUSTATTACKED, P_PlayerThink's lunge)
+  UPDATE things t SET angle = rad_of(BIN_AND(:ang, 4294967295)), just_attacked = IIF(:saw = 1, 1, t.just_attacked) WHERE t.id = :tid;
 END^
 
 -- A_FirePistol, A_FireShotgun, A_FireShotgun2, A_FireCGun: the shot's sound, the body's flash
@@ -2567,13 +2951,13 @@ DECLARE x DOUBLE PRECISION;
 DECLARE y DOUBLE PRECISION;
 DECLARE z DOUBLE PRECISION;
 DECLARE ang DOUBLE PRECISION;
-DECLARE slope DOUBLE PRECISION;
+DECLARE slope BIGINT;
 DECLARE refire INTEGER;
 DECLARE flash INTEGER;
 DECLARE i INTEGER;
 DECLARE dmg INTEGER;
-DECLARE a DOUBLE PRECISION;
-DECLARE sl DOUBLE PRECISION;
+DECLARE a BIGINT;
+DECLARE sl BIGINT;
 DECLARE r1 INTEGER;
 DECLARE hit SMALLINT;
 DECLARE alive SMALLINT;
@@ -2594,10 +2978,12 @@ BEGIN
     WHILE (i < 20) DO
     BEGIN
       dmg = 5 * (MOD(p_rand256(), 3) + 1);
-      a = ang + sub_random_angle(19);
       r1 = p_rand256();
-      sl = slope + (r1 - p_rand256()) / 2048e0;
-      EXECUTE PROCEDURE hitscan(x, y, z + 32, a, 2048, dmg, tid, sl) RETURNING_VALUES hit;
+      r1 = r1 - p_rand256();   -- (a variable: BIN_AND would draw twice)
+      a = BIN_AND(bam_of(ang) + r1 * 524288, 4294967295);             -- (P_SubRandom() << ANGLETOFINESHIFT)
+      r1 = p_rand256();
+      sl = slope + (r1 - p_rand256()) * 32;                                            -- (P_SubRandom() << 5)
+      EXECUTE PROCEDURE line_attack(tid, a, 134217728, sl, dmg);
       i = i + 1;
     END
   END
@@ -3602,6 +3988,8 @@ DECLARE old_weapon SMALLINT;
 DECLARE pending SMALLINT;
 DECLARE neww SMALLINT;
 DECLARE preact INTEGER;
+DECLARE kbam BIGINT;
+DECLARE dbam BIGINT;
 DECLARE killer_ang DOUBLE PRECISION;
 DECLARE bslope DOUBLE PRECISION;
 DECLARE mult INTEGER;
@@ -3645,6 +4033,14 @@ BEGIN
   cmd_fwd = MAXVALUE(-127, MINVALUE(127, ROUND(fwd * IIF(run = 1, 50, 25))));
   cmd_side = MAXVALUE(-127, MINVALUE(127, ROUND(side * IIF(run = 1, 50, 25))));
   cmd_turn = BIN_AND(CAST(ROUND(turn * 32768 / PI()) AS BIGINT) + 32768, 65535) - 32768;
+  -- P_PlayerThink: the chainsaw's bite (MF_JUSTATTACKED) runs it on: no turn, forwardmove 0xc800 / 512
+  IF (EXISTS (SELECT 1 FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = :pid AND t.just_attacked = 1)) THEN
+  BEGIN
+    cmd_turn = 0;
+    cmd_fwd = 100;
+    cmd_side = 0;
+    UPDATE things t SET just_attacked = 0 WHERE t.id = (SELECT p.thing_id FROM player p WHERE p.id = :pid);
+  END
   -- (P_XYMovement, in the body's own thinker, looks at the ticcmd's moves)
   UPDATE player p SET cmd_fwd = :cmd_fwd, cmd_side = :cmd_side WHERE p.id = :pid;
 
@@ -3654,17 +4050,21 @@ BEGIN
     -- USE – and turn to face your killer, 5° a tic; until you do, the red of the damage stays
     EXECUTE PROCEDURE move_psprites(pid, tic);
     view_h = MAXVALUE(6, view_h - 1);
-    SELECT atan2_safe(a.y - :y, a.x - :x) FROM player p JOIN things a ON a.id = p.attacker_id
-     WHERE p.id = :pid AND a.id <> :tid INTO killer_ang;
-    IF (killer_ang IS NOT NULL) THEN
+    -- (in BAMs: R_PointToAngle2 to the attacker; within ANG5 either way it snaps to it, else
+    -- turns ANG5 the shorter way)
+    kbam = NULL;
+    SELECT point_to_angle2(fx_of(t.x), fx_of(t.y), fx_of(a.x), fx_of(a.y)), bam_of(t.angle)
+      FROM player p JOIN things a ON a.id = p.attacker_id JOIN things t ON t.id = :tid
+     WHERE p.id = :pid AND a.id <> :tid INTO kbam, dbam;
+    IF (kbam IS NOT NULL) THEN
     BEGIN
-      killer_ang = killer_ang - ang;
-      killer_ang = killer_ang - 2 * PI() * FLOOR((killer_ang + PI()) / (2 * PI()));   -- (to -π…π)
-      IF (ABS(killer_ang) < PI() / 36) THEN
-        UPDATE things SET angle = :ang + :killer_ang WHERE id = :tid;
+      dbam = BIN_AND(kbam - dbam, 4294967295);
+      IF (dbam < 59652323 OR dbam > 4294967296 - 59652323) THEN
+        UPDATE things SET angle = rad_of(:kbam) WHERE id = :tid;
       ELSE
       BEGIN
-        UPDATE things SET angle = :ang + IIF(:killer_ang > 0, PI() / 36, -PI() / 36) WHERE id = :tid;
+        UPDATE things t SET angle = rad_of(BIN_AND(bam_of(t.angle) + IIF(:dbam < 2147483648, 59652323, -59652323), 4294967295))
+         WHERE id = :tid;
         UPDATE player SET damage_count = damage_count + 1 WHERE id = :pid AND damage_count > 0;   -- (DOOM_TIC's countdown waits)
       END
     END
@@ -4133,6 +4533,9 @@ BEGIN
              msg = IIF(:pk = 'key' AND BIN_AND(keycards, :amt) <> 0, msg, :lbl),
              msg_tics = IIF(:pk = 'key' AND BIN_AND(keycards, :amt) <> 0, msg_tics, 70)
        WHERE id = :pid;
+      -- (P_GiveBody and the spheres: player->mo->health = player->health, the body's own)
+      UPDATE things t SET hp = (SELECT p.health FROM player p WHERE p.id = :pid)
+       WHERE t.id = (SELECT p.thing_id FROM player p WHERE p.id = :pid);
       EXECUTE PROCEDURE play_sound(CASE WHEN pk IN ('shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'chainsaw', 'ssg') THEN 'DSWPNUP'
                                         WHEN pk IN ('none', 'soul', 'mega', 'invis', 'invuln', 'suit', 'goggles', 'berserk', 'allmap') THEN 'DSGETPOW' ELSE 'DSITEMUP' END, NULL, NULL, NULL, pid);
     END
@@ -4236,8 +4639,8 @@ END^
 CREATE OR ALTER PROCEDURE hurt_target (tgt INTEGER, dmg INTEGER, src INTEGER, tp SMALLINT = 1)
 AS
 BEGIN
-  IF (tgt IS NULL) THEN EXECUTE PROCEDURE damage_player(dmg, src, tp);
-  ELSE EXECUTE PROCEDURE damage_thing(tgt, dmg, src);
+  IF (tgt IS NULL) THEN EXECUTE PROCEDURE damage_player(dmg, src, tp, src);
+  ELSE EXECUTE PROCEDURE damage_thing(tgt, dmg, src, src);
 END^
 
 -- A_BossDeath: when the last of a boss type dies, some maps open up or end.
@@ -4602,6 +5005,8 @@ BEGIN
        SET health = IIF(p.god = 1, (SELECT r.god_health FROM rules r WHERE r.id = 1), p.health),
            msg = TRIM(IIF(p.god = 1, 'Degreelessness Mode On', 'Degreelessness Mode Off')), msg_tics = 70
      WHERE p.id = 1 AND p.dead = 0;
+    UPDATE things t SET hp = (SELECT p.health FROM player p WHERE p.id = 1)   -- (and the body's: plyr->mo->health)
+     WHERE t.id = (SELECT p.thing_id FROM player p WHERE p.id = 1 AND p.dead = 0 AND p.god = 1);
   END
   ELSE IF (code IN ('idclip', 'idspispopd')) THEN
   BEGIN
@@ -4782,7 +5187,8 @@ BEGIN
   IF (shadow = 1) THEN
   BEGIN
     r = p_rand256();
-    bam = BIN_AND(bam + (r - p_rand256()) * 2097152, 4294967295);
+    r = r - p_rand256();   -- (a variable: BIN_AND would draw twice)
+    bam = BIN_AND(bam + r * 2097152, 4294967295);
   END
   UPDATE things t SET angle = rad_of(:bam), flags = BIN_AND(t.flags, BIN_NOT(8)) WHERE t.id = :tid;
 END^
@@ -4803,25 +5209,27 @@ DECLARE palive SMALLINT;
 DECLARE shadow SMALLINT;
 DECLARE x DOUBLE PRECISION;
 DECLARE y DOUBLE PRECISION;
-DECLARE sz DOUBLE PRECISION;
-DECLARE ang DOUBLE PRECISION;
-DECLARE a DOUBLE PRECISION;
-DECLARE slope DOUBLE PRECISION;
+DECLARE ang BIGINT;
+DECLARE a BIGINT;
+DECLARE slope BIGINT;
 DECLARE dmg INTEGER;
 DECLARE i INTEGER = 0;
-DECLARE hit SMALLINT;
+DECLARE r INTEGER;
+DECLARE linetarget INTEGER;
 BEGIN
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL) THEN EXIT;
   EXECUTE PROCEDURE a_face_target(tid);
-  SELECT t.x, t.y, t.z + t.height / 2 + 8, t.angle FROM things t WHERE t.id = :tid INTO x, y, sz, ang;
-  EXECUTE PROCEDURE aim_slope(x, y, sz, ang, 2048, tid) RETURNING_VALUES slope;
+  SELECT t.x, t.y, bam_of(t.angle) FROM things t WHERE t.id = :tid INTO x, y, ang;
+  EXECUTE PROCEDURE aim_line_attack(tid, ang, 134217728) RETURNING_VALUES slope, linetarget;
   EXECUTE PROCEDURE play_sound(snd, tid, x, y);
   WHILE (i < n) DO
   BEGIN
-    a = ang + (p_rand256() - p_rand256()) * PI() / 2048;
+    r = p_rand256();
+    r = r - p_rand256();   -- (a variable: BIN_AND would draw twice)
+    a = BIN_AND(ang + r * 1048576, 4294967295);                       -- (P_SubRandom() << 20)
     dmg = (MOD(p_rand256(), 5) + 1) * 3;
-    EXECUTE PROCEDURE hitscan(x, y, sz, a, 2048, dmg, tid, COALESCE(slope, 0)) RETURNING_VALUES hit;
+    EXECUTE PROCEDURE line_attack(tid, a, 134217728, slope, dmg);
     i = i + 1;
   END
 END^
@@ -5251,7 +5659,8 @@ DECLARE ny BIGINT;
 DECLARE oldside SMALLINT;
 BEGIN
   floatok = 0;
-  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), fx_of(t.radius), fx_of(t.height), COALESCE(tt.floats, 0)
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), fx_of(t.radius), fx_of(t.height),
+         IIF(COALESCE(tt.floats, 0) = 1 OR t.st IN ('dying', 'dead'), 1, 0)
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
     INTO ox, oy, z, rad, hgt, fl;
   EXECUTE PROCEDURE check_position_fx(tid, x, y, rad, 0, 1, 1) RETURNING_VALUES ok, tmfloorz, cz, dz, spechit;
@@ -5261,9 +5670,11 @@ BEGIN
   floatok = 1;
   IF (cz - z < hgt) THEN EXIT;                  -- (it must come down to fit)
   IF (tmfloorz - z > 1572864) THEN EXIT;        -- (a step up of more than 24)
-  IF (fl = 0 AND tmfloorz - dz > 1572864) THEN EXIT;   -- (over a drop-off: MF_DROPOFF and MF_FLOAT may)
+  IF (fl = 0 AND tmfloorz - dz > 1572864) THEN EXIT;   -- (over a drop-off: MF_DROPOFF – a corpse – and MF_FLOAT may)
   ok = 1;
-  UPDATE things t SET x = :x / 65536e0, y = :y / 65536e0, sector_id = sector_at_fx(:x, :y) WHERE t.id = :tid;
+  UPDATE things t SET x = :x / 65536e0, y = :y / 65536e0, sector_id = sector_at_fx(:x, :y),
+                      floorz = :tmfloorz / 65536e0, ceilz = :cz / 65536e0, fz_x = :x / 65536e0, fz_y = :y / 65536e0
+   WHERE t.id = :tid;
   spec = spechit;
   WHILE (spec <> '') DO
   BEGIN
@@ -5684,6 +6095,7 @@ BEGIN
         EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_VILE_HEAL1'), tic) RETURNING_VALUES alive;
         EXECUTE PROCEDURE play_sound('DSSLOP', cid, cx, cy);
         UPDATE things t SET hp = (SELECT ct.hp FROM thing_types ct WHERE ct.thing_type = t.thing_type), solid = 1,
+                            height = (SELECT ct.height FROM thing_types ct WHERE ct.thing_type = t.thing_type),
                             target_id = NULL, just_hit = 0, dead_tic = NULL, flags = BIN_AND(t.flags, BIN_NOT(8))
          WHERE t.id = :cid;
         EXECUTE PROCEDURE set_state(cid, craise, tic) RETURNING_VALUES alive;
@@ -5846,9 +6258,9 @@ BEGIN
       BEGIN
         pid = NULL;
         SELECT p.id FROM player p WHERE p.thing_id = :vid AND p.dead = 0 INTO pid;
-        IF (pid IS NOT NULL) THEN EXECUTE PROCEDURE damage_player(10000, mid, pid);
+        IF (pid IS NOT NULL) THEN EXECUTE PROCEDURE damage_player(10000, mid, pid, mid);
         ELSE IF (NOT EXISTS (SELECT 1 FROM things o WHERE o.id = :vid AND o.kind = 'player')) THEN
-          EXECUTE PROCEDURE damage_thing(vid, 10000, mid);
+          EXECUTE PROCEDURE damage_thing(vid, 10000, mid, mid);
       END
   END
   DELETE FROM things t WHERE t.id = :tid;
@@ -6120,8 +6532,8 @@ BEGIN
                                                   WHERE t.id = :tid), 3);   -- (info->damage: the lost soul's 3)
     hitp = NULL;
     SELECT p.id FROM player p WHERE p.thing_id = :hit INTO hitp;
-    IF (hitp IS NOT NULL) THEN EXECUTE PROCEDURE damage_player(dmg, tid, hitp);
-    ELSE EXECUTE PROCEDURE damage_thing(hit, dmg, tid);
+    IF (hitp IS NOT NULL) THEN EXECUTE PROCEDURE damage_player(dmg, tid, hitp, tid);
+    ELSE EXECUTE PROCEDURE damage_thing(hit, dmg, tid, tid);
     IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.st NOT IN ('dying', 'dead'))) THEN
     BEGIN
       UPDATE things t SET flags = BIN_AND(t.flags, BIN_NOT(262144)), momx = 0, momy = 0, momz = 0 WHERE t.id = :tid;
@@ -6317,16 +6729,19 @@ DECLARE dist DOUBLE PRECISION;
 DECLARE delta DOUBLE PRECISION;
 DECLARE st VARCHAR(8);
 DECLARE nograv SMALLINT;
+DECLARE fx SMALLINT;
 BEGIN
   x = NULL;
   SELECT t.x, t.y, t.z, t.momz, t.radius, t.height, IIF(tt.floats = 1 AND t.kind = 'monster', 1, 0), t.flags,
-         IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type, t.st, tt.nogravity
+         IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type, t.st, tt.nogravity, IIF(t.kind = 'fx', 1, 0)
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
    WHERE t.id = :tid AND t.state IS NOT NULL AND t.kind NOT IN ('missile', 'cube', 'player')
      AND (t.momz <> 0 OR tt.floats = 1 OR BIN_AND(t.flags, 1048576) <> 0)
-    INTO x, y, z, momz, rad, hgt, floats, flags, living, ttype, st, nograv;
+    INTO x, y, z, momz, rad, hgt, floats, flags, living, ttype, st, nograv, fx;
   IF (x IS NULL) THEN EXIT;
-  EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
+  -- (a puff or blood never moves across: its floorz and ceilingz are P_SpawnMobj's, its sector's)
+  IF (fx = 1) THEN SELECT s.floor_h, s.ceil_h FROM sectors s WHERE s.id = sector_at_fx(fx_of(:x), fx_of(:y)) INTO fz, cz;
+  ELSE EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
   z = z + momz;
   skullfly = IIF(BIN_AND(flags, 262144) <> 0, 1, 0);
   -- (asleep it has no target yet: DOOM's A_Look gives it one)
@@ -6365,6 +6780,94 @@ BEGIN
    WHERE t.id = :tid;
 END^
 
+-- P_XYMovement for anything else with momentum (not a player's body, a missile or a charging
+-- lost soul): a monster or barrel thrown by a hit, a corpse sliding. At most MAXMOVE (30) each
+-- way, in steps of at most half that (halved only when positive), each a P_TryMove
+-- (TRY_MOVE_MOBJ: it crosses the lines a monster sets off – a corpse slides through a
+-- teleporter); a step that fails stops it dead, and what's left of the move is still tried.
+-- Then, on its floor (in the air: no friction, a floating cacodemon drifts on), friction
+-- (FRICTION, 0xe800), or a stop under STOPSPEED (0x1000); a corpse with some speed left
+-- doesn't stop while it's halfway off a step (its floorz isn't its sector's floor).
+CREATE OR ALTER PROCEDURE xy_movement_mobj (tid INTEGER)
+AS
+DECLARE momx BIGINT;
+DECLARE momy BIGINT;
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE z BIGINT;
+DECLARE fz BIGINT;
+DECLARE xmove BIGINT;
+DECLARE ymove BIGINT;
+DECLARE tx BIGINT;
+DECLARE ty BIGINT;
+DECLARE ok SMALLINT;
+DECLARE floatok SMALLINT;
+DECLARE tmfz BIGINT;
+DECLARE spec VARCHAR(4000);
+DECLARE corpse SMALLINT;
+DECLARE secfloor BIGINT;
+DECLARE nograv SMALLINT;
+BEGIN
+  momx = NULL;
+  SELECT fx_of(t.momx), fx_of(t.momy) FROM things t WHERE t.id = :tid INTO momx, momy;
+  IF (momx IS NULL OR (momx = 0 AND momy = 0)) THEN EXIT;
+  momx = MAXVALUE(-1966080, MINVALUE(1966080, momx));
+  momy = MAXVALUE(-1966080, MINVALUE(1966080, momy));
+  UPDATE things t SET momx = :momx / 65536e0, momy = :momy / 65536e0 WHERE t.id = :tid;
+  xmove = momx;
+  ymove = momy;
+  WHILE (1 = 1) DO
+  BEGIN
+    x = NULL;
+    SELECT fx_of(t.x), fx_of(t.y) FROM things t WHERE t.id = :tid INTO x, y;
+    IF (x IS NULL) THEN EXIT;                    -- (gone: a teleporter's telefrag)
+    IF (xmove > 983040 OR ymove > 983040) THEN
+    BEGIN
+      tx = x + xmove / 2;                        -- (C's division: towards 0)
+      ty = y + ymove / 2;
+      xmove = BIN_SHR(xmove, 1);
+      ymove = BIN_SHR(ymove, 1);
+    END
+    ELSE
+    BEGIN
+      tx = x + xmove;
+      ty = y + ymove;
+      xmove = 0;
+      ymove = 0;
+    END
+    EXECUTE PROCEDURE try_move_mobj(tid, tx, ty) RETURNING_VALUES ok, floatok, tmfz, spec;
+    IF (ok = 0) THEN UPDATE things t SET momx = 0, momy = 0 WHERE t.id = :tid;
+    IF (xmove = 0 AND ymove = 0) THEN LEAVE;
+  END
+  -- (mobj->floorz: where P_TryMove last left it, else the floor where it stands)
+  x = NULL;
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), fx_of(t.momx), fx_of(t.momy),
+         IIF(t.fz_x = t.x AND t.fz_y = t.y, fx_of(t.floorz), NULL), IIF(t.st IN ('dying', 'dead'), 1, 0),
+         (SELECT fx_of(s.floor_h) FROM sectors s WHERE s.id = t.sector_id), tt.nogravity
+    FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
+    INTO x, y, z, momx, momy, fz, corpse, secfloor, nograv;
+  IF (x IS NULL) THEN EXIT;
+  fz = COALESCE(fz, secfloor);
+  IF (z > fz) THEN
+  BEGIN
+    -- (off the floor: P_ZMovement brings it down)
+    IF (nograv = 0) THEN UPDATE things t SET flags = BIN_OR(t.flags, 1048576) WHERE t.id = :tid AND t.momz = 0;
+    EXIT;
+  END
+  IF (corpse = 1 AND (momx > 16384 OR momx < -16384 OR momy > 16384 OR momy < -16384) AND fz <> secfloor) THEN EXIT;
+  IF (momx > -4096 AND momx < 4096 AND momy > -4096 AND momy < 4096) THEN
+  BEGIN
+    momx = 0;
+    momy = 0;
+  END
+  ELSE
+  BEGIN
+    momx = fx_mul(momx, 59392);
+    momy = fx_mul(momy, 59392);
+  END
+  UPDATE things t SET momx = :momx / 65536e0, momy = :momy / 65536e0 WHERE t.id = :tid;
+END^
+
 -- One thing's thinker, P_MobjThinker: its movement (a player's body, P_XYMovement and
 -- P_ZMovement in 16.16 and what it picks up; a charging lost soul's flight; a missile's), its
 -- P_ZMovement, then its state's countdown – the state ending this tic goes on to the next
@@ -6378,9 +6881,11 @@ DECLARE stt INTEGER;
 DECLARE pid SMALLINT;
 DECLARE nxt INTEGER;
 DECLARE alive SMALLINT;
+DECLARE moving SMALLINT;
 BEGIN
   k = NULL;
-  SELECT t.kind, IIF(BIN_AND(t.flags, 262144) <> 0, 1, 0), t.state FROM things t WHERE t.id = :tid INTO k, skull, stt;
+  SELECT t.kind, IIF(BIN_AND(t.flags, 262144) <> 0, 1, 0), t.state, IIF(t.momx <> 0 OR t.momy <> 0, 1, 0)
+    FROM things t WHERE t.id = :tid INTO k, skull, stt, moving;
   IF (k IS NULL) THEN EXIT;                      -- (removed earlier in the pass)
   -- (while it moves, its countdown is still to come: THINK_AHEAD)
   RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', key_ - 1);
@@ -6392,6 +6897,7 @@ BEGIN
   END
   ELSE IF (skull = 1 AND stt IS NOT NULL) THEN EXECUTE PROCEDURE skull_step(tid, tic);
   ELSE IF (k IN ('missile', 'cube')) THEN EXECUTE PROCEDURE missile_step(tid, tic);
+  ELSE IF (moving = 1) THEN EXECUTE PROCEDURE xy_movement_mobj(tid);
   EXECUTE PROCEDURE z_step(tid, tic);
   RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', key_);
   -- (still due? an action before it may have changed or removed it; and one made due during
@@ -6401,6 +6907,22 @@ BEGIN
    WHERE t.id = :tid AND t.state_tic BETWEEN :tic - 1 AND :tic INTO nxt;
   IF (nxt IS NOT NULL) THEN EXECUTE PROCEDURE set_state(tid, nxt, tic) RETURNING_VALUES alive;
   IF (nightmare = 1) THEN EXECUTE PROCEDURE nightmare_step(tid, tic);
+END^
+
+-- The things set moving this tic before their turn (LATE_MOVERS) whose turn comes before UPTO:
+-- each one's thinker, in its turn
+CREATE OR ALTER PROCEDURE run_late (tic INTEGER, upto BIGINT, nightmare SMALLINT)
+AS
+DECLARE k BIGINT;
+DECLARE id INTEGER;
+BEGIN
+  FOR SELECT lm.k, lm.id FROM late_movers lm WHERE lm.k < :upto ORDER BY lm.k INTO k, id
+  DO
+  BEGIN
+    DELETE FROM late_movers lm WHERE lm.id = :id;
+    RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', k);
+    EXECUTE PROCEDURE thing_think(id, tic, nightmare, k);
+  END
 END^
 
 -- P_RunThinkers: every thinker with something to do this tic, in the list's order – the order
@@ -6426,7 +6948,8 @@ BEGIN
               UNION
               SELECT 'T', COALESCE(t.think_key, 2 * t.id), t.id FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
                WHERE t.state IS NOT NULL
-                 AND (BIN_AND(t.flags, 262144) <> 0 OR t.momz <> 0 OR tt.floats = 1 OR BIN_AND(t.flags, 1048576) <> 0
+                 AND (BIN_AND(t.flags, 262144) <> 0 OR t.momz <> 0 OR t.momx <> 0 OR t.momy <> 0
+                      OR tt.floats = 1 OR BIN_AND(t.flags, 1048576) <> 0
                       OR (:nightmare = 1 AND t.kind = 'monster' AND t.st = 'dead'))
               UNION ALL
               SELECT 'L', COALESCE(s.lfx_key, 0), s.id FROM sectors s
@@ -6439,11 +6962,25 @@ BEGIN
   DO
   BEGIN
     n = n + 1;
+    -- (a thing set moving earlier in the pass: in its turn, before this one; one in the list
+    -- anyway takes its turn here)
+    IF (RDB$GET_CONTEXT('USER_TRANSACTION', 'LATE') IS NOT NULL) THEN
+    BEGIN
+      IF (kind = 'T') THEN DELETE FROM late_movers lm WHERE lm.id = :id;
+      EXECUTE PROCEDURE run_late(tic, key_, nightmare);
+    END
     RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', key_);
     IF (kind = 'T') THEN EXECUTE PROCEDURE thing_think(id, tic, nightmare, key_);
     ELSE IF (kind = 'L') THEN EXECUTE PROCEDURE light_step(id);
     ELSE IF (EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = :id AND COALESCE(m.think_key, 0) = :key_)) THEN
       EXECUTE PROCEDURE mover_step(id);
+  END
+  -- (the rest of them, to the end of this round; those made this tic are in the next round's list)
+  IF (RDB$GET_CONTEXT('USER_TRANSACTION', 'LATE') IS NOT NULL) THEN
+  BEGIN
+    EXECUTE PROCEDURE run_late(tic, hi + 1, nightmare);
+    DELETE FROM late_movers;
+    RDB$SET_CONTEXT('USER_TRANSACTION', 'LATE', NULL);
   END
 END^
 

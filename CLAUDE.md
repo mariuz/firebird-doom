@@ -30,6 +30,7 @@ npm run test:dehacked      # DeHackEd patches
 npm run test:lmp           # .lmp demos: the format, and how long the port keeps step with vanilla (a ratchet: -- --update)
 npm run oracle             # vanilla as a reference: Chocolate Doom built headless into oracle-build/ (needs SDL2 -dev packages)
 npm run lmp-fixtures       # the .lmp fixtures and vanilla's trace of each (needs the oracle); -- NAME … for only those
+npm run lmp-rnglog -- e1m1-walk 119 119   # every P_Random draw in those tics of a fixture, with the procedures that drew it
 npm run test:pwad          # PWADs over the IWAD
 npm run test:automap       # the automap's zoom, follow, grid, marks
 npm run test:light         # light diminishing vs DOOM's fixed point
@@ -139,6 +140,9 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   random), and alone in the game a monster whose lastlook is 1 skips its first look. A test that
   wants a monster to see at once sets `lastlook = 0`. A monster's step (`P_MOVE_FX`) moves it in
   its row, and a solid thing where it steps blocks it, the player included.
+- **A hit pushes** (`P_DamageMobj`'s thrust, L5): a test that measures from where the player or a
+  monster stands must pin it after hits (`momx = 0, momy = 0`, and its `x`, `y` back), or the next
+  tic carries it off; a corpse slides too.
 - **Tests:** physics-test and weapons-test share one database through many sections. A monster
   woken by an earlier section can hurt the player later, so read state right after the action,
   before another tic. Make statistical assertions robust (bigger samples, fixed bounds rather than

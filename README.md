@@ -800,14 +800,20 @@ measured against vanilla itself:
   looked (`lastlook`, quirks included), turns and judges its ranges in DOOM's angles and fixed
   point, and walks by DOOM's `P_Move` and `P_NewChaseDir` through the same `P_TryMove` as the
   player: the map's own blockmap, steps, drop-offs, monster-blocking lines, the doors it opens.
+- **The shots and the damage (phase L5, under way):** a bullet goes where DOOM's goes: the aim
+  and the trace step through the blockmap as `P_PathTraverse` does, meeting lines and things in
+  its order, and the puff or the blood lands where DOOM's does. A hit pushes what it hits away
+  from the shooter by DOOM's sums (`P_DamageMobj`'s thrust: harder for a light thing, none
+  from the chainsaw, and now and then a killing blow from below throws a monster forwards).
+  Corpses slide on as they're thrown, a quarter as tall as they stood, and a monster pushed by
+  your shot moves in its own turn of that same tic, as in DOOM. Dead, you turn to face your
+  killer 5° a tic in DOOM's angles. Next: the missiles, the blasts, and the lost soul's slam.
 - **Where it stands:** standing still on E1M1 it keeps step for all 350 tics, every column, and
-  the oracle's list of every thinker agrees with the port's one by one. So does a demo firing a
-  shot, but for the puff's position, and one where the player walks into the zombiemen's view
-  and stands while they wake and chase: every column, all 230 tics. On the scripted walk
-  (turns, runs, strafes, along walls, down a lowering stair) everything keeps step until the
-  pistol's first puff lands (tic 105). On the attract demos it does until the first shot
-  lands: E1M1's at tic 57, and MAP01's player for 572 tics. The shots themselves – the aim,
-  the puffs, the damage's thrust – are phase L5.
+  the oracle's list of every thinker agrees with the port's one by one. So do a demo firing a
+  shot and one where the player walks into the zombiemen's view and stands while they wake and
+  chase. The scripted walk (turns, runs, strafes, along walls, down a lowering stair, shots)
+  keeps step for all 215 tics. Both attract demos keep step in every column for all 700 tics:
+  MAP01's through a firefight, E1M1's through the player's death and the level's restart.
 
 ### Co-op and deathmatch over the network
 
@@ -1341,20 +1347,20 @@ not the demons' `DSDMPAIN`.) `npm run test:states` wakes, hurts, kills and gibs 
 step.
 
 What's still not vanilla, and why `.lmp` demos can't play yet (docs/ROADMAP.md):
-- **Arithmetic:** the player moves in DOOM's 16.16 fixed point, with BAM angles and the
-  `finesine` table; everything else's positions and speeds are doubles and its angles radians.
-  A monster ends up a fraction of a unit from where DOOM's would, and over a demo that adds up.
+- **Arithmetic:** the player, the monsters' walk, the shots and what a hit throws move in DOOM's
+  16.16 fixed point, with BAM angles and the `finesine` table; the projectiles, a charging lost
+  soul and the movers still move in doubles, their angles in radians.
 - **Random numbers:** `P_Random` is DOOM's `rndtable`, but its draws come in DOOM's order only
   where the code follows DOOM's (the map's setup, the lights, the actions, the damage), not yet
   everywhere.
-- **Movement:** a hit pushes no one: there is none of `P_DamageMobj`'s thrust, for you or for
-  monsters. You pick things up where you end the tic, not at each spot `P_TryMove` tries on
+- **Movement:** you pick things up where you end the tic, not at each spot `P_TryMove` tries on
   the way. The page's own keys aren't quite `G_BuildTiccmd`'s: a strafe is 25 (50 running)
   rather than 24 (40), and the turn keys have no slow start.
-- **Collision:** the player's and the walking monsters' go through the `BLOCKMAP` as DOOM's
-  does, and monsters see through the BSP as DOOM's do; the projectiles', a charging lost soul's
-  and the shots' sight lines are set-based SQL over the map's lines and things, so ties between
-  equally near things can break differently.
+- **Collision:** the player's, the walking monsters' and the shots' go through the `BLOCKMAP`
+  as DOOM's do, and monsters see through the BSP as DOOM's do; the projectiles', a charging lost
+  soul's and the blasts' are set-based SQL over the map's lines and things, so ties between
+  equally near things can break differently. Within a block, things are met newest first, where
+  DOOM's list puts the one that last moved first.
 - **Crushers:** a crusher turns only corpses to gibs: not the dying, and dropped items aren't
   removed (`PIT_ChangeSector`).
 - **Weapon keys:** they choose as the port always has, not quite as `P_PlayerThink` does (see

@@ -198,8 +198,11 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
     assert(hp1 < hp0, `a revenant missile 30° off still finds the player (${hp0 - hp1} damage)`);
   } else console.log('(no open spot for the revenant test)');
 
+  // (the player back where the aim is measured from: the revenant's missiles threw them – P_DamageMobj's thrust)
+  const home = () => db.exec(`UPDATE things SET momx = 0, momy = 0, x = ${p.X}, y = ${p.Y} WHERE kind = 'player'`);
   // a mancubus attack: three volleys, six fireballs, DOOM's spread
   if (s2) {
+    await home();
     await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
         EXECUTE PROCEDURE spawn_thing(67, ${s2.x}, ${s2.y}, ${s2.z}, 0) RETURNING_VALUES id;
         UPDATE things SET reaction = 0 WHERE id = :id;
@@ -224,6 +227,7 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
   if (s2) {
     await db.exec(`DELETE FROM things WHERE thing_type IN (67, 9006, 9007, 9010)`);
     await db.exec(`UPDATE player SET health = 100000, armor = 0`);
+    await home();
     const dir = Math.atan2(s2.y - p.Y, s2.x - p.X);
 
     // the revenant's fist: swing, then 6 × 1d10 at arm's length

@@ -251,10 +251,11 @@ assert(bfgBurst > 0, 'BFG ball exploded');
   const punches = async (n) => {
     await inReach();
     const h0 = (await db.query(`SELECT hp FROM things WHERE id = ${target}`)).rows[0].HP;
+    const at = (await db.query(`SELECT x, y FROM things WHERE id = ${target}`)).rows[0];
     for (let k = 0; k < n; k++) {
       for (let i = 0; i < 24; i++) {   // (S_PUNCH1–5: 22 tics, A_Punch at 4)
-        // (held in whatever state it's in, so it stays in reach)
-        await db.exec(`UPDATE things SET state_tic = NULL, hp = MAXVALUE(hp, 100) WHERE id = ${target}`);
+        // (held in whatever state it's in, and where it is – a punch throws it back – so it stays in reach)
+        await db.exec(`UPDATE things SET state_tic = NULL, hp = MAXVALUE(hp, 100), momx = 0, momy = 0, x = ${at.X}, y = ${at.Y} WHERE id = ${target}`);
         await tic([1, 0, 0, 0, i === 0 ? 1 : 0, 0, 0, 0]);
       }
     }
@@ -422,6 +423,8 @@ const killHere = async (type) => {
 };
 // (in god mode: the barrels earlier sections set off are still going off around you)
 await db.exec(`UPDATE player SET bullets = 0, shells = 0, has_shotgun = 1, has_chaingun = 1, has_chainsaw = 0, dead = 0, health = 100, god = 1`);
+// (and what earlier sections' monsters dropped, thrown about as they died, is cleared away)
+await db.exec('DELETE FROM things WHERE kind = \'item\' AND BIN_AND(flags, 65536) <> 0');
 const k0 = await one('SELECT kills, items FROM player');
 const clip = await killHere(3004);
 assert(clip.THING_TYPE === 2007 && (clip.FLAGS & 65536) !== 0, `a dead zombieman drops a clip marked MF_DROPPED (flags ${clip.FLAGS})`);

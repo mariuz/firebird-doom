@@ -1,23 +1,23 @@
 {
   "e1m1-attract": {
     "tics": 700,
-    "synced": 75,
+    "synced": 700,
     "first": {
-      "leveltime": 534,
-      "prndindex": 57,
-      "x": 77,
-      "y": 101,
-      "z": 534,
-      "angle": 400,
-      "momx": 76,
-      "momy": 76,
-      "health": 76,
-      "mobjs": 76,
-      "sumx": 57,
-      "sumy": 57,
-      "sumz": 57,
-      "sumhealth": 76,
-      "sumstate": 57
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
     }
   },
   "e1m1-idle": {
@@ -55,9 +55,9 @@
       "momy": null,
       "health": null,
       "mobjs": null,
-      "sumx": 35,
-      "sumy": 35,
-      "sumz": 35,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
       "sumhealth": null,
       "sumstate": null
     }
@@ -97,32 +97,32 @@
       "momy": null,
       "health": null,
       "mobjs": null,
-      "sumx": 105,
-      "sumy": 105,
-      "sumz": 105,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
       "sumhealth": null,
       "sumstate": null
     }
   },
   "map01-attract": {
     "tics": 700,
-    "synced": 572,
+    "synced": 700,
     "first": {
       "leveltime": null,
-      "prndindex": 609,
-      "x": 574,
-      "y": 574,
+      "prndindex": null,
+      "x": null,
+      "y": null,
       "z": null,
       "angle": null,
-      "momx": 573,
-      "momy": 573,
+      "momx": null,
+      "momy": null,
       "health": null,
-      "mobjs": 647,
-      "sumx": 37,
-      "sumy": 37,
-      "sumz": 37,
-      "sumhealth": 647,
-      "sumstate": 607
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
     }
   }
 }

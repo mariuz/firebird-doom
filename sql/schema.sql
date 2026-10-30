@@ -413,7 +413,11 @@ CREATE TABLE things (
 CREATE INDEX things_kind ON things (kind);
 CREATE INDEX things_sector ON things (sector_id);
 CREATE INDEX things_x ON things (x);
-CREATE INDEX things_state_tic ON things (state_tic);   -- (STATES_THINK: only the things whose state ends this tic)
+CREATE INDEX things_state_tic ON things (state_tic);
+-- things set moving in P_RunThinkers by a thinker before theirs in the list (a monster thrown
+-- by the player's shot): DOOM runs every mobj every tic, so they move in their own turn of the
+-- same tic (RUN_THINKERS, RUN_LATE); K is the turn (THINK_KEY)
+CREATE GLOBAL TEMPORARY TABLE late_movers (k BIGINT NOT NULL, id INTEGER NOT NULL) ON COMMIT DELETE ROWS;   -- (STATES_THINK: only the things whose state ends this tic)
 
 CREATE TABLE player (
   id           SMALLINT NOT NULL PRIMARY KEY,

@@ -100,7 +100,10 @@ const spawn = async (type, dist = 96) => (await one(`EXECUTE BLOCK RETURNS (id I
 const setState = async (id, name, tic) => (await one(`EXECUTE BLOCK RETURNS (alive SMALLINT) AS BEGIN
   EXECUTE PROCEDURE set_state(${id}, ${ID.get(name)}, ${tic}) RETURNING_VALUES alive; SUSPEND; END`)).ALIVE;
 // (the game's tic moves on with it, as in DOOM_TIC: what's spawned in it starts its state then)
-const think = (tic) => db.query(`EXECUTE BLOCK AS BEGIN UPDATE game SET tic = ${tic} WHERE id = 1; EXECUTE PROCEDURE states_think(${tic}); END`);
+// (the player stays put where the tests measure from: a hit's thrust, P_DamageMobj's, would carry them off)
+const think = (tic) => db.query(`EXECUTE BLOCK AS BEGIN UPDATE game SET tic = ${tic} WHERE id = 1;
+  UPDATE things t SET momx = 0, momy = 0, x = ${pl.X}, y = ${pl.Y} WHERE t.id = (SELECT p.thing_id FROM player p WHERE p.id = 1);
+  EXECUTE PROCEDURE states_think(${tic}); END`);
 const thing = (id) => one(`SELECT state, state_tic, solid, st FROM things WHERE id = ${id}`);
 /** run STATES_THINK from tic FROM to TO; [tic, state name] at each change */
 async function trace(id, from, to) {

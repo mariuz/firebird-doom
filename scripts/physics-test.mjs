@@ -161,9 +161,13 @@ await db.exec(`UPDATE things SET z = ${p.Z + 32 + 12}, hp = 10000 WHERE id = ${t
 t = { ...t, z: p.Z + 32 + 12 };
 t.seen = (await one(`SELECT check_sight(${p.X}, ${p.Y}, ${p.Z + 32}, ${t.x}, ${t.y}, ${t.z + t.h / 2}) s FROM rdb$database`)).S;
 if (t.seen) {
-  const shot = async (slope) => (await db.query(`EXECUTE BLOCK RETURNS (h SMALLINT) AS BEGIN
-      EXECUTE PROCEDURE hitscan(${p.X}, ${p.Y}, ${p.Z + 32}, ${p.ANGLE}, 2048, 10, ${p.ID}, ${slope}) RETURNING_VALUES h;
-      SUSPEND; END`)).rows[0].H;
+  // (P_LineAttack in 16.16 from the player's gun, 2048 out, SLOPE as a fraction of 65536: did it hurt the imp?)
+  const shot = async (slope) => {
+    const h0 = (await one(`SELECT hp FROM things WHERE id = ${t.id}`)).HP;
+    await db.exec(`EXECUTE PROCEDURE line_attack(${p.ID}, bam_of(${p.ANGLE}), 134217728, ${Math.round(slope * 65536)}, 10)`);
+    await db.exec(`UPDATE things SET momx = 0, momy = 0 WHERE id = ${t.id}`);   // (not thrown back out of the next test)
+    return (await one(`SELECT hp FROM things WHERE id = ${t.id}`)).HP < h0 ? 1 : 0;
+  };
   const slope = (t.z + t.h / 2 - (p.Z + 32)) / 300;
   assert((await shot(0)) === 0, 'hitscan: a level shot passes under an imp hovering just above it');
   assert((await shot(slope)) === 1, `hitscan: the same shot at slope ${slope.toFixed(3)} hits it`);
@@ -635,7 +639,9 @@ if (sky) {
     const volleys = async () => {
       let hits = 0;
       for (let i = 0; i < 120; i++) {
+        // (and not thrown back: P_DamageMobj's thrust, 240 bullets' worth, would carry the player off)
         await db.exec('UPDATE player SET health = 1000, armor = 0');
+        await db.exec(`UPDATE things SET momx = 0, momy = 0 WHERE id = ${pl.ID}`);
         await setState(shooter, 'S_POSS_ATK2');
         if ((await one('SELECT health FROM player')).HEALTH < 1000) hits++;
       }
@@ -652,6 +658,7 @@ if (sky) {
     assert(worn.INVIS_TICS === 0, `it wears off (${worn.INVIS_TICS} tics left)`);
     await db.exec(`DELETE FROM things WHERE id = ${shooter} OR thing_type IN (9010, 9011)`);
     await db.exec('UPDATE player SET health = 100');
+    await db.exec(`UPDATE things SET momx = 0, momy = 0, x = ${pl.X}, y = ${pl.Y} WHERE id = ${pl.ID}`);
 
     // invulnerability: 1050 tics in which nothing but a telefrag hurts
     await db.exec(`DELETE FROM sound_events`);
