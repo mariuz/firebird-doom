@@ -516,7 +516,8 @@ try {
   const a3 = await tic();
   assert(a1 > a0 && menuUp && a3 > a2, `the title loop plays DEMO1 (tic ${a0} → ${a1}); a key opens the menu over it, and it goes on (${a2} → ${a3})`);
   await key('Escape');
-  await until(() => window.doom.screen === 'title', null, 60000);
+  // (the demo's 700 tics are 20 s at 35 Hz; headless Firefox on CI plays it several times slower)
+  await until(() => window.doom.screen === 'title', null, 180000);
   assert(await doom(() => window.doom.title.page === 'CREDIT' && !window.doom.demo.attract && !window.doom.demo.playing),
     `when the demo is over, the credits page (${await doom(() => window.doom.title.page)})`);
 
