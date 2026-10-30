@@ -124,7 +124,7 @@ export async function portThinkers(db) {
   return rows.map((r) => (r.W.trim() !== 'T' ? { kind: THINKER_NAME[r.LFX.trim()] ?? r.LFX.trim() } : {
     kind: 'mobj', type: MOBJ_TYPE[r.THING_TYPE] ?? MT_BY_ED.get(r.THING_TYPE) ?? `?${r.THING_TYPE}`,
     spawn: r.MX == null ? null : `${r.MX},${r.MY},${r.TTYPE}`,
-    x: fixed(r.X), y: fixed(r.Y), z: fixed(r.Z), angle: bam(r.ANGLE), health: r.HP, state: r.STATE,
+    x: fixed(r.X), y: fixed(r.Y), z: fixed(r.Z), angle: bam(r.ANGLE), health: r.HP, state: r.STATE ?? 0,
     tics: r.STATE_TIC == null ? -1 : r.STATE_TIC - tic,
   }));
 }

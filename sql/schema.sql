@@ -340,7 +340,9 @@ CREATE TABLE nodes (
   left_child  INTEGER NOT NULL,
   -- bounding boxes of each child, for R_CheckBBox
   r_top DOUBLE PRECISION, r_bot DOUBLE PRECISION, r_left DOUBLE PRECISION, r_right DOUBLE PRECISION,
-  l_top DOUBLE PRECISION, l_bot DOUBLE PRECISION, l_left DOUBLE PRECISION, l_right DOUBLE PRECISION
+  l_top DOUBLE PRECISION, l_bot DOUBLE PRECISION, l_left DOUBLE PRECISION, l_right DOUBLE PRECISION,
+  -- the partition line in 16.16 (INIT_MAP), for P_CheckSight's walk and R_PointInSubsector's
+  fx BIGINT, fy BIGINT, fdx BIGINT, fdy BIGINT
 );
 
 -- THINGS lump as authored; INIT_MAP spawns from it per skill level.
@@ -369,7 +371,7 @@ CREATE TABLE things (
   spawn_y    DOUBLE PRECISION,
   spawn_angle DOUBLE PRECISION,
   mthing      INTEGER,                          -- the map thing it was spawned from (MAP_THINGS.ID; P_LoadThings' order)
-  movedir     SMALLINT DEFAULT 8 NOT NULL,      -- P_NewChaseDir's heading: 0 east … 7 south-east (45° steps), 8 none
+  movedir     SMALLINT DEFAULT 0 NOT NULL,      -- P_NewChaseDir's heading: 0 east … 7 south-east (45° steps), 8 none (a new mobj's is 0, as DOOM's memset leaves it)
   movecount   INTEGER DEFAULT 0 NOT NULL,       -- chase steps before it picks a new heading
   just_attacked SMALLINT DEFAULT 0 NOT NULL,    -- MF_JUSTATTACKED
   dead_tic   INTEGER,                          -- when it became a corpse
@@ -405,7 +407,8 @@ CREATE TABLE things (
   fz_y        DOUBLE PRECISION,
   -- its place in P_RunThinkers' list (RUN_THINKERS): NULL is twice its id, the order things are
   -- made in; a player's body at the level's start sits among the map's things, where its start is
-  think_key   BIGINT
+  think_key   BIGINT,
+  lastlook    SMALLINT DEFAULT 0 NOT NULL      -- mobj->lastlook: the player P_LookForPlayers tries first (0–3)
 );
 CREATE INDEX things_kind ON things (kind);
 CREATE INDEX things_sector ON things (sector_id);

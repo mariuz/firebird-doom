@@ -210,8 +210,7 @@ BEGIN
   SELECT COALESCE(root_node, 32768) FROM game WHERE id = 1 INTO n;
   WHILE (n < 32768) DO
   BEGIN
-    SELECT CAST(x AS BIGINT) * 65536, CAST(y AS BIGINT) * 65536, CAST(dx AS BIGINT) * 65536, CAST(dy AS BIGINT) * 65536,
-           right_child, left_child
+    SELECT fx, fy, fdx, fdy, right_child, left_child
       FROM nodes WHERE id = :n
       INTO nx, ny, ndx, ndy, rc, lc;
     IF (point_on_node_side(x, y, nx, ny, ndx, ndy) = 0) THEN n = rc; ELSE n = lc;
@@ -503,6 +502,191 @@ BEGIN
   RETURN IIF(BIN_AND(nib, BIN_SHL(1, MOD(s2, 4))) <> 0, 1, 0);
 END^
 
+-- ── P_CheckSight (p_sight.c) in 16.16 ─────────────────────────────────────
+-- P_DivlineSide: 0 in front of the line from (LX, LY) along (LDX, LDY), 1 behind, 2 on it, in
+-- whole units – with DOOM's slip in the horizontal case, which tests x against the line's y
+CREATE OR ALTER FUNCTION divline_side (x BIGINT, y BIGINT, lx BIGINT, ly BIGINT, ldx BIGINT, ldy BIGINT)
+RETURNS SMALLINT
+AS
+DECLARE l BIGINT;
+DECLARE r BIGINT;
+BEGIN
+  IF (ldx = 0) THEN
+  BEGIN
+    IF (x = lx) THEN RETURN 2;
+    RETURN IIF(x <= lx, IIF(ldy > 0, 1, 0), IIF(ldy < 0, 1, 0));
+  END
+  IF (ldy = 0) THEN
+  BEGIN
+    IF (x = ly) THEN RETURN 2;
+    RETURN IIF(y <= ly, IIF(ldx < 0, 1, 0), IIF(ldx > 0, 1, 0));
+  END
+  -- (the 32-bit wraps written out: this runs for every node and seg a sight line meets)
+  l = BIN_AND(BIN_SHR(ldy, 16) * BIN_SHR(BIN_AND(x - lx + 2147483648, 4294967295) - 2147483648, 16) + 2147483648, 4294967295) - 2147483648;
+  r = BIN_AND(BIN_SHR(BIN_AND(y - ly + 2147483648, 4294967295) - 2147483648, 16) * BIN_SHR(ldx, 16) + 2147483648, 4294967295) - 2147483648;
+  IF (r < l) THEN RETURN 0;
+  IF (l = r) THEN RETURN 2;
+  RETURN 1;
+END^
+
+-- P_CrossSubsector: the sight line (from (SX, SY) along (SDX, SDY) to (TX, TY)) through
+-- subsector NUM's segs' lines: a one-sided line it crosses blocks it, a two-sided one narrows
+-- the slopes from the eyes (ZSTART) to the target's top and bottom by its opening
+-- (P_InterceptVector2's fraction along the line of sight); closed, or the slopes crossed, and
+-- it's blocked. → OK 0 blocked, and the slopes as they are now.
+CREATE OR ALTER PROCEDURE cross_subsector (
+  num INTEGER, sx BIGINT, sy BIGINT, sdx BIGINT, sdy BIGINT, tx BIGINT, ty BIGINT, zstart BIGINT,
+  top_in BIGINT, bottom_in BIGINT)
+RETURNS (ok SMALLINT, top BIGINT, bottom BIGINT)
+AS
+DECLARE lx BIGINT;
+DECLARE ly BIGINT;
+DECLARE ldx BIGINT;
+DECLARE ldy BIGINT;
+DECLARE lback INTEGER;
+DECLARE lflags INTEGER;
+DECLARE ff BIGINT;
+DECLARE fc BIGINT;
+DECLARE bf BIGINT;
+DECLARE bc BIGINT;
+DECLARE opentop BIGINT;
+DECLARE openbottom BIGINT;
+DECLARE frac BIGINT;
+DECLARE slope BIGINT;
+BEGIN
+  ok = 1;
+  top = top_in;
+  bottom = bottom_in;
+  FOR SELECT l.fx, l.fy, l.fdx, l.fdy, l.back_sector, l.flags,
+             fx_of(fs.floor_h), fx_of(fs.ceil_h), fx_of(bs.floor_h), fx_of(bs.ceil_h)
+        FROM ssectors ss
+        JOIN segs sg ON sg.id >= ss.first_seg AND sg.id < ss.first_seg + ss.seg_count
+        JOIN linedefs l ON l.id = sg.linedef
+        LEFT JOIN sectors fs ON fs.id = sg.front_sector
+        LEFT JOIN sectors bs ON bs.id = sg.back_sector
+       WHERE ss.id = :num
+         -- (a line whose box the sight line's box doesn't reach can't be crossed: skipped at once)
+         -- (2 units wider: DOOM's side test is in whole units)
+         AND l.maxx * 65536 + 131072 >= MINVALUE(:sx, :tx) AND l.minx * 65536 - 131072 <= MAXVALUE(:sx, :tx)
+         AND l.maxy * 65536 + 131072 >= MINVALUE(:sy, :ty) AND l.miny * 65536 - 131072 <= MAXVALUE(:sy, :ty)
+       ORDER BY sg.id
+        INTO lx, ly, ldx, ldy, lback, lflags, ff, fc, bf, bc
+  DO
+  BEGIN
+    -- (DOOM marks each line checked: checked again it gives the same answer, so here it's not)
+    IF (divline_side(lx, ly, sx, sy, sdx, sdy) = divline_side(fx32(lx + ldx), fx32(ly + ldy), sx, sy, sdx, sdy)) THEN CONTINUE;
+    IF (divline_side(sx, sy, lx, ly, ldx, ldy) = divline_side(tx, ty, lx, ly, ldx, ldy)) THEN CONTINUE;
+    IF (lback IS NULL OR BIN_AND(lflags, 4) = 0) THEN
+    BEGIN
+      ok = 0;
+      EXIT;
+    END
+    IF (ff = bf AND fc = bc) THEN CONTINUE;
+    opentop = MINVALUE(fc, bc);
+    openbottom = MAXVALUE(ff, bf);
+    IF (openbottom >= opentop) THEN
+    BEGIN
+      ok = 0;
+      EXIT;
+    END
+    frac = intercept_vector(sx, sy, sdx, sdy, lx, ly, ldx, ldy);
+    IF (ff <> bf) THEN
+    BEGIN
+      slope = fx_div(fx32(openbottom - zstart), frac);
+      IF (slope > bottom) THEN bottom = slope;
+    END
+    IF (fc <> bc) THEN
+    BEGIN
+      slope = fx_div(fx32(opentop - zstart), frac);
+      IF (slope < top) THEN top = slope;
+    END
+    IF (top <= bottom) THEN
+    BEGIN
+      ok = 0;
+      EXIT;
+    END
+  END
+END^
+
+-- P_CrossBSPNode: the sight line through the BSP from node BSPNUM: the start's side first
+-- (on the line: the front), then, if the line reaches it, the other
+CREATE OR ALTER PROCEDURE cross_bsp (
+  bspnum INTEGER, sx BIGINT, sy BIGINT, sdx BIGINT, sdy BIGINT, tx BIGINT, ty BIGINT, zstart BIGINT,
+  top_in BIGINT, bottom_in BIGINT)
+RETURNS (ok SMALLINT, top BIGINT, bottom BIGINT)
+AS
+BEGIN
+  ok = 1;
+  top = top_in;
+  bottom = bottom_in;
+END^
+
+CREATE OR ALTER PROCEDURE cross_bsp (
+  bspnum INTEGER, sx BIGINT, sy BIGINT, sdx BIGINT, sdy BIGINT, tx BIGINT, ty BIGINT, zstart BIGINT,
+  top_in BIGINT, bottom_in BIGINT)
+RETURNS (ok SMALLINT, top BIGINT, bottom BIGINT)
+AS
+DECLARE nx BIGINT;
+DECLARE ny BIGINT;
+DECLARE ndx BIGINT;
+DECLARE ndy BIGINT;
+DECLARE rc INTEGER;
+DECLARE lc INTEGER;
+DECLARE side SMALLINT;
+BEGIN
+  top = top_in;
+  bottom = bottom_in;
+  IF (bspnum >= 32768) THEN
+  BEGIN
+    EXECUTE PROCEDURE cross_subsector(IIF(bspnum = 65535, 0, bspnum - 32768), sx, sy, sdx, sdy, tx, ty, zstart, top, bottom)
+      RETURNING_VALUES ok, top, bottom;
+    EXIT;
+  END
+  SELECT n.fx, n.fy, n.fdx, n.fdy, n.right_child, n.left_child
+    FROM nodes n WHERE n.id = :bspnum INTO nx, ny, ndx, ndy, rc, lc;
+  side = divline_side(sx, sy, nx, ny, ndx, ndy);
+  IF (side = 2) THEN side = 0;
+  EXECUTE PROCEDURE cross_bsp(IIF(side = 0, rc, lc), sx, sy, sdx, sdy, tx, ty, zstart, top, bottom)
+    RETURNING_VALUES ok, top, bottom;
+  IF (ok = 0) THEN EXIT;
+  IF (side = divline_side(tx, ty, nx, ny, ndx, ndy)) THEN EXIT;
+  EXECUTE PROCEDURE cross_bsp(IIF(side = 0, lc, rc), sx, sy, sdx, sdy, tx, ty, zstart, top, bottom)
+    RETURNING_VALUES ok, top, bottom;
+END^
+
+-- P_CheckSight: can T1 see T2? Not if REJECT says their sectors can't; else from T1's eyes
+-- (a quarter of its height below its top) to any part of T2's body, through the BSP
+CREATE OR ALTER FUNCTION sight_fx (t1 INTEGER, t2 INTEGER) RETURNS SMALLINT
+AS
+DECLARE x1 BIGINT;
+DECLARE y1 BIGINT;
+DECLARE z1 BIGINT;
+DECLARE h1 BIGINT;
+DECLARE s1 INTEGER;
+DECLARE x2 BIGINT;
+DECLARE y2 BIGINT;
+DECLARE z2 BIGINT;
+DECLARE h2 BIGINT;
+DECLARE s2 INTEGER;
+DECLARE zstart BIGINT;
+DECLARE top BIGINT;
+DECLARE bottom BIGINT;
+DECLARE ok SMALLINT;
+DECLARE root INTEGER;
+BEGIN
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), fx_of(t.height), t.sector_id FROM things t WHERE t.id = :t1 INTO x1, y1, z1, h1, s1;
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), fx_of(t.height), t.sector_id FROM things t WHERE t.id = :t2 INTO x2, y2, z2, h2, s2;
+  IF (x1 IS NULL OR x2 IS NULL) THEN RETURN 0;
+  IF (rejected(s1, s2) = 1) THEN RETURN 0;
+  zstart = z1 + h1 - BIN_SHR(h1, 2);
+  top = z2 + h2 - zstart;
+  bottom = z2 - zstart;
+  SELECT g.root_node FROM game g WHERE g.id = 1 INTO root;
+  EXECUTE PROCEDURE cross_bsp(root, x1, y1, fx32(x2 - x1), fx32(y2 - y1), x2, y2, zstart, top, bottom)
+    RETURNING_VALUES ok, top, bottom;
+  RETURN ok;
+END^
+
 -- P_CheckSight: is there an unobstructed line from A to B at these heights?
 -- Walks the BLOCKMAP cells the sight line crosses (Amanatides–Woo) and stops
 -- at the first cell holding a blocking line.
@@ -651,13 +835,12 @@ AS
 DECLARE sec INTEGER;
 DECLARE lastlook INTEGER;
 BEGIN
-  -- P_SpawnMobj: mobj->lastlook = P_Random () % MAXPLAYERS (A_Look's first player to try; one
-  -- player here, so only the draw counts)
-  lastlook = p_rand256();
+  -- P_SpawnMobj: mobj->lastlook = P_Random () % MAXPLAYERS (P_LookForPlayers' first player to try)
+  lastlook = MOD(p_rand256(), 4);
   new_id = NEXT VALUE FOR thing_seq;
   sec = sector_at(px, py);
   INSERT INTO things (id, thing_type, kind, x, y, z, angle, hp, radius, height, solid, sector_id,
-                      st, state, state_tic, reaction)
+                      st, state, state_tic, reaction, lastlook)
   SELECT :new_id, tt.thing_type, tt.kind, :px, :py,
          COALESCE(:pz, (SELECT floor_h FROM sectors WHERE id = :sec)), :ang,
          tt.hp, tt.radius, tt.height, tt.solid, :sec,
@@ -670,7 +853,7 @@ BEGIN
          -- (spawned during a tic, it's at the end of the list: it counts down this tic, THINK_AHEAD)
          IIF(tt.on_states = 1, (SELECT IIF(s.tics < 0, NULL, g.tic + s.tics - think_ahead(2 * :new_id)) FROM states s CROSS JOIN game g
                                  WHERE s.id = tt.spawn_state AND g.id = 1), NULL),
-         IIF(tt.on_states = 1, (SELECT IIF(g.skill = 5, 0, tt.reaction_time) FROM game g WHERE g.id = 1), 0)
+         IIF(tt.on_states = 1, (SELECT IIF(g.skill = 5, 0, tt.reaction_time) FROM game g WHERE g.id = 1), 0), :lastlook
     FROM thing_types tt WHERE tt.thing_type = :ttype;
 END^
 
@@ -2744,9 +2927,10 @@ END^
 -- one-sided or blocking line its box straddles stops it; any other narrows the floor and
 -- ceiling to the opening (P_LineOpening), and one with a special goes on SPECHIT – the list is
 -- kept last first, the order P_TryMove takes them in. NOCLIP: the subsector's floor and ceiling,
--- and yes. THINGS 0: the lines alone (P_ThingHeightClip, a teleport's landing).
+-- and yes. THINGS 0: the lines alone (P_ThingHeightClip, a teleport's landing). MONSTER 1: a
+-- line with ML_BLOCKMONSTERS stops it too.
 CREATE OR ALTER PROCEDURE check_position_fx (
-  tid INTEGER, x BIGINT, y BIGINT, rad BIGINT, noclip SMALLINT, things SMALLINT = 1)
+  tid INTEGER, x BIGINT, y BIGINT, rad BIGINT, noclip SMALLINT, things SMALLINT = 1, monster SMALLINT = 0)
 RETURNS (ok SMALLINT, floorz BIGINT, ceilz BIGINT, dropoffz BIGINT, spechit VARCHAR(4000))
 AS
 DECLARE orgx BIGINT;
@@ -2825,8 +3009,8 @@ BEGIN
   BEGIN
     IF (x + rad <= fx_of(lminx) OR x - rad >= fx_of(lmaxx) OR y + rad <= fx_of(lminy) OR y - rad >= fx_of(lmaxy)) THEN CONTINUE;
     IF (box_on_line_side(y + rad, y - rad, x - rad, x + rad, lx, ly, ldx, ldy, lslope) <> -1) THEN CONTINUE;
-    -- one-sided, or ML_BLOCKING
-    IF (lback IS NULL OR BIN_AND(lflags, 1) = 1) THEN
+    -- one-sided, or ML_BLOCKING; for a monster, ML_BLOCKMONSTERS
+    IF (lback IS NULL OR BIN_AND(lflags, 1) = 1 OR (monster = 1 AND BIN_AND(lflags, 2) = 2)) THEN
     BEGIN
       ok = 0;
       EXIT;
@@ -4100,79 +4284,8 @@ BEGIN
 END^
 
 -- ── monsters, missiles, effects ───────────────────────────────────────────
--- P_Move: one step of SPD in the eight-way heading DIR (xspeed/yspeed: the
--- diagonals are 47000/65536), if there's room to stand there.
-CREATE OR ALTER PROCEDURE p_move (
-  id INTEGER, x DOUBLE PRECISION, y DOUBLE PRECISION, z DOUBLE PRECISION, rad DOUBLE PRECISION,
-  hgt DOUBLE PRECISION, spd DOUBLE PRECISION, fl SMALLINT, momz DOUBLE PRECISION, dir SMALLINT)
-RETURNS (ok SMALLINT, nx DOUBLE PRECISION, ny DOUBLE PRECISION, nz DOUBLE PRECISION, sec INTEGER, bumped SMALLINT)
-AS
-DECLARE d DOUBLE PRECISION = 0.7171630859375e0;
-DECLARE lid INTEGER;
-DECLARE tx DOUBLE PRECISION;
-DECLARE ty DOUBLE PRECISION;
-DECLARE fz DOUBLE PRECISION;
-DECLARE cz DOUBLE PRECISION;
-DECLARE dz DOUBLE PRECISION;
-BEGIN
-  ok = 0;
-  bumped = 0;
-  nx = x;
-  ny = y;
-  nz = z;
-  sec = NULL;
-  IF (dir IS NULL OR dir < 0 OR dir > 7) THEN EXIT;
-  tx = x + spd * CASE dir WHEN 0 THEN 1 WHEN 1 THEN d WHEN 2 THEN 0 WHEN 3 THEN -d
-                          WHEN 4 THEN -1 WHEN 5 THEN -d WHEN 6 THEN 0 ELSE d END;
-  ty = y + spd * CASE dir WHEN 0 THEN 0 WHEN 1 THEN d WHEN 2 THEN 1 WHEN 3 THEN d
-                          WHEN 4 THEN 0 WHEN 5 THEN -d WHEN 6 THEN -1 ELSE -d END;
-  EXECUTE PROCEDURE check_position(id, tx, ty, z, rad, hgt, IIF(fl = 1, 2, 1)) RETURNING_VALUES ok, fz, cz, dz, sec;
-  IF (ok = 2) THEN
-  BEGIN
-    -- P_Move, MF_FLOAT and floatok: blocked only by the height, a flier rises
-    -- (or sinks) FLOATSPEED towards where it would fit, and that counts as a
-    -- move. MF_INFLOAT (131072 in THINGS.FLAGS) keeps P_ZMovement from
-    -- steering its height towards the target meanwhile
-    ok = 1;
-    nz = IIF(z < fz, z + 4, z - 4);
-    sec = NULL;
-    UPDATE things t SET flags = BIN_OR(t.flags, 131072) WHERE t.id = :id;
-    EXIT;
-  END
-  IF (ok = 1) THEN
-  BEGIN
-    UPDATE things t SET flags = BIN_AND(t.flags, BIN_NOT(131072)) WHERE t.id = :id AND BIN_AND(t.flags, 131072) <> 0;
-    nx = tx;
-    ny = ty;
-    -- on the ground it steps up and down with the floor; tossed or flying,
-    -- it keeps its height
-    nz = IIF(momz = 0 AND fl = 0, fz, MAXVALUE(z, fz));
-  END
-  ELSE
-  BEGIN
-    -- blocked: the special lines its box touched (spechit) get a try – for a
-    -- monster that's a door it can open – and if one answers, that counts as
-    -- a move (it waits there while the door opens; its heading is spent)
-    FOR SELECT l.id
-          FROM linedefs l
-         WHERE l.special = 1 AND l.back_sector IS NOT NULL AND BIN_AND(l.flags, 32) = 0
-           AND l.minx + 0 <= :tx + :rad AND l.maxx + 0 >= :tx - :rad AND l.miny + 0 <= :ty + :rad AND l.maxy + 0 >= :ty - :rad
-           AND MINVALUE(l.dx * (:ty - :rad - l.y1) - l.dy * (:tx - :rad - l.x1), l.dx * (:ty - :rad - l.y1) - l.dy * (:tx + :rad - l.x1),
-                        l.dx * (:ty + :rad - l.y1) - l.dy * (:tx - :rad - l.x1), l.dx * (:ty + :rad - l.y1) - l.dy * (:tx + :rad - l.x1)) < 0
-           AND MAXVALUE(l.dx * (:ty - :rad - l.y1) - l.dy * (:tx - :rad - l.x1), l.dx * (:ty - :rad - l.y1) - l.dy * (:tx + :rad - l.x1),
-                        l.dx * (:ty + :rad - l.y1) - l.dy * (:tx - :rad - l.x1), l.dx * (:ty + :rad - l.y1) - l.dy * (:tx + :rad - l.x1)) > 0
-         ORDER BY l.id
-          INTO lid
-    DO
-    BEGIN
-      EXECUTE PROCEDURE activate_line(lid, 'use', id);
-      bumped = 1;
-    END
-    IF (bumped = 1) THEN ok = 1;
-  END
-END^
-
--- P_TryMove's P_CrossSpecialLine, for a monster's step from (OX, OY) to (X, Y):
+-- (A monster's walk, P_Move, P_TryWalk and P_NewChaseDir in 16.16, comes with A_Chase.)
+-- P_TryMove's P_CrossSpecialLine, for a lost soul's charge from (OX, OY) to (X, Y):
 -- the special lines it crossed, in line order (a teleporter only from the
 -- front). If one teleported it, the rest are left alone.
 CREATE OR ALTER PROCEDURE monster_cross (
@@ -4205,111 +4318,70 @@ BEGIN
   END
 END^
 
--- P_NewChaseDir: head for the target in one of eight directions – the
--- diagonal first, then the straight ones (the bigger difference first, or at
--- random 55 times in 256), then the old heading, then every heading in a
--- random sweep, and only then a turnaround. P_TryWalk: a successful step
--- sets MOVECOUNT to P_Random() & 15.
-CREATE OR ALTER PROCEDURE new_chase_dir (
-  id INTEGER, x DOUBLE PRECISION, y DOUBLE PRECISION, z DOUBLE PRECISION, rad DOUBLE PRECISION,
-  hgt DOUBLE PRECISION, spd DOUBLE PRECISION, fl SMALLINT, momz DOUBLE PRECISION, olddir SMALLINT,
-  tx DOUBLE PRECISION, ty DOUBLE PRECISION)
-RETURNS (movedir SMALLINT, movecount INTEGER, nx DOUBLE PRECISION, ny DOUBLE PRECISION, nz DOUBLE PRECISION,
-         sec INTEGER, moved SMALLINT)
-AS
-DECLARE turnaround SMALLINT;
-DECLARE dx DOUBLE PRECISION;
-DECLARE dy DOUBLE PRECISION;
-DECLARE d1 SMALLINT;
-DECLARE d2 SMALLINT;
-DECLARE t SMALLINT;
-DECLARE cand SMALLINT;
-DECLARE stage INTEGER = 0;
-DECLARE sweep_up SMALLINT = 0;
-DECLARE ok SMALLINT;
-DECLARE mx DOUBLE PRECISION;
-DECLARE my DOUBLE PRECISION;
-DECLARE mz DOUBLE PRECISION;
-DECLARE msec INTEGER;
-DECLARE bump SMALLINT;
-BEGIN
-  moved = 0;
-  movecount = 0;
-  nx = x;
-  ny = y;
-  nz = z;
-  sec = NULL;
-  turnaround = IIF(olddir >= 8, 8, MOD(olddir + 4, 8));
-  dx = tx - x;
-  dy = ty - y;
-  d1 = IIF(dx > 10, 0, IIF(dx < -10, 4, 8));
-  d2 = IIF(dy < -10, 6, IIF(dy > 10, 2, 8));
-  -- the direct route: diags[((deltay < 0) << 1) + (deltax > 0)]
-  IF (d1 <> 8 AND d2 <> 8) THEN
-  BEGIN
-    cand = CASE WHEN dy < 0 AND dx > 0 THEN 7 WHEN dy < 0 THEN 5 WHEN dx > 0 THEN 1 ELSE 3 END;
-    IF (cand <> turnaround) THEN
-    BEGIN
-      EXECUTE PROCEDURE p_move(id, x, y, z, rad, hgt, spd, fl, momz, cand) RETURNING_VALUES ok, mx, my, mz, msec, bump;
-      IF (ok = 1) THEN
-      BEGIN
-        moved = 1;
-        movedir = IIF(bump = 1, 8, cand);
-      END
-    END
-  END
-  IF (moved = 0) THEN
-  BEGIN
-    IF (FLOOR(p_random() * 256) > 200 OR ABS(dy) > ABS(dx)) THEN
-    BEGIN
-      t = d1;
-      d1 = d2;
-      d2 = t;
-    END
-    IF (d1 = turnaround) THEN d1 = 8;
-    IF (d2 = turnaround) THEN d2 = 8;
-    -- 0: d1, 1: d2, 2: the old heading, 3–10: the sweep, 11: the turnaround
-    WHILE (moved = 0 AND stage <= 11) DO
-    BEGIN
-      cand = 8;
-      IF (stage = 0) THEN cand = d1;
-      ELSE IF (stage = 1) THEN cand = d2;
-      ELSE IF (stage = 2) THEN cand = olddir;
-      ELSE IF (stage <= 10) THEN
-      BEGIN
-        IF (stage = 3) THEN sweep_up = MOD(FLOOR(p_random() * 256), 2);
-        cand = IIF(sweep_up = 1, stage - 3, 10 - stage);
-        IF (cand = turnaround) THEN cand = 8;
-      END
-      ELSE cand = turnaround;
-      IF (cand < 8) THEN
-      BEGIN
-        EXECUTE PROCEDURE p_move(id, x, y, z, rad, hgt, spd, fl, momz, cand) RETURNING_VALUES ok, mx, my, mz, msec, bump;
-        IF (ok = 1) THEN
-        BEGIN
-          moved = 1;
-          movedir = IIF(bump = 1, 8, cand);
-        END
-      END
-      stage = stage + 1;
-    END
-  END
-  IF (moved = 1) THEN
-  BEGIN
-    nx = mx;
-    ny = my;
-    nz = mz;
-    sec = msec;
-    movecount = MOD(FLOOR(p_random() * 256), 16);
-  END
-  ELSE movedir = 8;
-END^
-
 -- A_Look / A_Chase / A_FaceTarget / A_PosAttack / A_TroopAttack / A_SargAttack,
 -- collapsed into one state machine per thing.
 -- P_LookForPlayers: the first player, counting on from FIRST_PID, that is alive
 -- and in sight (REJECT, then the line of sight) – and, unless ALLAROUND, in
 -- the 180° ahead or within MELEERANGE (64) behind. 0: nobody.
+-- P_LookForPlayers: from the player after LASTLOOK on (THINGS.LASTLOOK, each in the game in
+-- turn), the first that is alive and in sight (P_CheckSight) – and, unless ALLAROUND, in the
+-- 180° ahead (R_PointToAngle2) or within MELEERANGE (64) behind. DOOM gives up after two
+-- rounds, or on reaching the player before LASTLOOK – so, alone in the game, a monster whose
+-- LASTLOOK is 1 doesn't look at all the first time. LASTLOOK stays where the search ended.
+-- → FOUND: the player, 0 nobody.
+CREATE OR ALTER PROCEDURE look_for_players (tid INTEGER, allaround SMALLINT)
+RETURNS (found SMALLINT)
+AS
+DECLARE ll SMALLINT;
+DECLARE stp SMALLINT;
+DECLARE c INTEGER = 0;
+DECLARE n INTEGER = 0;
+DECLARE pthing INTEGER;
+DECLARE hp INTEGER;
+DECLARE ax BIGINT;
+DECLARE ay BIGINT;
+DECLARE aang BIGINT;
+DECLARE qx BIGINT;
+DECLARE qy BIGINT;
+DECLARE an BIGINT;
+DECLARE ok SMALLINT;
+DECLARE seen VARCHAR(64) = ',';
+BEGIN
+  found = 0;
+  SELECT t.lastlook, fx_of(t.x), fx_of(t.y), bam_of(t.angle) FROM things t WHERE t.id = :tid INTO ll, ax, ay, aang;
+  stp = BIN_AND(ll + 3, 3);
+  WHILE (n < 16) DO
+  BEGIN
+    n = n + 1;
+    pthing = NULL;
+    SELECT p.thing_id, IIF(p.dead = 1, 0, p.health) FROM player p WHERE p.id = :ll + 1 INTO pthing, hp;
+    IF (pthing IS NOT NULL) THEN                -- (playeringame)
+    BEGIN
+      IF (c = 2 OR ll = stp) THEN LEAVE;        -- (c++ == 2 || lastlook == stop: done looking)
+      c = c + 1;
+      -- (P_CheckSight again for a player already looked at gives the same answer: kept)
+      IF (POSITION(',' || ll || ':' IN seen) = 0) THEN seen = seen || ll || ':' || IIF(hp > 0, sight_fx(tid, pthing), 0) || ',';
+      IF (POSITION(',' || ll || ':1,' IN seen) > 0) THEN
+      BEGIN
+        ok = 1;
+        IF (allaround = 0) THEN
+        BEGIN
+          SELECT fx_of(t.x), fx_of(t.y) FROM things t WHERE t.id = :pthing INTO qx, qy;
+          an = BIN_AND(point_to_angle2(ax, ay, qx, qy) - aang, 4294967295);
+          IF (an > 1073741824 AND an < 3221225472 AND aprox_distance(fx32(qx - ax), fx32(qy - ay)) > 4194304) THEN ok = 0;
+        END
+        IF (ok = 1) THEN
+        BEGIN
+          found = ll + 1;
+          LEAVE;
+        END
+      END
+    END
+    ll = BIN_AND(ll + 1, 3);
+  END
+  UPDATE things t SET lastlook = :ll WHERE t.id = :tid;
+END^
+
 CREATE OR ALTER PROCEDURE look_for_player (
   x DOUBLE PRECISION, y DOUBLE PRECISION, z DOUBLE PRECISION, hgt DOUBLE PRECISION, ang DOUBLE PRECISION,
   sec INTEGER, first_pid SMALLINT, allaround SMALLINT)
@@ -4380,14 +4452,15 @@ BEGIN
   EXECUTE PROCEDURE spawn_thing(9016, x, y, NULL, 0) RETURNING_VALUES mid;
   EXECUTE PROCEDURE spawn_thing(9016, sx, sy, NULL, 0) RETURNING_VALUES mid;
   EXECUTE PROCEDURE play_sound('DSTELEPT', mid, sx, sy);
-  mid = p_rand256();   -- (P_SpawnMobj for the new body: its lastlook)
+  mid = MOD(p_rand256(), 4);   -- (P_SpawnMobj for the new body: its lastlook)
+  UPDATE things t SET lastlook = :mid WHERE t.id = :id;
   UPDATE things t
      SET x = :sx, y = :sy, angle = :sa, z = :fz, sector_id = :sec, momx = 0, momy = 0, momz = 0,
          hp = (SELECT tt.hp FROM thing_types tt WHERE tt.thing_type = t.thing_type),
          st = 'idle', solid = 1,
          -- (P_NightmareRespawn: the new body's reactiontime is 18)
          reaction = 18,
-         target_id = NULL, threshold = 0, dead_tic = NULL,
+         target_id = NULL, threshold = 0, dead_tic = NULL, movedir = 0, movecount = 0, just_attacked = 0,
          -- (its spawn state, as a new P_SpawnMobj)
          state = (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = t.thing_type),
          state_tic = (SELECT IIF(s.tics >= 0, :tic + s.tics, NULL)
@@ -4654,15 +4727,13 @@ END^
 CREATE OR ALTER FUNCTION mobj_sees (tid INTEGER, px DOUBLE PRECISION, py DOUBLE PRECISION, pz DOUBLE PRECISION, psec INTEGER)
 RETURNS SMALLINT
 AS
-DECLARE x DOUBLE PRECISION;
-DECLARE y DOUBLE PRECISION;
-DECLARE z DOUBLE PRECISION;
-DECLARE hgt DOUBLE PRECISION;
-DECLARE sec INTEGER;
+DECLARE tgt INTEGER;
 BEGIN
-  SELECT t.x, t.y, t.z, t.height, t.sector_id FROM things t WHERE t.id = :tid INTO x, y, z, hgt, sec;
-  IF (px IS NULL OR rejected(sec, psec) = 1) THEN RETURN 0;
-  RETURN check_sight(x, y, z + hgt * 0.75e0, px, py, pz + 41);
+  -- (P_CheckSight (actor, actor->target): PX NULL is no target; the rest are its, so the
+  -- target itself is looked at: its target_id, or its player's body)
+  IF (px IS NULL) THEN RETURN 0;
+  SELECT COALESCE(t.target_id, (SELECT p.thing_id FROM player p WHERE p.id = t.tplayer)) FROM things t WHERE t.id = :tid INTO tgt;
+  RETURN sight_fx(tid, tgt);
 END^
 
 -- actor->target, for a monster on the tables: the monster it's fighting (TARGET_ID)
@@ -4701,12 +4772,19 @@ DECLARE prad DOUBLE PRECISION;
 DECLARE palive SMALLINT;
 DECLARE shadow SMALLINT;
 DECLARE ang DOUBLE PRECISION;
+DECLARE bam BIGINT;
+DECLARE r INTEGER;
 BEGIN
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL) THEN EXIT;
-  SELECT atan2_safe(:py - t.y, :px - t.x) FROM things t WHERE t.id = :tid INTO ang;
-  IF (shadow = 1) THEN ang = ang + (p_rand256() - p_rand256()) * PI() / 1024;
-  UPDATE things t SET angle = :ang, flags = BIN_AND(t.flags, BIN_NOT(8)) WHERE t.id = :tid;
+  -- R_PointToAngle2, and at a shadow P_SubRandom() << 21
+  SELECT point_to_angle2(fx_of(t.x), fx_of(t.y), fx_of(:px), fx_of(:py)) FROM things t WHERE t.id = :tid INTO bam;
+  IF (shadow = 1) THEN
+  BEGIN
+    r = p_rand256();
+    bam = BIN_AND(bam + (r - p_rand256()) * 2097152, 4294967295);
+  END
+  UPDATE things t SET angle = rad_of(:bam), flags = BIN_AND(t.flags, BIN_NOT(8)) WHERE t.id = :tid;
 END^
 
 -- A_PosAttack, A_SPosAttack, A_CPosAttack: face the target, aim (P_AimLineAttack from
@@ -5129,7 +5207,7 @@ BEGIN
     ELSE IF (mobj_sees(tid, qx, qy, qz, qsec) = 1) THEN found = heard;
   END
   IF (found = 0) THEN
-    EXECUTE PROCEDURE look_for_player(x, y, z, hgt, ang, sec, tp, 0) RETURNING_VALUES found;
+    EXECUTE PROCEDURE look_for_players(tid, 0) RETURNING_VALUES found;
   IF (found = 0) THEN EXIT;
   UPDATE things t SET target_id = NULL, tplayer = :found WHERE t.id = :tid;
   IF (see_snd IS NOT NULL) THEN
@@ -5140,6 +5218,219 @@ BEGIN
     ELSE EXECUTE PROCEDURE play_sound(see_snd, tid, x, y);
   END
   EXECUTE PROCEDURE set_state(tid, see_state, tic) RETURNING_VALUES alive;
+END^
+
+-- P_TryMove for a monster (not a player: TRY_MOVE_FX), in 16.16: to (X, Y) if P_CheckPosition
+-- lets it (MONSTER) and it fits – the gap as tall as it, the ceiling above its head, a step up
+-- of 24 at most, and, but for a flier, no drop of more than 24 under it. FLOATOK: it would fit
+-- but for its height (a flier then rises or sinks to it). TMFLOORZ the floor found there.
+-- SPECHIT: the special lines its box met, last first, as far as P_CheckPosition got. Moved,
+-- it crosses those whose side it changed that a monster sets off (teleporters only from the
+-- front; doors 4, lifts 10 and 88), each looking at where it is now.
+CREATE OR ALTER PROCEDURE try_move_mobj (tid INTEGER, x BIGINT, y BIGINT)
+RETURNS (ok SMALLINT, floatok SMALLINT, tmfloorz BIGINT, spechit VARCHAR(4000))
+AS
+DECLARE ox BIGINT;
+DECLARE oy BIGINT;
+DECLARE z BIGINT;
+DECLARE rad BIGINT;
+DECLARE hgt BIGINT;
+DECLARE fl SMALLINT;
+DECLARE cz BIGINT;
+DECLARE dz BIGINT;
+DECLARE spec VARCHAR(4000);
+DECLARE k INTEGER;
+DECLARE lid INTEGER;
+DECLARE lx BIGINT;
+DECLARE ly BIGINT;
+DECLARE ldx BIGINT;
+DECLARE ldy BIGINT;
+DECLARE lsp INTEGER;
+DECLARE nx BIGINT;
+DECLARE ny BIGINT;
+DECLARE oldside SMALLINT;
+BEGIN
+  floatok = 0;
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), fx_of(t.radius), fx_of(t.height), COALESCE(tt.floats, 0)
+    FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
+    INTO ox, oy, z, rad, hgt, fl;
+  EXECUTE PROCEDURE check_position_fx(tid, x, y, rad, 0, 1, 1) RETURNING_VALUES ok, tmfloorz, cz, dz, spechit;
+  IF (ok = 0) THEN EXIT;
+  ok = 0;
+  IF (cz - tmfloorz < hgt) THEN EXIT;           -- (doesn't fit)
+  floatok = 1;
+  IF (cz - z < hgt) THEN EXIT;                  -- (it must come down to fit)
+  IF (tmfloorz - z > 1572864) THEN EXIT;        -- (a step up of more than 24)
+  IF (fl = 0 AND tmfloorz - dz > 1572864) THEN EXIT;   -- (over a drop-off: MF_DROPOFF and MF_FLOAT may)
+  ok = 1;
+  UPDATE things t SET x = :x / 65536e0, y = :y / 65536e0, sector_id = sector_at_fx(:x, :y) WHERE t.id = :tid;
+  spec = spechit;
+  WHILE (spec <> '') DO
+  BEGIN
+    k = POSITION(',' IN spec);
+    lid = CAST(SUBSTRING(spec FROM 1 FOR k - 1) AS INTEGER);
+    spec = SUBSTRING(spec FROM k + 1);
+    SELECT l.fx, l.fy, l.fdx, l.fdy, l.special FROM linedefs l WHERE l.id = :lid INTO lx, ly, ldx, ldy, lsp;
+    IF (lsp NOT IN (39, 97, 125, 126, 4, 10, 88)) THEN CONTINUE;   -- (P_CrossSpecialLine: a monster's few)
+    nx = NULL;
+    SELECT fx_of(t.x), fx_of(t.y) FROM things t WHERE t.id = :tid INTO nx, ny;
+    IF (nx IS NULL) THEN EXIT;
+    oldside = point_on_line_side(ox, oy, lx, ly, ldx, ldy);
+    IF (point_on_line_side(nx, ny, lx, ly, ldx, ldy) <> oldside
+        AND NOT (lsp IN (39, 97, 125, 126) AND oldside = 1)) THEN
+      EXECUTE PROCEDURE activate_line(lid, 'walk', tid);
+  END
+END^
+
+-- P_Move: a step of its speed in its heading (xspeed/yspeed: the diagonals 47000/65536), by
+-- P_TryMove. A flier only blocked by the height rises or sinks FLOATSPEED (4) instead, and
+-- that's a move (MF_INFLOAT, 131072 in THINGS.FLAGS, keeps P_ZMovement off its height
+-- meanwhile). Else, blocked, the special lines it met are tried (P_UseSpecialLine: a
+-- monster opens a door, special 1, and stands at a locked one, 32–34; none secret), last
+-- first, and its heading is spent: one answering counts as a move. Moved, a walker stands
+-- on the floor it found. → OK.
+CREATE OR ALTER PROCEDURE p_move_fx (tid INTEGER)
+RETURNS (ok SMALLINT)
+AS
+DECLARE dir SMALLINT;
+DECLARE spd INTEGER;
+DECLARE fl SMALLINT;
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE z BIGINT;
+DECLARE tx BIGINT;
+DECLARE ty BIGINT;
+DECLARE tok SMALLINT;
+DECLARE floatok SMALLINT;
+DECLARE tmfz BIGINT;
+DECLARE spec VARCHAR(4000);
+DECLARE k INTEGER;
+DECLARE lid INTEGER;
+DECLARE lsp INTEGER;
+DECLARE lflags INTEGER;
+BEGIN
+  ok = 0;
+  SELECT t.movedir, CAST(tt.speed AS INTEGER), COALESCE(tt.floats, 0), fx_of(t.x), fx_of(t.y), fx_of(t.z)
+    FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
+    INTO dir, spd, fl, x, y, z;
+  IF (dir IS NULL OR dir < 0 OR dir > 7) THEN EXIT;
+  tx = x + spd * CASE dir WHEN 0 THEN 65536 WHEN 1 THEN 47000 WHEN 2 THEN 0 WHEN 3 THEN -47000
+                          WHEN 4 THEN -65536 WHEN 5 THEN -47000 WHEN 6 THEN 0 ELSE 47000 END;
+  ty = y + spd * CASE dir WHEN 0 THEN 0 WHEN 1 THEN 47000 WHEN 2 THEN 65536 WHEN 3 THEN 47000
+                          WHEN 4 THEN 0 WHEN 5 THEN -47000 WHEN 6 THEN -65536 ELSE -47000 END;
+  EXECUTE PROCEDURE try_move_mobj(tid, tx, ty) RETURNING_VALUES tok, floatok, tmfz, spec;
+  IF (tok = 0) THEN
+  BEGIN
+    IF (fl = 1 AND floatok = 1) THEN
+    BEGIN
+      UPDATE things t SET z = :z / 65536e0 + IIF(:z < :tmfz, 4, -4), flags = BIN_OR(t.flags, 131072) WHERE t.id = :tid;
+      ok = 1;
+      EXIT;
+    END
+    IF (spec = '') THEN EXIT;
+    UPDATE things t SET movedir = 8 WHERE t.id = :tid;
+    WHILE (spec <> '') DO
+    BEGIN
+      k = POSITION(',' IN spec);
+      lid = CAST(SUBSTRING(spec FROM 1 FOR k - 1) AS INTEGER);
+      spec = SUBSTRING(spec FROM k + 1);
+      SELECT l.special, l.flags FROM linedefs l WHERE l.id = :lid INTO lsp, lflags;
+      IF (BIN_AND(lflags, 32) <> 0) THEN CONTINUE;            -- (ML_SECRET)
+      IF (lsp = 1) THEN
+      BEGIN
+        EXECUTE PROCEDURE activate_line(lid, 'use', tid);
+        ok = 1;
+      END
+      ELSE IF (lsp IN (32, 33, 34)) THEN ok = 1;             -- (a locked door: no, but it answered)
+    END
+    EXIT;
+  END
+  UPDATE things t SET flags = BIN_AND(t.flags, BIN_NOT(131072)) WHERE t.id = :tid AND BIN_AND(t.flags, 131072) <> 0;
+  IF (fl = 0) THEN UPDATE things t SET z = :tmfz / 65536e0 WHERE t.id = :tid;
+  ok = 1;
+END^
+
+-- P_TryWalk: P_Move, and a step taken, MOVECOUNT = P_Random() & 15
+CREATE OR ALTER PROCEDURE try_walk (tid INTEGER, dir SMALLINT)
+RETURNS (ok SMALLINT)
+AS
+BEGIN
+  UPDATE things t SET movedir = :dir WHERE t.id = :tid;
+  EXECUTE PROCEDURE p_move_fx(tid) RETURNING_VALUES ok;
+  IF (ok = 1) THEN UPDATE things t SET movecount = p_rand_and(15) WHERE t.id = :tid;
+END^
+
+-- P_NewChaseDir, in 16.16, toward the target at (TX, TY): the diagonal first (not the way it
+-- came), then the straight ways – the bigger difference first, or swapped 55 times in 256 –
+-- then the old heading, then every heading in a random sweep, and only then a turnaround;
+-- each a P_TryWalk. None: no heading (DI_NODIR).
+CREATE OR ALTER PROCEDURE new_chase_dir_fx (tid INTEGER, tx BIGINT, ty BIGINT)
+AS
+DECLARE olddir SMALLINT;
+DECLARE turnaround SMALLINT;
+DECLARE dx BIGINT;
+DECLARE dy BIGINT;
+DECLARE d1 SMALLINT;
+DECLARE d2 SMALLINT;
+DECLARE t SMALLINT;
+DECLARE ok SMALLINT;
+DECLARE up SMALLINT;
+BEGIN
+  SELECT t.movedir, fx32(:tx - fx_of(t.x)), fx32(:ty - fx_of(t.y)) FROM things t WHERE t.id = :tid INTO olddir, dx, dy;
+  turnaround = IIF(olddir >= 8, 8, MOD(olddir + 4, 8));
+  d1 = IIF(dx > 655360, 0, IIF(dx < -655360, 4, 8));
+  d2 = IIF(dy < -655360, 6, IIF(dy > 655360, 2, 8));
+  IF (d1 <> 8 AND d2 <> 8) THEN
+  BEGIN
+    -- diags[((deltay < 0) << 1) + (deltax > 0)]
+    t = CASE WHEN dy < 0 AND dx > 0 THEN 7 WHEN dy < 0 THEN 5 WHEN dx > 0 THEN 1 ELSE 3 END;
+    UPDATE things o SET movedir = :t WHERE o.id = :tid;
+    IF (t <> turnaround) THEN
+    BEGIN
+      EXECUTE PROCEDURE try_walk(tid, t) RETURNING_VALUES ok;
+      IF (ok = 1) THEN EXIT;
+    END
+  END
+  IF (p_rand256() > 200 OR ABS(dy) > ABS(dx)) THEN
+  BEGIN
+    t = d1;
+    d1 = d2;
+    d2 = t;
+  END
+  IF (d1 = turnaround) THEN d1 = 8;
+  IF (d2 = turnaround) THEN d2 = 8;
+  IF (d1 <> 8) THEN
+  BEGIN
+    EXECUTE PROCEDURE try_walk(tid, d1) RETURNING_VALUES ok;
+    IF (ok = 1) THEN EXIT;
+  END
+  IF (d2 <> 8) THEN
+  BEGIN
+    EXECUTE PROCEDURE try_walk(tid, d2) RETURNING_VALUES ok;
+    IF (ok = 1) THEN EXIT;
+  END
+  IF (olddir <> 8) THEN
+  BEGIN
+    EXECUTE PROCEDURE try_walk(tid, olddir) RETURNING_VALUES ok;
+    IF (ok = 1) THEN EXIT;
+  END
+  up = p_rand_and(1);
+  t = IIF(up = 1, 0, 7);
+  WHILE (t >= 0 AND t <= 7) DO
+  BEGIN
+    IF (t <> turnaround) THEN
+    BEGIN
+      EXECUTE PROCEDURE try_walk(tid, t) RETURNING_VALUES ok;
+      IF (ok = 1) THEN EXIT;
+    END
+    t = t + IIF(up = 1, 1, -1);
+  END
+  IF (turnaround <> 8) THEN
+  BEGIN
+    EXECUTE PROCEDURE try_walk(tid, turnaround) RETURNING_VALUES ok;
+    IF (ok = 1) THEN EXIT;
+  END
+  UPDATE things o SET movedir = 8 WHERE o.id = :tid;
 END^
 
 -- A_Chase: a step of the hunt. The reaction time and the threshold count down; it
@@ -5185,8 +5476,9 @@ DECLARE shadow SMALLINT;
 DECLARE skill SMALLINT;
 DECLARE fast SMALLINT;
 DECLARE nplayers SMALLINT;
-DECLARE a45 DOUBLE PRECISION;
-DECLARE delta DOUBLE PRECISION;
+DECLARE bam BIGINT;
+DECLARE bdelta BIGINT;
+DECLARE fdist BIGINT;
 DECLARE found SMALLINT;
 DECLARE nst INTEGER;
 DECLARE snd VARCHAR(8);
@@ -5215,22 +5507,22 @@ BEGIN
   IF (reaction > 0) THEN reaction = reaction - 1;
   -- (the threshold lapses at once when its target is dead)
   IF (threshold > 0) THEN threshold = IIF(px IS NULL OR palive = 0, 0, threshold - 1);
-  -- turn towards the heading, 45° at a time (angle &= 7<<29 first)
+  -- turn towards the heading, 45° at a time: angle &= 7 << 29, and by the sign of the
+  -- difference as a 32-bit int (so from 180° to the east, 0, it turns on round to 225°)
   IF (movedir < 8) THEN
   BEGIN
-    a45 = FLOOR(ang / (PI() / 4) + 1e-9) * (PI() / 4);
-    delta = a45 - movedir * (PI() / 4);
-    delta = delta - 2 * PI() * FLOOR((delta + PI()) / (2 * PI()));
-    IF (delta > 1e-9) THEN a45 = a45 - PI() / 4;
-    ELSE IF (delta < -1e-9) THEN a45 = a45 + PI() / 4;
-    ang = a45 - 2 * PI() * FLOOR(a45 / (2 * PI()) + 1e-12);
+    bam = BIN_AND(bam_of(ang), 3758096384);
+    bdelta = fx32(bam - movedir * 536870912);
+    IF (bdelta > 0) THEN bam = bam - 536870912;
+    ELSE IF (bdelta < 0) THEN bam = bam + 536870912;
+    ang = rad_of(BIN_AND(bam, 4294967295));
   END
   nst = NULL;
   snd = NULL;
   IF (px IS NULL OR palive = 0) THEN
   BEGIN
     -- no target: P_LookForPlayers all around, or back to its spawn state
-    EXECUTE PROCEDURE look_for_player(x, y, z, hgt, ang, sec, tp, 1) RETURNING_VALUES found;
+    EXECUTE PROCEDURE look_for_players(tid, 1) RETURNING_VALUES found;
     IF (found > 0) THEN
     BEGIN
       tgt = NULL;
@@ -5246,12 +5538,10 @@ BEGIN
   END
   ELSE
   BEGIN
-    adx = ABS(px - x);
-    ady = ABS(py - y);
-    dist = adx + ady - MINVALUE(adx, ady) / 2;        -- P_AproxDistance
+    fdist = aprox_distance(fx32(fx_of(px) - fx_of(x)), fx32(fx_of(py) - fx_of(y)));   -- P_AproxDistance, in 16.16
     fire = 0;
-    -- P_CheckMeleeRange
-    IF (melee_state > 0 AND dist < 64 - 20 + prad) THEN
+    -- P_CheckMeleeRange: closer than MELEERANGE - 20 + the target's radius
+    IF (melee_state > 0 AND fdist < 4194304 - 1310720 + fx_of(prad)) THEN
       IF (mobj_sees(tid, px, py, pz, psec) = 1) THEN
       BEGIN
         snd = atk_snd;   -- (its attacksound: the demons' DSSGTATK)
@@ -5272,7 +5562,7 @@ BEGIN
         END
         ELSE IF (reaction = 0) THEN
         BEGIN
-          dist = FLOOR(dist - 64 - IIF(melee_state > 0, 0, 128));
+          dist = BIN_SHR(fdist - 4194304 - IIF(melee_state > 0, 0, 8388608), 16);
           -- the arch-vile only within 14 × 64; the revenant not under 196, and keener;
           -- the cyberdemon, the spider mastermind and the lost soul keener too, and the
           -- cyberdemon keenest
@@ -5301,7 +5591,7 @@ BEGIN
       -- to another player it can see
       IF (nplayers > 1 AND threshold = 0) THEN
         IF (mobj_sees(tid, px, py, pz, psec) = 0) THEN
-          EXECUTE PROCEDURE look_for_player(x, y, z, hgt, ang, sec, tp, 1) RETURNING_VALUES found;
+          EXECUTE PROCEDURE look_for_players(tid, 1) RETURNING_VALUES found;
       IF (found > 0) THEN
       BEGIN
         tgt = NULL;
@@ -5312,34 +5602,22 @@ BEGIN
   END
   IF (walk > 0) THEN
   BEGIN
+    -- (P_Move and P_NewChaseDir move the thing in its row: what this step decided goes first)
+    UPDATE things t
+       SET angle = :ang, reaction = :reaction, threshold = :threshold, movedir = :movedir, movecount = :movecount,
+           just_attacked = :just_attacked, just_hit = :just_hit, target_id = :tgt, tplayer = :tp
+     WHERE t.id = :tid;
     moved = 0;
     IF (walk = 1) THEN
     BEGIN
+      -- if (--actor->movecount < 0 || !P_Move (actor)) P_NewChaseDir (actor)
       movecount = movecount - 1;
-      IF (movecount >= 0) THEN
-      BEGIN
-        EXECUTE PROCEDURE p_move(tid, x, y, z, rad, hgt, spd, fl, momz, movedir) RETURNING_VALUES moved, nx, ny, nz, msec, bump;
-        IF (bump = 1) THEN movedir = 8;
-      END
+      UPDATE things t SET movecount = :movecount WHERE t.id = :tid;
+      IF (movecount >= 0) THEN EXECUTE PROCEDURE p_move_fx(tid) RETURNING_VALUES moved;
     END
-    IF (moved = 0) THEN
-      EXECUTE PROCEDURE new_chase_dir(tid, x, y, z, rad, hgt, spd, fl, momz, movedir, px, py)
-        RETURNING_VALUES movedir, movecount, nx, ny, nz, msec, moved;
-    IF (moved = 1 AND (nx <> x OR ny <> y)) THEN
-    BEGIN
-      -- P_TryMove: the special lines the step crossed
-      EXECUTE PROCEDURE monster_cross(tid, x, y, nx, ny) RETURNING_VALUES tele;
-      IF (tele = 1) THEN
-        SELECT t.x, t.y, t.z, t.angle, t.sector_id FROM things t WHERE t.id = :tid INTO x, y, z, ang, sec;
-      ELSE
-      BEGIN
-        x = nx;
-        y = ny;
-        z = nz;
-        sec = msec;
-      END
-    END
-    ELSE IF (moved = 1) THEN z = nz;
+    IF (moved = 0) THEN EXECUTE PROCEDURE new_chase_dir_fx(tid, fx_of(px), fx_of(py));
+    SELECT t.x, t.y, t.z, t.angle, t.sector_id, t.movedir, t.movecount FROM things t WHERE t.id = :tid
+      INTO x, y, z, ang, sec, movedir, movecount;
     -- last, the active sound, 3 times in 256
     IF (walk = 1 AND active_snd IS NOT NULL) THEN
       IF (p_rand256() < 3) THEN snd = active_snd;
@@ -5549,7 +5827,7 @@ BEGIN
                  WHEN r < 222 THEN 67 WHEN r < 246 THEN 69 ELSE 3003 END;
     EXECUTE PROCEDURE spawn_thing(ttype, sx, sy, sz, 0) RETURNING_VALUES mid;
     SELECT t.height, t.radius, t.sector_id FROM things t WHERE t.id = :mid INTO hgt, rad, sec;
-    EXECUTE PROCEDURE look_for_player(sx, sy, sz, hgt, 0, sec, 1, 1) RETURNING_VALUES found;
+    EXECUTE PROCEDURE look_for_players(mid, 1) RETURNING_VALUES found;
     IF (found > 0) THEN
     BEGIN
       UPDATE things t SET tplayer = :found, target_id = NULL WHERE t.id = :mid;
@@ -6516,6 +6794,8 @@ BEGIN
      ON ss.id = s.id
    WHEN MATCHED THEN UPDATE SET sector_id = s.sector_id;
 
+  UPDATE nodes n SET fx = CAST(n.x AS BIGINT) * 65536, fy = CAST(n.y AS BIGINT) * 65536,
+                     fdx = CAST(n.dx AS BIGINT) * 65536, fdy = CAST(n.dy AS BIGINT) * 65536;
   UPDATE game
      SET tic = 0, exit_kind = 0, noise_tic = -1000, noise_sector = NULL, map_name = :map_name, skill = :skill,
          root_node = (SELECT MAX(id) FROM nodes)
@@ -6562,7 +6842,8 @@ BEGIN
       IF (mtype BETWEEN 1 AND 4 AND mtype <= np AND dm = 0) THEN lastlook = p_rand256();
       CONTINUE;
     END
-    lastlook = p_rand256();
+    lastlook = MOD(p_rand256(), 4);
+    UPDATE things t SET lastlook = :lastlook WHERE t.id = :stid;
     IF (son = 1) THEN
       UPDATE things t SET state = :sstate, reaction = IIF(:skill = 5, 0, :sreact),
              state_tic = IIF(:stics < 0, NULL, (SELECT g.tic FROM game g WHERE g.id = 1) + IIF(:stics > 0, 1 + MOD(p_rand256(), :stics), 0))

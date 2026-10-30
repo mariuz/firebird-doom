@@ -46,7 +46,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `BLOCKMAP` | the lump itself (`BLOCKMAP`, in its order, for the player), and `LINE_BLOCKS`, a 128×128 grid built by `INIT_MAP` |
 | `P_CheckPosition`, `P_TryMove` | `CHECK_POSITION`; for the player in 16.16, `CHECK_POSITION_FX`, `TRY_MOVE_FX` |
 | `P_MovePlayer`, `P_CalcHeight`, `P_XYMovement`, `P_SlideMove`, `P_ZMovement` (the player) | `PLAYER_THINK`, `XY_MOVEMENT_FX`, `SLIDE_MOVE_FX` (`SLIDE_TRAVERSE`, `HIT_SLIDE_LINE`), `Z_MOVEMENT_FX` |
-| `P_CheckSight` | `CHECK_SIGHT()` walks the blockmap cells along the sight line |
+| `P_CheckSight` | for monsters, `SIGHT_FX()`: `REJECT`, then the BSP walk (`CROSS_BSP`, `CROSS_SUBSECTOR`) in 16.16; elsewhere `CHECK_SIGHT()` walks the blockmap cells along the sight line |
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
 | `G_DoCompleted`: which map comes next, secret exits included | [src/progress.js](src/progress.js) |
 | `EV_DoCeiling` crushers, `EV_CeilingCrushStop`, `raiseFloorCrush`, `P_ChangeSector` | the `crush` mover kind, `CRUSH_THINGS` |
@@ -795,12 +795,19 @@ measured against vanilla itself:
   DOOM's thinkers in their list's order: the map's things in the order the map lists them, the
   player's body among them, then the lights and doors, then everything made since, each thing's
   movement, fall and animation together, and what one makes running that same tic.
+- **The monsters' sight and walk (phase L4, done):** a monster sees as DOOM's does, from its eyes
+  to any part of you through the BSP (`P_CheckSight`), looks for players from where it last
+  looked (`lastlook`, quirks included), turns and judges its ranges in DOOM's angles and fixed
+  point, and walks by DOOM's `P_Move` and `P_NewChaseDir` through the same `P_TryMove` as the
+  player: the map's own blockmap, steps, drop-offs, monster-blocking lines, the doors it opens.
 - **Where it stands:** standing still on E1M1 it keeps step for all 350 tics, every column, and
   the oracle's list of every thinker agrees with the port's one by one. So does a demo firing a
-  shot, but for the puff's position. On the scripted walk (turns, runs, strafes, along walls,
-  down a lowering stair) the player stays in step for all 215 tics. On the attract demos it
-  does until a monster hurts it (75 tics on E1M1, 512 on MAP01): the monsters still see and
-  move in doubles (phase L4), and a hit's thrust is missing (L5).
+  shot, but for the puff's position, and one where the player walks into the zombiemen's view
+  and stands while they wake and chase: every column, all 230 tics. On the scripted walk
+  (turns, runs, strafes, along walls, down a lowering stair) everything keeps step until the
+  pistol's first puff lands (tic 105). On the attract demos it does until the first shot
+  lands: E1M1's at tic 57, and MAP01's player for 572 tics. The shots themselves – the aim,
+  the puffs, the damage's thrust – are phase L5.
 
 ### Co-op and deathmatch over the network
 
@@ -1344,8 +1351,9 @@ What's still not vanilla, and why `.lmp` demos can't play yet (docs/ROADMAP.md):
   monsters. You pick things up where you end the tic, not at each spot `P_TryMove` tries on
   the way. The page's own keys aren't quite `G_BuildTiccmd`'s: a strafe is 25 (50 running)
   rather than 24 (40), and the turn keys have no slow start.
-- **Collision:** the player's goes through the `BLOCKMAP` as DOOM's does; the monsters' and the
-  projectiles', and sight, are set-based SQL over the map's lines and things, so ties between
+- **Collision:** the player's and the walking monsters' go through the `BLOCKMAP` as DOOM's
+  does, and monsters see through the BSP as DOOM's do; the projectiles', a charging lost soul's
+  and the shots' sight lines are set-based SQL over the map's lines and things, so ties between
   equally near things can break differently.
 - **Crushers:** a crusher turns only corpses to gibs: not the dying, and dropped items aren't
   removed (`PIT_ChangeSector`).
@@ -1374,7 +1382,8 @@ monster sight check first asks the map's `REJECT` table: a precomputed bit per p
 saying one can't see the other. Firebird keeps it as a row of bits per sector, and `REJECT`
 (`rejected(s1, s2)`) rules out 70–94% of pairs on Freedoom's maps before any line of sight is
 walked. That makes idle monsters cheaper than before, when the port instead ignored the player
-beyond 2400 units. `P_Move` and `P_NewChaseDir` are stored procedures (`P_MOVE`, `NEW_CHASE_DIR`).
+beyond 2400 units. `P_Move` and `P_NewChaseDir` are stored procedures in 16.16 (`P_MOVE_FX`,
+`NEW_CHASE_DIR_FX`), moving the monster through `TRY_MOVE_MOBJ`, DOOM's `P_TryMove`.
 
 Monsters fight each other, as in DOOM. When one monster's attack hurts another, the victim turns
 on the attacker and won't switch again for 100 chase steps (`BASETHRESHOLD`). After that, hurting

@@ -196,8 +196,21 @@ await remove(sleeper);
 P = 2100;
 await atTic(P);
 const watcher = await spawnAt(3004, 200, facing);
+await db.exec(`UPDATE things SET lastlook = 0 WHERE id = ${watcher}`);   // (P_LookForPlayers starts at player 1)
 const saw = await trace(watcher, P, P + 12);
 assert(/S_POSS_RUN1/.test(saw), `A_Look: a zombieman facing the player sees them (${saw})`);
+await remove(watcher);
+// …but one whose lastlook (P_SpawnMobj's P_Random() % 4) is 1 doesn't look at all the first time:
+// alone in the game, P_LookForPlayers reaches the player before it, its stop, and gives up
+P = 2150;
+await atTic(P);
+const late = await spawnAt(3004, 200, facing);
+await db.exec(`UPDATE things SET lastlook = 1 WHERE id = ${late}`);
+const lateSaw = await trace(late, P, P + 22);
+const lastlookNow = (await one(`SELECT lastlook FROM things WHERE id = ${late}`)).LASTLOOK;
+assert(/^0:S_POSS_STND 10:S_POSS_STND2 20:S_POSS_RUN1/.test(lateSaw) && lastlookNow === 0,
+  `P_LookForPlayers' lastlook: at 1 the first look gives up at its stop (${lateSaw}), leaving it at ${lastlookNow}, so the next one sees`);
+await remove(late);
 await remove(watcher);
 
 // A_Chase: hurt just now (MF_JUSTHIT) and with MOVECOUNT spent, it fires back at once:
@@ -392,6 +405,7 @@ const lx = pl.X + Math.cos(pl.ANGLE) * 48;
 const ly = pl.Y + Math.sin(pl.ANGLE) * 48;
 await db.exec(`UPDATE things SET x = ${lx}, y = ${ly}, sector_id = sector_at(${lx}, ${ly}), momz = 0,
   z = (SELECT floor_h FROM sectors WHERE id = sector_at(${lx}, ${ly})), flags = BIN_AND(flags, BIN_NOT(131072)) WHERE id = ${skull}`);
+await setState(skull, 'S_SKULL_RUN1', P + 300);   // (awake, with its target: the port's ST says so)
 const zStart = (await flag(skull)).Z;
 const rises = [];
 for (let t = P + 301; t <= P + 304; t++) { await think(t); rises.push((await flag(skull)).Z - zStart); }
@@ -454,6 +468,7 @@ await setState(knight, 'S_BOS2_ATK3', P + 30);
 const green = (await one('SELECT COUNT(*) n FROM things WHERE thing_type = 9002')).N - green0;
 await db.exec('DELETE FROM things WHERE thing_type = 9002');
 await db.exec('DELETE FROM sound_events');
+await db.exec(`UPDATE things SET lastlook = 0 WHERE id = ${knight}`);   // (P_LookForPlayers starts at player 1)
 await setState(knight, 'S_BOS2_STND', P + 40);   // (A_Look: facing the player, it sees them)
 const kntSnd = await sounds();
 await remove(knight);

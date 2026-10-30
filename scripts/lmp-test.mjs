@@ -126,6 +126,14 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.mobjs')).sort(
   assert(bad.length === 0, `${name}, thinker by thinker against vanilla's list (${seen.join(', ')}): ${bad.length ? bad.slice(0, 4).join('; ') : 'the same order, and every mobj where it is, as it is'}`);
 }
 
+// phase L4: the monsters' sight and walk – zombiemen see the player come into view and chase,
+// and every column of the trace agrees with vanilla's to the end
+{
+  const w = results['e1m1-wake'];
+  const off = w ? FIELDS.filter((f) => w.first[f] !== null) : ['no e1m1-wake'];
+  assert(w && off.length === 0, `the monsters in fixed point: on e1m1-wake they wake, chase and stay in step with vanilla for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
+}
+
 // phase L2: the scripted walk (turns, runs, strafes, a wall) keeps the player in step all the way
 assert(results['e1m1-walk']?.synced === results['e1m1-walk']?.tics,
   `the player in fixed point: the scripted walk on E1M1 stays in step with vanilla for all ${results['e1m1-walk']?.tics} tics (${results['e1m1-walk']?.synced})`);

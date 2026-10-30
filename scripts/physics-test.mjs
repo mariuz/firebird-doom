@@ -502,27 +502,28 @@ if (sky) {
     // (4) where it is, and that counts as a move; MF_INFLOAT (131072) until a real step
     const flier = await placeMon(3005, 200);
     const walker = await placeMon(3001, 260);
-    const tryStep = async (id, dz, fl) => {
+    // (P_MOVE_FX moves the thing in its row: put it back where it was before each heading)
+    const tryStep = async (id, dz) => {
       const t = await one(`SELECT t.x, t.y, t.z, s.floor_h fh, s.ceil_h ch FROM things t JOIN sectors s ON s.id = t.sector_id WHERE t.id = ${id}`);
       const z = dz === 'low' ? t.FH - 40 : dz === 'high' ? t.CH - 56 + 20 : t.FH;
       for (let d = 0; d < 8; d++) {
-        const r = await one(`EXECUTE BLOCK RETURNS (ok SMALLINT, nx DOUBLE PRECISION, ny DOUBLE PRECISION, nz DOUBLE PRECISION, sec INTEGER, bumped SMALLINT)
-          AS BEGIN EXECUTE PROCEDURE p_move(${id}, ${t.X}, ${t.Y}, ${z}, 31, 56, 8, ${fl}, 0, ${d}) RETURNING_VALUES ok, nx, ny, nz, sec, bumped; SUSPEND; END`);
-        if (r.OK === 1) return { ...r, X: t.X, Y: t.Y, Z: z };
+        await db.query(`UPDATE things SET x = ?, y = ?, z = ?, movedir = ? WHERE id = ${id}`, [t.X, t.Y, z, d]);
+        const r = await one(`EXECUTE BLOCK RETURNS (ok SMALLINT) AS BEGIN EXECUTE PROCEDURE p_move_fx(${id}) RETURNING_VALUES ok; SUSPEND; END`);
+        if (r.OK === 1) return { OK: 1, ...(await one(`SELECT x nx, y ny, z nz FROM things WHERE id = ${id}`)), X: t.X, Y: t.Y, Z: z };
       }
       return { OK: 0, Z: z };
     };
-    const fUp = await tryStep(flier, 'low', 1);
+    const fUp = await tryStep(flier, 'low');
     const inf = (await one(`SELECT flags FROM things WHERE id = ${flier}`)).FLAGS & 131072;
     assert(fUp.OK === 1 && fUp.NX === fUp.X && fUp.NY === fUp.Y && fUp.NZ === fUp.Z + 4 && inf !== 0,
       `a cacodemon below where it fits rises 4 in place (${fUp.Z} → ${fUp.NZ}) and is MF_INFLOAT`);
-    const fDown = await tryStep(flier, 'high', 1);
+    const fDown = await tryStep(flier, 'high');
     assert(fDown.OK === 1 && fDown.NZ === fDown.Z - 4, `…and one too high for the ceiling sinks 4 (${fDown.Z} → ${fDown.NZ})`);
-    const fLevel = await tryStep(flier, 'level', 1);
+    const fLevel = await tryStep(flier, 'level');
     assert(fLevel.OK === 1 && (fLevel.NX !== fLevel.X || fLevel.NY !== fLevel.Y)
         && ((await one(`SELECT flags FROM things WHERE id = ${flier}`)).FLAGS & 131072) === 0,
       'a real step clears MF_INFLOAT');
-    assert((await tryStep(walker, 'low', 0)).OK === 0, 'an imp blocked by the height just stays blocked');
+    assert((await tryStep(walker, 'low')).OK === 0, 'an imp blocked by the height just stays blocked');
     // P_TryMove: MF_FLOAT things ignore a drop-off; walkers don't step over one
     const ledges = (await db.query(`SELECT FIRST 40 (l.x1 + l.x2) / 2e0 mx, (l.y1 + l.y2) / 2e0 my, MAXVALUE(f.floor_h, b.floor_h) top
         FROM linedefs l JOIN sectors f ON f.id = l.front_sector JOIN sectors b ON b.id = l.back_sector
@@ -533,7 +534,13 @@ if (sky) {
       const cp = (m) => one(`EXECUTE BLOCK RETURNS (ok SMALLINT) AS DECLARE a DOUBLE PRECISION; DECLARE b DOUBLE PRECISION;
           DECLARE c DOUBLE PRECISION; DECLARE d INTEGER; BEGIN
           EXECUTE PROCEDURE check_position(-1, ${c.MX}, ${c.MY}, ${c.TOP}, 31, 56, ${m}) RETURNING_VALUES ok, a, b, c, d; SUSPEND; END`);
-      if ((await cp(0)).OK === 1) { ledgeHit = { walker: (await cp(1)).OK, flier: (await cp(2)).OK }; break; }
+      // (P_TryMove onto the ledge, standing at its top: TRY_MOVE_MOBJ)
+      const tm = async (id) => {
+        await db.query(`UPDATE things SET z = ? WHERE id = ${id}`, [c.TOP]);
+        return one(`EXECUTE BLOCK RETURNS (ok SMALLINT) AS DECLARE fo SMALLINT; DECLARE f BIGINT; DECLARE sp VARCHAR(4000);
+          BEGIN EXECUTE PROCEDURE try_move_mobj(${id}, fx_of(${c.MX}), fx_of(${c.MY})) RETURNING_VALUES ok, fo, f, sp; SUSPEND; END`);
+      };
+      if ((await cp(0)).OK === 1) { ledgeHit = { walker: (await tm(walker)).OK, flier: (await tm(flier)).OK }; break; }
     }
     if (ledgeHit) assert(ledgeHit.walker === 0 && ledgeHit.flier === 1, `over a drop-off a walker is blocked (${ledgeHit.walker}), a flier isn't (${ledgeHit.flier})`);
     else console.log('(no clear ledge on this map; skipping the drop-off check)');
@@ -675,10 +682,15 @@ if (sky) {
     await db.exec('UPDATE player SET health = 100000, invis_tics = 0');
     const me = await one(`SELECT t.id, t.x, t.y, t.z FROM things t WHERE t.kind = 'player'`);
     const [ox, oy] = at(140);   // (open for a 32-unit radius: any 8-unit step from here is clear)
-    const ncd = (olddir) => one(`EXECUTE BLOCK RETURNS (md SMALLINT, mc INTEGER, moved SMALLINT) AS
-        DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION; DECLARE sec INTEGER;
-        BEGIN EXECUTE PROCEDURE new_chase_dir(-1, ${ox}, ${oy}, ${me.Z}, 20, 56, 8, 0, 0, ${olddir}, ${me.X}, ${me.Y})
-          RETURNING_VALUES md, mc, nx, ny, nz, sec, moved; SUSPEND; END`);
+    // (P_NewChaseDir for an imp put there with heading OLDDIR: NEW_CHASE_DIR_FX moves it)
+    const probe = await spawn(3001, ox, oy);
+    await db.exec(`UPDATE things SET st = 'chase', flags = 0 WHERE id = ${probe}`);
+    const ncd = async (olddir) => {
+      await db.query(`UPDATE things SET x = ?, y = ?, z = ?, movedir = ?, movecount = 0 WHERE id = ${probe}`, [ox, oy, me.Z, olddir]);
+      await db.query(`EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE new_chase_dir_fx(${probe}, fx_of(${me.X}), fx_of(${me.Y})); END`);
+      const r = await one(`SELECT movedir md, movecount mc, x, y FROM things WHERE id = ${probe}`);
+      return { MD: r.MD, MC: r.MC, MOVED: r.X !== ox || r.Y !== oy ? 1 : 0 };
+    };
     // vanilla's choice for the way back to the player
     const ddx = me.X - ox;
     const ddy = me.Y - oy;
@@ -689,6 +701,7 @@ if (sky) {
     const away = await ncd((want + 4) % 8);
     assert(fresh.MOVED === 1 && fresh.MD === want && fresh.MC >= 0 && fresh.MC <= 15,
       `P_NewChaseDir heads for the player in 45° steps: heading ${fresh.MD} (vanilla's ${want}), for ${fresh.MC} steps`);
+    await db.exec(`DELETE FROM things WHERE id = ${probe}`);
     assert(away.MOVED === 1 && away.MD !== want,
       `…but walking away from it, it doesn't turn straight round while another way is open (heading ${away.MD}, not ${want})`);
 
@@ -1199,8 +1212,11 @@ if (slimeMap) {
   await db.exec(`UPDATE sectors SET tag = 777 WHERE id = ${D.ID}`);
   const dp = await inside(D.ID);
   await spawn(14, dp.X, dp.Y);
+  // (a line a monster can walk over, P_TryMove: level floors, room to stand, nothing blocking)
   const T = await one(`SELECT FIRST 1 l.id, l.x1, l.y1, l.dx, l.dy, l.len FROM linedefs l
-      WHERE l.back_sector IS NOT NULL AND l.special = 0 AND l.len >= 64
+      JOIN sectors f ON f.id = l.front_sector JOIN sectors b ON b.id = l.back_sector
+      WHERE l.special = 0 AND l.len >= 64 AND BIN_AND(l.flags, 3) = 0 AND f.floor_h = b.floor_h
+        AND MINVALUE(f.ceil_h, b.ceil_h) - f.floor_h >= 64
         AND l.front_sector <> ${D.ID} AND l.back_sector <> ${D.ID} ORDER BY l.id`);
   const mx = T.X1 + T.DX / 2;
   const my = T.Y1 + T.DY / 2;
@@ -1209,10 +1225,18 @@ if (slimeMap) {
   const front = [mx + nx * 4, my + ny * 4];
   const back = [mx - nx * 4, my - ny * 4];
   const special = (sp) => db.exec(`UPDATE linedefs SET special = ${sp}, tag = 777 WHERE id = ${T.ID}`);
-  const cross = (id, [ax, ay], [bx, by]) => one(`EXECUTE BLOCK RETURNS (t SMALLINT) AS BEGIN
-      EXECUTE PROCEDURE monster_cross(${id}, ${ax}, ${ay}, ${bx}, ${by}) RETURNING_VALUES t; SUSPEND; END`).then((r) => r.T);
   const at = (id) => one(`SELECT x, y, st, hp FROM things WHERE id = ${id}`);
-  const place = (id, [x, y]) => db.exec(`UPDATE things SET x = ${x}, y = ${y}, sector_id = sector_at(${x}, ${y}), st = 'chase' WHERE id = ${id}`);
+  const place = (id, [x, y]) => db.exec(`UPDATE things SET x = ${x}, y = ${y}, sector_id = sector_at(${x}, ${y}), st = 'chase',
+      z = (SELECT s.floor_h FROM sectors s WHERE s.id = sector_at(${x}, ${y})) WHERE id = ${id}`);
+  // a monster's step from A to B (P_TryMove: TRY_MOVE_MOBJ, crossing the lines it changed sides of);
+  // 1 if a teleporter took it elsewhere
+  const cross = async (id, a, [bx, by]) => {
+    await place(id, a);
+    const r = await one(`EXECUTE BLOCK RETURNS (ok SMALLINT) AS DECLARE fo SMALLINT; DECLARE f BIGINT; DECLARE sp VARCHAR(4000);
+        BEGIN EXECUTE PROCEDURE try_move_mobj(${id}, fx_of(${bx}), fx_of(${by})) RETURNING_VALUES ok, fo, f, sp; SUSPEND; END`);
+    const p = await at(id);
+    return r.OK === 1 && Math.hypot(p.X - bx, p.Y - by) > 1 ? 1 : 0;
+  };
 
   await special(97);
   const imp = await spawn(3001, ...front);
@@ -1248,6 +1272,8 @@ if (slimeMap) {
   await db.exec(`UPDATE things SET x = ${back[0]}, y = ${back[1]}, sector_id = sector_at(${back[0]}, ${back[1]}), reaction = 0 WHERE id = ${p0.ID}`);
   await db.exec(`EXECUTE PROCEDURE activate_line(${T.ID}, 'walk')`);
   const pStay = await one(`SELECT x FROM things WHERE id = ${p0.ID}`);
+  // (and out of the monsters' way: a solid thing where it steps blocks its P_TryMove)
+  await db.exec(`UPDATE things SET x = ${dp.X} + 200, y = ${dp.Y}, sector_id = sector_at(${dp.X} + 200, ${dp.Y}) WHERE id = ${p0.ID}`);
   await db.exec(`DELETE FROM things WHERE id IN (${imp})`);
   await place(imp2, front);
   const m125 = await cross(imp2, front, back);
@@ -1286,10 +1312,14 @@ if (slimeMap) {
     // the eight-way heading most nearly into the door
     const hd = ((Math.round(Math.atan2(-uy, -ux) / (Math.PI / 4)) % 8) + 8) % 8;
     await place(imp2, [sx, sy]);
-    const bump = () => one(`EXECUTE BLOCK RETURNS (ok SMALLINT, b SMALLINT) AS
-        DECLARE nx DOUBLE PRECISION; DECLARE ny DOUBLE PRECISION; DECLARE nz DOUBLE PRECISION; DECLARE sec INTEGER;
-        BEGIN EXECUTE PROCEDURE p_move(${imp2}, ${sx}, ${sy}, (SELECT floor_h FROM sectors WHERE id = sector_at(${sx}, ${sy})), 20, 56, 8, 0, 0, ${hd})
-          RETURNING_VALUES ok, nx, ny, nz, sec, b; SUSPEND; END`);
+    // (P_Move from there, heading in: blocked, P_UseSpecialLine on the lines it met; B, a line answered)
+    const bump = async () => {
+      await db.exec(`UPDATE things SET x = ${sx}, y = ${sy}, sector_id = sector_at(${sx}, ${sy}),
+          z = (SELECT floor_h FROM sectors WHERE id = sector_at(${sx}, ${sy})), movedir = ${hd} WHERE id = ${imp2}`);
+      const r = await one(`EXECUTE BLOCK RETURNS (ok SMALLINT) AS BEGIN EXECUTE PROCEDURE p_move_fx(${imp2}) RETURNING_VALUES ok; SUSPEND; END`);
+      const md = (await one(`SELECT movedir FROM things WHERE id = ${imp2}`)).MOVEDIR;
+      return { OK: r.OK, B: r.OK === 1 && md === 8 ? 1 : 0 };
+    };
     const first = await bump();
     const opening = await one(`SELECT dir FROM movers WHERE sector_id = ${door.B}`);
     await bump();

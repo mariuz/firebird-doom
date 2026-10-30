@@ -39,8 +39,8 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   order for monsters, `P_DamageMobj`'s thrust. A stretch goal; it marks where full
   fidelity ends (the README lists "no `.lmp` demos" as a deviation). *Under way*, in phases
   (under **Simulation** below: *Original `.lmp` demos, in phases*): phases L0, the yardstick,
-  L1, DOOM's random numbers, L2, the player in fixed point, and L3, the map as DOOM spawns it
-  and its thinkers' order, are done.
+  L1, DOOM's random numbers, L2, the player in fixed point, L3, the map as DOOM spawns it
+  and its thinkers' order, and L4, the monsters' sight and walk, are done.
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
@@ -423,10 +423,28 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   up); a sector's light or mover has no place relative to the things made in the same tic
   before it beyond its key; the monsters' sight and movement (L4).
 
-**Phase L4: the monsters' movement and sight.** P_Move, P_TryMove, P_CheckPosition through the
-blockmap in its order (PIT_CheckLine, PIT_CheckThing), P_NewChaseDir, P_CheckSight (its BSP
-walk, P_CrossBSPNode), P_AproxDistance; all in fixed point. Test: the attract demos stay in step
-until the first shot.
+**Phase L4: the monsters' movement and sight.** *Done.*
+- **Sight:** P_CheckSight in 16.16 (`SIGHT_FX`): REJECT, then P_CrossBSPNode / P_CrossSubsector
+  with P_DivlineSide (its slip included) and P_InterceptVector2, from the looker's eyes to any
+  part of the target. P_LookForPlayers from `THINGS.LASTLOOK` (P_SpawnMobj's draw, kept), with
+  its two rounds and its stop – alone, a monster whose lastlook is 1 skips its first look – and
+  the field of view by R_PointToAngle2 and P_AproxDistance.
+- **A_Chase:** the 45° turn on BAMs, with the sign of a 32-bit difference (a new mobj's movedir
+  is 0, east, so from 180° it turns on round); P_CheckMeleeRange and P_CheckMissileRange on
+  P_AproxDistance in 16.16; A_FaceTarget by R_PointToAngle2 and P_SubRandom() << 21.
+- **The walk:** P_Move, P_TryWalk and P_NewChaseDir in 16.16 (`P_MOVE_FX`, `TRY_WALK`,
+  `NEW_CHASE_DIR_FX`), stepping through `TRY_MOVE_MOBJ`, P_TryMove for monsters on the player's
+  `CHECK_POSITION_FX` (ML_BLOCKMONSTERS added): steps, drop-offs, fliers' floatok, the spechit
+  lines crossed (teleporters from the front, doors 4, lifts 10 and 88) and, blocked, used
+  (P_UseSpecialLine: door 1 opens, a locked one answers).
+- **The cost:** sight through the BSP costs about 0.7 ms a check against the blockmap walk's
+  0.3 (the answer within one look is kept); a tic with monsters about is some 1.5 ms dearer.
+- **Where it stands:** a new fixture, e1m1-wake (the player walks into the zombiemen's view and
+  stands while they wake and chase), agrees with vanilla in every column for all 230 tics, and
+  thinker by thinker at each tic dumped. The walk keeps every column to the pistol's first
+  puff (105); MAP01's attract demo keeps the player 572 tics (was 512), the random index to
+  609 (was 237) and the mobjs to 647 (was 279). What's left starts at the shots (L5). The lost
+  soul's charge still moves in doubles (L5, with PIT_CheckThing's slam).
 
 **Phase L5: attacks.** P_AimLineAttack and P_LineAttack through P_PathTraverse's intercepts,
 P_SpawnMissile and missiles in fixed point, P_RadiusAttack over the blockmap, P_DamageMobj's

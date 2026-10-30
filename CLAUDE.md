@@ -135,6 +135,10 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   `DOOM_TIC`, should set `RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', -1)` first as `DOOM_TIC`
   does, or a state the player sets ends a tic late. New thinkers (a sector effect, a new kind of
   mobj movement) get a step procedure and a place in `RUN_THINKERS`, not a pass of their own.
+- **Monsters look as DOOM's:** `P_LookForPlayers` starts from `THINGS.LASTLOOK` (P_SpawnMobj's
+  random), and alone in the game a monster whose lastlook is 1 skips its first look. A test that
+  wants a monster to see at once sets `lastlook = 0`. A monster's step (`P_MOVE_FX`) moves it in
+  its row, and a solid thing where it steps blocks it, the player included.
 - **Tests:** physics-test and weapons-test share one database through many sections. A monster
   woken by an earlier section can hurt the player later, so read state right after the action,
   before another tic. Make statistical assertions robust (bigger samples, fixed bounds rather than

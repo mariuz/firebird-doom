@@ -55,6 +55,8 @@ const DEMOS = [
   ])],
   // standing still, a shot at once: the puffs and the woken monsters, before anything else moves
   ['e1m1-shoot', 'freedoom1.wad', scripted(1, 1, [[30, 0, 0, 0, 0], [12, 0, 0, 0, BT_ATTACK], [60, 0, 0, 0, 0]]), '34,35,36,48,49,102'],
+  // into the zombiemen's sight, and then still: they wake, chase and fire, and nothing's shot back
+  ['e1m1-wake', 'freedoom1.wad', scripted(1, 1, [[35, 25, 0, 0, 0], [10, 25, 0, -640, 0], [35, 50, 10, 0, 0], [150, 0, 0, 0, 0]]), '55,60,80,100,140,200,230'],
   ['e1m1-attract', 'freedoom1.wad', fromAttract('freedoom1-demo1.json', 700)],
   ['map01-attract', 'freedoom2.wad', fromAttract('freedoom2-demo1.json', 700)],
 ];

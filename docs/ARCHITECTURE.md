@@ -87,7 +87,10 @@ Per tic, `DOOM_TIC` runs:
     `Z_MOVEMENT_FX`; then `TOUCH_SPECIALS`, its pickups), a charging lost soul's
     (`SKULL_STEP`), a missile's (`MISSILE_STEP`) – its fall or float (`Z_STEP`), then its
     state's countdown (`SET_STATE`, which calls the next state's action: A_Look, A_Chase, the
-    attacks, …), and on Nightmare a corpse's chance to rise (`NIGHTMARE_STEP`);
+    attacks, …), and on Nightmare a corpse's chance to rise (`NIGHTMARE_STEP`). A monster sees
+    by `SIGHT_FX` (P_CheckSight through the BSP, in 16.16) and looks by `LOOK_FOR_PLAYERS`; it
+    walks by `P_MOVE_FX` / `NEW_CHASE_DIR_FX` through `TRY_MOVE_MOBJ` (P_TryMove on
+    `CHECK_POSITION_FX`, the player's own);
   - a light at the end of its count (`LIGHT_STEP`: T_LightFlash, T_StrobeFlash, T_FireFlicker);
   - a door, lift, floor or crusher (`MOVER_STEP`). Each one that moves has the players look again
     at their floor and ceiling (`HEIGHT_CLIP_FX`, `P_ThingHeightClip`).
