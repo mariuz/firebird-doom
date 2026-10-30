@@ -40,8 +40,8 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   fidelity ends (the README lists "no `.lmp` demos" as a deviation). *Under way*, in phases
   (under **Simulation** below: *Original `.lmp` demos, in phases*): phases L0, the yardstick,
   L1, DOOM's random numbers, L2, the player in fixed point, L3, the map as DOOM spawns it
-  and its thinkers' order, and L4, the monsters' sight and walk, are done; L5, the attacks, is
-  under way (the shots and the damage are done; the missiles and the blasts are next).
+  and its thinkers' order, L4, the monsters' sight and walk, and L5, the attacks, are done;
+  L6, the world (the movers), is next.
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
@@ -174,7 +174,7 @@ tic, and a frame-bench run shows what it costs.
 the shotgun guy and the chaingunner, then the imp (A_TroopAttack, `A_MELEE_MISSILE`, which A_HeadAttack and
 A_BruisAttack will share), then the demon and the spectre (A_SargAttack; `states.fast` marks
 S_SARG_RUN1–S_SARG_PAIN2, whose tics `SET_STATE` halves with -fast or on Nightmare), then the lost soul (A_SkullAttack;
-`SKULLS_THINK` is P_XYMovement for MF_SKULLFLY, 262144 in `things.flags`; `STATES_THINK`'s
+P_XYMovement for MF_SKULLFLY (now `XY_MOVEMENT_MOBJ`), 262144 in `things.flags`; `STATES_THINK`'s
 P_ZMovement floats fliers and bounces a charging skull; `P_CheckMissileRange`'s per-type rules),
 then the cacodemon (A_HeadAttack). The loader works a state's mode out from the death chains first:
 a corpse's last frame is also the spawn state of the map's dead-monster decorations, and was
@@ -447,7 +447,7 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   609 (was 237) and the mobjs to 647 (was 279). What's left starts at the shots (L5). The lost
   soul's charge still moves in doubles (L5, with PIT_CheckThing's slam).
 
-**Phase L5: attacks.** *Under way.* Test: the attract demos stay in step through the fighting.
+**Phase L5: attacks.** *Done.* Test: the attract demos stay in step through the fighting.
 - **The shots (done):** P_PathTraverse in 16.16 (`PATH_INTERCEPTS`: the blocks as DOOM steps
   through them, each block's lines in BLOCKMAP order, then its shootable things, those whose
   middle is in it and whose corner-to-corner diagonal the trace crosses), P_AimLineAttack
@@ -469,13 +469,40 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   (`LATE_MOVERS`, `RUN_LATE`), as DOOM runs every mobj every tic. P_DeathThink's turn to the
   killer in BAMs. Puffs and blood are info.c's 16 tall under their own sector's ceiling. The
   test harness restarts the level when the dead player presses use (G_DoReborn).
-- **Where it stands:** both attract demos, E1M1's (a death and the restart included) and
-  MAP01's, the shot demo and the walk agree with vanilla in every column to the end (700, 700,
-  102, 215 tics; `npm run test:lmp` asserts it).
-- **Next:** P_SpawnMissile and P_SpawnPlayerMissile in 16.16, the missiles' flight through
-  P_TryMove with PIT_CheckThing's missile branch and the ceilingline sky hack, P_ExplodeMissile;
-  P_RadiusAttack over the blockmap; the lost soul's slam through PIT_CheckThing; the BFG's spray
-  by P_AimLineAttack. New fixtures where imps throw and barrels burst.
+- **The missiles (done):** P_SpawnMissile (`SPAWN_MISSILE_FX`: R_PointToAngle2 to the target,
+  a shadow's P_SubRandom() << 20 after the spawn's draw, FixedMul(speed, finecosine), momz over
+  P_AproxDistance / speed tics; the mancubus's spreads and the revenant's 16 up through it),
+  P_SpawnPlayerMissile (`FIRE_MISSILE`: P_AimLineAttack's three tries), P_CheckMissileSpawn
+  (`>> 1` on), and the flight (`MISSILE_STEP`: MAXMOVE, the halved steps; `TRY_MOVE_MISSILE`:
+  PIT_CheckThing in P_CheckPosition's block order – overhead, underneath, the shooter, its
+  species, a solid thing that can't be hurt – then the lines with only one-sided ones blocking,
+  the gap, the ceiling and the 24-unit step; the line that lowered the ceiling, `CEILINGLINE`,
+  for the sky hack; P_ZMovement on the floorz and ceilingz its last move found). P_SpawnMobj's
+  floor and ceiling for a missile; the monsters' lines crossed by the missiles that may.
+- **The lost soul and the pain elemental (done):** A_SkullAttack in 16.16, the charge through
+  `XY_MOVEMENT_MOBJ`: PIT_CheckThing's slam (`SKULL_CONTACT`: the first solid, shootable or
+  pickup thing its box meets, no heights asked, and the damage roll whether it can be hurt or
+  not), a wall stopping it, its spawn state the tic after; the floor bounce only from The
+  Ultimate DOOM's exe on (DOOM II's v1.9 zeroes momz first: Chocolate's
+  correct_lost_soul_bounce). A_PainShootSkull: more than 20 lost souls (dying ones too), the
+  prestep in 16.16, P_TryMove or the new soul killed at once.
+- **The blasts (done):** P_RadiusAttack over the blockmap in its order (rows, then columns),
+  the box distance less the radius in whole units, P_CheckSight from the victim to the bomb,
+  thrown back from the bomb; the Cyberdemon and the Spider Mastermind immune. A_BFGSpray's 40
+  rays by P_AimLineAttack from the player, each MT_EXTRABFG spawned before its 15 rolls.
+- **And with them:** PIT_CheckThing's pickups – the player touches specials at each spot a move
+  tries, not where the tic ends; standing still, nothing (`TOUCH_SPECIALS` from
+  `CHECK_POSITION_FX`). A thing's floorz and ceilingz are P_TryMove's (`TRY_MOVE_MOBJ` keeps
+  them; a moving sector makes the rest look again), and P_ZMovement lifts one below its floor at
+  once (a thrown monster up a step). P_SpawnMapThing's ANG45 × (angle / 45) for every thing.
+  P_CheckMeleeRange in 16.16. The body's health (mo->health) follows the player's on pickups.
+- **Where it stands:** new fixtures from the title loop's other demos (E1M2, E1M3, MAP02–04) and
+  a barrel shot on E1M2. All but E1M3's agree with vanilla in every column to the end (700 tics
+  each; the barrel's 161; E1M2's through a death and the restart); `npm run test:lmp` asserts
+  it. E1M3's parts at tic 442: a door closing on the player (P_ChangeSector's fit test, the
+  door's reversal) shuts a zombieman's view a tic sooner than vanilla's – the movers, L6. Left
+  within a block: things met newest first, where DOOM's blocklinks put the one that last moved
+  first.
 
 **Phase L6: the world.** Movers at DOOM's speeds and in its order (T_MoveFloor/T_MoveCeiling,
 the crushers and PIT_ChangeSector's gibs and dropped items), sector specials, lights, switches;

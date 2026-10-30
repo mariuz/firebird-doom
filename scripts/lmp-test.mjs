@@ -135,8 +135,11 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.mobjs')).sort(
 
 // phase L5: the attacks – hitscan (P_AimLineAttack, P_LineAttack, puffs and blood), P_DamageMobj's
 // thrust and pain, a monster thrown back in its own turn, the player killed, turned to the killer
-// and the level restarted: the scripted shots and both title demos agree in every column to the end
-for (const name of ['e1m1-shoot', 'e1m1-walk', 'e1m1-attract', 'map01-attract']) {
+// and the level restarted; the missiles (P_SpawnMissile, their flight through P_TryMove and
+// PIT_CheckThing), the lost souls' charge, a barrel's blast, pickups as a move touches them: the
+// scripted shots, the barrel and the title demos agree in every column to the end. (E1M3's parts
+// at 442, where a closing door hides the player a tic sooner than vanilla's: the movers, L6.)
+for (const name of ['e1m1-shoot', 'e1m1-walk', 'e1m2-barrel', 'e1m1-attract', 'e1m2-attract', 'map01-attract', 'map02-attract', 'map03-attract', 'map04-attract']) {
   const w = results[name];
   const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
   assert(w && off.length === 0, `the attacks in fixed point: ${name} stays in step with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);

@@ -38,8 +38,12 @@ async function tic(cmds, me = 1) {
   return (await db.query('SELECT * FROM net_tic')).rows[0];
 }
 const thing = (pid) => one(`SELECT t.id, t.x, t.y, t.z, t.angle FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = ${pid}`);
+// (DOOM picks things up only as a player moves, in P_TryMove's PIT_CheckThing: a player it's put
+// down beside gets 1/65536 of a unit of momentum, so the next tic touches it)
 const spawn = async (type, x, y) => (await one(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN
-    EXECUTE PROCEDURE spawn_thing(${type}, ${x}, ${y}, NULL, 0) RETURNING_VALUES id; SUSPEND; END`)).ID;
+    EXECUTE PROCEDURE spawn_thing(${type}, ${x}, ${y}, NULL, 0) RETURNING_VALUES id;
+    UPDATE things SET momx = momx + 1 / 65536e0 WHERE kind = 'player' AND ABS(x - ${x}) < 64 AND ABS(y - ${y}) < 64;
+    SUSPEND; END`)).ID;
 
 // ── two players on the map ──
 await loadMap(db, wad, res, map, { skill: 3, players: 2 });
@@ -415,8 +419,9 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   const m0 = await thing(1);
   await db.exec("UPDATE things SET st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE kind = 'monster'");   // (quiet: the rest stay out of it)
   const imp = await spawn(3001, m0.X - 200, m0.Y);
-  // (from where player 1 stands, player 1 its shooter: a missile passes its own shooter)
-  await db.exec(`EXECUTE PROCEDURE monster_missile(${m0.ID}, 9000, ${m0.X}, ${m0.Y}, ${m0.Z}, 20, 0, ${m0.X + 200}, ${m0.Y}, ${m0.Z})`);
+  // (P_SpawnMissile from where player 1 stands, player 1 its shooter – a missile passes its own
+  // shooter – and its target: R_PointToAngle2 to itself is 0, east)
+  await db.query(`EXECUTE PROCEDURE spawn_missile_fx(${m0.ID}, 9000)`);
   const ball = await one('SELECT SQRT(momx * momx + momy * momy) v FROM things WHERE thing_type = 9000 ORDER BY id DESC ROWS 1');
   await db.exec('DELETE FROM things WHERE thing_type = 9000');
   // (the old rules' 2; mobjinfo's 8 for the types on DOOM's frame tables)

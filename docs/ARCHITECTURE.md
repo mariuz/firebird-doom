@@ -87,8 +87,9 @@ Per tic, `DOOM_TIC` runs:
   - a thing (`THING_THINK`, `P_MobjThinker`): its movement – a player's body (`PLAYER_BODY`:
     `XY_MOVEMENT_FX` with `TRY_MOVE_FX` through `CHECK_POSITION_FX` over the map's own
     `BLOCKMAP` rows, walk-over lines from its spechit list, `SLIDE_MOVE_FX`'s traced slide;
-    `Z_MOVEMENT_FX`; then `TOUCH_SPECIALS`, its pickups), a charging lost soul's
-    (`SKULL_STEP`), a missile's (`MISSILE_STEP`), anything else thrown (`XY_MOVEMENT_MOBJ`) – its fall or float (`Z_STEP`), then its
+    `Z_MOVEMENT_FX`; its pickups, `TOUCH_SPECIALS`, at each spot `CHECK_POSITION_FX` is asked
+    about), a missile's (`MISSILE_STEP`: `TRY_MOVE_MISSILE`), a charging lost soul's or anything
+    else thrown (`XY_MOVEMENT_MOBJ`: `TRY_MOVE_MOBJ`, `SKULL_CONTACT`) – its fall or float (`Z_STEP`), then its
     state's countdown (`SET_STATE`, which calls the next state's action: A_Look, A_Chase, the
     attacks, …), and on Nightmare a corpse's chance to rise (`NIGHTMARE_STEP`). A monster sees
     by `SIGHT_FX` (P_CheckSight through the BSP, in 16.16) and looks by `LOOK_FOR_PLAYERS`; it
@@ -105,7 +106,7 @@ Per tic, `DOOM_TIC` runs:
   tic sooner. A thing set moving by a thinker before its turn (a monster pushed by a shot) goes
   in `LATE_MOVERS`, a temporary table, and `RUN_LATE` runs it in its turn, before the next
   thinker in the list: DOOM runs every mobj every tic, the list here only those with something
-  to do. `MOVERS_THINK`, `LIGHTS_THINK`, `SKULLS_THINK`, `MISSILES_THINK`,
+  to do. `MOVERS_THINK`, `LIGHTS_THINK`, `MISSILES_THINK`,
   `NIGHTMARE_RESPAWN` and `STATES_THINK` (the things alone) are the same steps in a loop, for
   the tests.
 - The countdowns: damage and bonus flashes, messages, power-ups.

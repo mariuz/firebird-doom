@@ -371,6 +371,9 @@ assert(bite.startsWith('0:S_SARG_ATK1 8:S_SARG_ATK2 16:S_SARG_ATK3') && biteSnd.
 P = 2900;
 await atTic(P);
 const flag = (id) => one(`SELECT BIN_AND(flags, 262144) f, momx, momy, momz, x, y, z, state FROM things WHERE id = ${id}`);
+// (the clips earlier sections' zombiemen dropped cleared away: a charging lost soul stops at a
+// pickup too, PIT_CheckThing asking only MF_SPECIAL)
+await db.exec("DELETE FROM things WHERE kind = 'item' AND BIN_AND(flags, 65536) <> 0");
 const skull = await spawnAt(3006, 200, facing);
 await db.exec('DELETE FROM sound_events');
 const hpS = (await one('SELECT health FROM player WHERE id = 1')).HEALTH;
@@ -540,6 +543,8 @@ const fatBalls = [...fatSeen.entries()].sort((x, y) => x[0] - y[0]).map(([, a]) 
 const aimAt = Math.atan2(pl.Y - (pl.Y + Math.sin(pl.ANGLE) * 300), pl.X - (pl.X + Math.cos(pl.ANGLE) * 300));
 const turnDeg = (a) => Math.round((((a - aimAt) * 180) / Math.PI + 540) % 360 - 180);
 const fatSpreads = fatBalls.map((r) => turnDeg(r.A));
+// (in BAMs, by R_PointToAngle2: within a fraction of a degree of FATSPREAD's 11.25° steps)
+const fatExact = fatBalls.map((r) => ((((r.A - aimAt) * 180) / Math.PI + 540) % 360) - 180);
 await db.exec('DELETE FROM things WHERE thing_type = 9007');
 await remove(fat);
 const bspi = await spawnAt(68, 300, facing);
@@ -570,7 +575,7 @@ const keenEnd = await one(`SELECT st, solid FROM things WHERE id = ${keen}`);
 await remove(keen);
 assert(ssTrace.startsWith('0:S_SSWV_ATK1 10:S_SSWV_ATK2 20:S_SSWV_ATK3 24:S_SSWV_ATK4 30:S_SSWV_ATK5 34:S_SSWV_ATK6 35:S_SSWV_ATK2')
   && fatTrace.startsWith('0:S_FATT_ATK1 20:S_FATT_ATK2 30:S_FATT_ATK3') && /80:S_FATT_RUN1/.test(fatTrace) && fatSnd.includes('DSMANATK')
-  && fatSpreads.join() === '0,11,0,-22,-6,6'
+  && fatExact.length === 6 && [0, 11.25, 0, -22.5, -5.625, 5.625].every((w, i) => Math.abs(fatExact[i] - w) < 0.1)
   && bspiTrace.startsWith('0:S_BSPI_ATK1 20:S_BSPI_ATK2 24:S_BSPI_ATK3 28:S_BSPI_ATK4 29:S_BSPI_ATK2') && plasma >= 2 && bspiSnd.includes('DSPLASMA') && bspiSnd.includes('DSBSPWLK')
   && spatSoul.N === souls0 + 1 && spatSoul.F !== 0 && deathSouls >= 2
   && NAME(keen0.STATE) === 'S_KEENSTND' && keen0.STATE_TIC === null && /S_COMMKEEN11 \d+:S_COMMKEEN12$/.test(keenTrace) && keenEnd.ST.trim() === 'dead' && keenEnd.SOLID === 0,
@@ -631,7 +636,7 @@ const rk2 = await one(`SELECT x, y FROM things WHERE id = ${rk.ID}`);
 const rocketTrace = await trace(rk.ID, P + 50, P + 70);
 const impHurt = 1000 - (await one(`SELECT hp FROM things WHERE id = ${rocketTarget}`)).HP;
 await remove(rocketTarget);
-assert(Math.abs(startOut - 5) < 0.01 && fb.STATE_TIC - P >= 1 && fb.STATE_TIC - P <= 4 && fb.V === 10
+assert(Math.abs(startOut - 5) < 0.01 && fb.STATE_TIC - P >= 1 && fb.STATE_TIC - P <= 4 && Math.abs(fb.V - 10) < 0.001   // (FixedMul(speed, finecosine): a hair under 10 off the axes)
   && /S_TBALLX1.*null$/.test(ballTrace) && ballSnd.includes('DSFIRXPL') && ballHit >= 3 && ballHit <= 24 && ballHit % 3 === 0
   && Math.abs(Math.hypot(rk2.X - rk.X, rk2.Y - rk.Y) - 20) < 0.01 && /S_EXPLODE1/.test(rocketTrace) && impHurt > 20,
   `missiles: a fireball starts ${startOut.toFixed(0)} out, its first frame ${fb.STATE_TIC - P} tics, flies ${fb.V} a tic, hits the player for ${ballHit} and bursts (${ballTrace.split(' ').slice(-2).join(' ')}); a rocket goes 20 a tic and bursts on an imp (${impHurt} damage with the splash)`);

@@ -57,8 +57,15 @@ const DEMOS = [
   ['e1m1-shoot', 'freedoom1.wad', scripted(1, 1, [[30, 0, 0, 0, 0], [12, 0, 0, 0, BT_ATTACK], [60, 0, 0, 0, 0]]), '34,35,36,48,49,102'],
   // into the zombiemen's sight, and then still: they wake, chase and fire, and nothing's shot back
   ['e1m1-wake', 'freedoom1.wad', scripted(1, 1, [[35, 25, 0, 0, 0], [10, 25, 0, -640, 0], [35, 50, 10, 0, 0], [150, 0, 0, 0, 0]]), '55,60,80,100,140,200,230'],
+  // a turn to the barrel in sight of E1M2's start and the pistol until it bursts: P_RadiusAttack, the barrel's death
+  ['e1m2-barrel', 'freedoom1.wad', scripted(1, 2, [[1, 0, 0, 10122, 0], [10, 0, 0, 0, 0], [60, 0, 0, 0, BT_ATTACK], [90, 0, 0, 0, 0]])],
   ['e1m1-attract', 'freedoom1.wad', fromAttract('freedoom1-demo1.json', 700)],
   ['map01-attract', 'freedoom2.wad', fromAttract('freedoom2-demo1.json', 700)],
+  ['e1m2-attract', 'freedoom1.wad', fromAttract('freedoom1-demo2.json', 700)],
+  ['e1m3-attract', 'freedoom1.wad', fromAttract('freedoom1-demo3.json', 700)],
+  ['map02-attract', 'freedoom2.wad', fromAttract('freedoom2-demo2.json', 700)],
+  ['map03-attract', 'freedoom2.wad', fromAttract('freedoom2-demo3.json', 700)],
+  ['map04-attract', 'freedoom2.wad', fromAttract('freedoom2-demo4.json', 700)],
 ];
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-home-'));

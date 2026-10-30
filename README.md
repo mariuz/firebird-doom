@@ -44,25 +44,26 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `info.c` mobjinfo | `THING_TYPES` rows ([src/thinginfo.js](src/thinginfo.js)) |
 | `R_PointInSubsector` | `SECTOR_AT()` walks the BSP; `INIT_MAP` locates every thing in one recursive CTE |
 | `BLOCKMAP` | the lump itself (`BLOCKMAP`, in its order, for the player), and `LINE_BLOCKS`, a 128×128 grid built by `INIT_MAP` |
-| `P_CheckPosition`, `P_TryMove` | `CHECK_POSITION`; for the player in 16.16, `CHECK_POSITION_FX`, `TRY_MOVE_FX` |
+| `P_CheckPosition`, `P_TryMove`, `PIT_CheckThing` | in 16.16: `CHECK_POSITION_FX`; `TRY_MOVE_FX` (the player, whose pickups `PIT_CheckThing` touches there), `TRY_MOVE_MOBJ` (monsters, corpses, a charging lost soul's `SKULL_CONTACT`), `TRY_MOVE_MISSILE`; `CHECK_POSITION` for the rest |
 | `P_MovePlayer`, `P_CalcHeight`, `P_XYMovement`, `P_SlideMove`, `P_ZMovement` (the player) | `PLAYER_THINK`, `XY_MOVEMENT_FX`, `SLIDE_MOVE_FX` (`SLIDE_TRAVERSE`, `HIT_SLIDE_LINE`), `Z_MOVEMENT_FX` |
 | `P_CheckSight` | for monsters, `SIGHT_FX()`: `REJECT`, then the BSP walk (`CROSS_BSP`, `CROSS_SUBSECTOR`) in 16.16; elsewhere `CHECK_SIGHT()` walks the blockmap cells along the sight line |
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
 | `G_DoCompleted`: which map comes next, secret exits included | [src/progress.js](src/progress.js) |
 | `EV_DoCeiling` crushers, `EV_CeilingCrushStop`, `raiseFloorCrush`, `P_ChangeSector` | the `crush` mover kind, `CRUSH_THINGS` |
 | `P_SetMobjState`, `P_MobjThinker`, `info.c`'s states | `SET_STATE`, `STATES_THINK`, `STATE_ACTION`, the `STATES` table ([src/states.js](src/states.js)) |
-| `P_SpawnMissile` / `P_SpawnPlayerMissile` aiming, `P_AimLineAttack`, `P_XYMovement` / `P_ZMovement` for missiles | `MONSTER_MISSILE`, `FIRE_MISSILE`, `AIM_SLOPE`, `MISSILES_THINK` |
+| `P_SpawnMissile`, `P_SpawnPlayerMissile`, `P_CheckMissileSpawn`, `P_ExplodeMissile`, `P_XYMovement` / `P_ZMovement` for missiles | `SPAWN_MISSILE_FX`, `FIRE_MISSILE`, `CHECK_MISSILE_SPAWN`, `EXPLODE_MISSILE`, `MISSILE_STEP` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `A_LOOK`, `A_CHASE`, `A_BULLETS`, `A_MELEE_MISSILE`, …, `DAMAGE_THING` |
-| `P_DamageMobj` retargeting, `PIT_CheckThing` species rule (infighting) | `DAMAGE_THING(..., src)`, `THINGS.TARGET_ID` / `THRESHOLD`, `HURT_TARGET` |
+| `P_DamageMobj` (thrust, pain, retargeting), `P_KillMobj`, `PIT_CheckThing` species rule (infighting) | `DAMAGE_THING` / `DAMAGE_PLAYER` (`..., src, inflictor`), `DAMAGE_THRUST`, `THINGS.TARGET_ID` / `THRESHOLD`, `HURT_TARGET` |
+| `P_XYMovement` for monsters, corpses, barrels, a charging lost soul | `XY_MOVEMENT_MOBJ` (a thing set moving before its turn: `LATE_MOVERS`, `RUN_LATE`) |
 | `P_NoiseAlert`, `P_RecursiveSound` (gunfire wakes monsters) | `NOISE_ALERT` flooding `SOUND_LINKS`, `SECTORS.SOUND_HEARD` |
 | `A_Tracer`, `A_SkelFist` (revenant), `A_FatAttack1/2/3` (mancubus), `A_VileTarget` / `A_Fire` / `A_VileAttack` / `A_VileChase` (arch-vile), `A_PainShootSkull` / `A_PainDie` | `A_TRACER`, `A_MELEE_MISSILE`, `A_FAT_ATTACK`, `A_VILE_TARGET`, `A_FIRE`, `A_VILE_ATTACK`, `A_VILE_CHASE`, `PAIN_SHOOT_SKULL`, `A_PAIN_DIE` |
 | `A_BossDeath`, `A_KeenDie` | `BOSS_DEATH`, `KEEN_DIE` |
 | `A_BrainSpit`, `A_SpawnFly`, `A_BrainScream` (the Icon of Sin) | `A_BRAIN_SPIT`, `A_SPAWN_FLY`, `A_BRAIN_SCREAM` |
 | `MF_SPAWNCEILING` (hanging bodies, Commander Keen) | `THING_TYPES.HANG`, placed in `INIT_MAP` |
-| `P_LineAttack`, `P_BulletSlope` (pistol, shotguns, chaingun, fist, chainsaw) | `HITSCAN` (in 3D, with a slope), `AIM_SLOPE` |
+| `P_PathTraverse`, `P_AimLineAttack`, `P_LineAttack`, `P_BulletSlope` (pistol, shotguns, chaingun, fist, chainsaw, the monsters' bullets) | `PATH_INTERCEPTS`, `AIM_LINE_ATTACK`, `LINE_ATTACK`, `BULLET_SLOPE`, in 16.16 |
 | `P_SetPsprite`, `P_MovePsprites`, `A_WeaponReady`, `A_Saw`, `A_FireShotgun2` and the other weapon actions | `SET_PSPRITE`, `MOVE_PSPRITES`, `PSPRITE_ACTION` (see *Weapons*) |
-| `P_SpawnPlayerMissile`, `P_RadiusAttack`, `A_BFGSpray` (rocket launcher, plasma gun, BFG) | `FIRE_MISSILE`, `RADIUS_ATTACK`, `BFG_SPRAY`; projectiles fly in `MISSILES_THINK` |
-| `P_TouchSpecialThing` | pickups in `PLAYER_THINK` |
+| `P_SpawnPlayerMissile`, `P_RadiusAttack`, `A_BFGSpray` (rocket launcher, plasma gun, BFG) | `FIRE_MISSILE`, `RADIUS_ATTACK` (over the blockmap, `SIGHT_FX` from the bomb), `BFG_SPRAY` (`AIM_LINE_ATTACK`) |
+| `P_TouchSpecialThing` | `TOUCH_SPECIALS`, from `CHECK_POSITION_FX` at each spot a move tries |
 | light flashes, strobes, glows | `LIGHTS_THINK` |
 | `R_RenderBSPNode`, `R_CheckBBox`, `R_ClipSolidWallSegment` (solidsegs) | `RENDER_SLICES_BSP` ([sql/render.sql](sql/render.sql)) |
 | `r_segs.c` clip arrays, `markceiling` / `markfloor` | `RENDER_WALLS` / `FRAME_WALLS` (or `FRAME_WALLS_WINDOWED`) |
@@ -800,20 +801,27 @@ measured against vanilla itself:
   looked (`lastlook`, quirks included), turns and judges its ranges in DOOM's angles and fixed
   point, and walks by DOOM's `P_Move` and `P_NewChaseDir` through the same `P_TryMove` as the
   player: the map's own blockmap, steps, drop-offs, monster-blocking lines, the doors it opens.
-- **The shots and the damage (phase L5, under way):** a bullet goes where DOOM's goes: the aim
-  and the trace step through the blockmap as `P_PathTraverse` does, meeting lines and things in
-  its order, and the puff or the blood lands where DOOM's does. A hit pushes what it hits away
-  from the shooter by DOOM's sums (`P_DamageMobj`'s thrust: harder for a light thing, none
-  from the chainsaw, and now and then a killing blow from below throws a monster forwards).
-  Corpses slide on as they're thrown, a quarter as tall as they stood, and a monster pushed by
-  your shot moves in its own turn of that same tic, as in DOOM. Dead, you turn to face your
-  killer 5° a tic in DOOM's angles. Next: the missiles, the blasts, and the lost soul's slam.
+- **The attacks (phase L5, done):** a bullet goes where DOOM's goes: the aim and the trace step
+  through the blockmap as `P_PathTraverse` does, meeting lines and things in its order, and the
+  puff or the blood lands where DOOM's does. A hit pushes what it hits away from whatever hit it
+  by DOOM's sums (`P_DamageMobj`'s thrust: harder for a light thing, none from the chainsaw, and
+  now and then a killing blow from below throws a monster forwards). Corpses slide on as
+  they're thrown, a quarter as tall as they stood, and a monster pushed by your shot moves in its
+  own turn of that same tic, as in DOOM. Fireballs, rockets and plasma are aimed, fly and burst
+  as DOOM's do (`P_SpawnMissile`, the autoaim, `P_TryMove` with `PIT_CheckThing`'s rules for a
+  missile, the sky that swallows one), a lost soul charges and slams into the first thing its
+  box meets – a pickup too, as in DOOM – and a blast reaches what can see it. You pick things up
+  as DOOM's player does: at each spot a move tries, so something dropped where you stand waits
+  for you to move. Dead, you turn to face your killer 5° a tic in DOOM's angles.
 - **Where it stands:** standing still on E1M1 it keeps step for all 350 tics, every column, and
   the oracle's list of every thinker agrees with the port's one by one. So do a demo firing a
   shot and one where the player walks into the zombiemen's view and stands while they wake and
   chase. The scripted walk (turns, runs, strafes, along walls, down a lowering stair, shots)
-  keeps step for all 215 tics. Both attract demos keep step in every column for all 700 tics:
-  MAP01's through a firefight, E1M1's through the player's death and the level's restart.
+  keeps step for all 215 tics, and so does a barrel shot until it bursts. Of the title loop's
+  seven demos, six keep step in every column for all 700 tics: firefights with zombiemen, imps'
+  fireballs, lost souls and a spectre, deaths and restarts. E1M3's parts at tic 442, where a
+  closing door hides the player from a zombieman a tic sooner than in vanilla: the movers are
+  the next phase, L6.
 
 ### Co-op and deathmatch over the network
 
@@ -1347,20 +1355,19 @@ not the demons' `DSDMPAIN`.) `npm run test:states` wakes, hurts, kills and gibs 
 step.
 
 What's still not vanilla, and why `.lmp` demos can't play yet (docs/ROADMAP.md):
-- **Arithmetic:** the player, the monsters' walk, the shots and what a hit throws move in DOOM's
-  16.16 fixed point, with BAM angles and the `finesine` table; the projectiles, a charging lost
-  soul and the movers still move in doubles, their angles in radians.
+- **Arithmetic:** the player, the monsters, the shots, the projectiles and what a hit throws move
+  in DOOM's 16.16 fixed point, with BAM angles and the `finesine` table; the movers (doors,
+  lifts, floors, crushers) still move in doubles, at their own pace (phase L6).
 - **Random numbers:** `P_Random` is DOOM's `rndtable`, but its draws come in DOOM's order only
   where the code follows DOOM's (the map's setup, the lights, the actions, the damage), not yet
   everywhere.
-- **Movement:** you pick things up where you end the tic, not at each spot `P_TryMove` tries on
-  the way. The page's own keys aren't quite `G_BuildTiccmd`'s: a strafe is 25 (50 running)
+- **Keys:** the page's own keys aren't quite `G_BuildTiccmd`'s: a strafe is 25 (50 running)
   rather than 24 (40), and the turn keys have no slow start.
-- **Collision:** the player's, the walking monsters' and the shots' go through the `BLOCKMAP`
-  as DOOM's do, and monsters see through the BSP as DOOM's do; the projectiles', a charging lost
-  soul's and the blasts' are set-based SQL over the map's lines and things, so ties between
-  equally near things can break differently. Within a block, things are met newest first, where
-  DOOM's list puts the one that last moved first.
+- **Collision:** everything that moves goes through the `BLOCKMAP` as DOOM's does, and
+  monsters see through the BSP as DOOM's do. Within a block, though, things are met newest first,
+  where DOOM's list puts the one that last moved first: two things in one block, both in reach,
+  can be met the other way round. The movers (doors, lifts, crushers) push things by their own
+  rules, not `P_ChangeSector`'s.
 - **Crushers:** a crusher turns only corpses to gibs: not the dying, and dropped items aren't
   removed (`PIT_ChangeSector`).
 - **Weapon keys:** they choose as the port always has, not quite as `P_PlayerThink` does (see

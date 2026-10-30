@@ -22,9 +22,13 @@ let failures = 0;
 const assert = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) failures++; };
 const one = async (q) => (await db.query(q)).rows[0];
 const tic = (n = 1) => db.query(`SELECT * FROM doom_tic(${n}, 0, 0, 0, 0, 0, 0, 0)`);
+// (DOOM picks things up only as a player moves, in P_TryMove's PIT_CheckThing: a player something is
+// put down beside gets 1/65536 of a unit of momentum, so the next tic touches it)
 const spawn = async (type, x, y, z = null, ang = 0) =>
   (await db.query(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN
-      EXECUTE PROCEDURE spawn_thing(${type}, ${x}, ${y}, ${z ?? 'NULL'}, ${ang}) RETURNING_VALUES id; SUSPEND; END`)).rows[0].ID;
+      EXECUTE PROCEDURE spawn_thing(${type}, ${x}, ${y}, ${z ?? 'NULL'}, ${ang}) RETURNING_VALUES id;
+      UPDATE things SET momx = momx + 1 / 65536e0 WHERE kind = 'player' AND ABS(x - ${x}) < 64 AND ABS(y - ${y}) < 64;
+      SUSPEND; END`)).rows[0].ID;
 /** A point inside a sector: the centre of one of its (convex) subsectors. */
 const inside = (sec) => one(`SELECT FIRST 1 AVG(sg.x1) x, AVG(sg.y1) y FROM ssectors ss
                                JOIN segs sg ON sg.id BETWEEN ss.first_seg AND ss.first_seg + ss.seg_count - 1
@@ -109,9 +113,15 @@ await db.exec('UPDATE player SET health = 100000');
 await quiet();
 const p = await one(`SELECT t.id, t.x, t.y, t.z, t.angle FROM things t WHERE t.kind = 'player'`);
 
-// monster missiles: momz = height difference / tics of flight
-// (fired from where the player stands, the player its shooter: a missile passes its own shooter)
-await db.exec(`EXECUTE PROCEDURE monster_missile(${p.ID}, 9000, ${p.X}, ${p.Y}, ${p.Z}, 20, 0, ${p.X + 320}, ${p.Y}, ${p.Z + 64})`);
+// monster missiles: momz = height difference / tics of flight (P_SpawnMissile)
+// (fired from where the player stands, the player its shooter – a missile passes its own shooter –
+// at a marker 320 east and 64 up as its target)
+const mark = await spawn(14, p.X + 320, p.Y);
+await db.exec(`UPDATE things SET z = ${p.Z + 64} WHERE id = ${mark}`);
+await db.exec(`UPDATE things SET target_id = ${mark} WHERE id = ${p.ID}`);
+await db.query(`EXECUTE PROCEDURE spawn_missile_fx(${p.ID}, 9000)`);
+await db.exec(`UPDATE things SET target_id = NULL WHERE id = ${p.ID}`);
+await db.exec(`DELETE FROM things WHERE id = ${mark}`);
 const m1 = await one(`SELECT FIRST 1 momz FROM things WHERE thing_type = 9000 ORDER BY id DESC`);
 assert(Math.abs(m1.MOMZ - 2) < 1e-9, `monster fireball climbs to its target: 64 up over 320 at speed 10 → momz ${m1.MOMZ}`);
 await db.exec('DELETE FROM things WHERE thing_type = 9000');
@@ -141,7 +151,8 @@ await db.exec('DELETE FROM things WHERE thing_type = 9003');
 let t = await target(0, 24);
 if (t.seen) {
   r = await fire();
-  const want = 20 * ((t.z + t.h / 2 - (p.Z + 32)) / 300);
+  // (P_AimLineAttack from 36 up – half the player's height and 8 – at the middle of what it sees of the imp)
+  const want = 20 * ((t.z + t.h - (p.Z + 36)) + (t.z - (p.Z + 36))) / 2 / 300;
   assert(Math.abs(r.MOMZ - want) < 0.05, `autoaim: rocket climbs at an imp 24 units up (momz ${r.MOMZ.toFixed(3)}, expected ${want.toFixed(3)})`);
 } else console.log('(no clear line ahead for the autoaim test)');
 await db.exec(`DELETE FROM things WHERE thing_type = 9003 OR id = ${t.id}`);
@@ -386,7 +397,9 @@ if (sky) {
     // the player can't win it back while the grudge lasts…
     await db.exec(`EXECUTE PROCEDURE damage_thing(${demon}, 1, ${pl.ID})`);
     assert((await one(`SELECT target_id t FROM things WHERE id = ${demon}`)).T === imp, 'while its threshold lasts, the player can\'t draw it off');
-    // …and when the imp dies, back it comes
+    // …and when the imp dies, back it comes (if it can see the player: A_Chase's P_LookForPlayers,
+    // all around – put back in view first, where the fight may have taken it out of sight)
+    { const [hx, hy] = at(160); await db.exec(`UPDATE things SET x = ${hx}, y = ${hy}, momx = 0, momy = 0, lastlook = 0, sector_id = sector_at(${hx}, ${hy}) WHERE id = ${demon}`); }
     await db.exec(`EXECUTE PROCEDURE damage_thing(${imp}, 100000)`);
     await tic(30);   // (a bite under way finishes first: S_SARG_ATK1–3, 24 tics, then A_Chase)
     assert((await one(`SELECT target_id t FROM things WHERE id = ${demon}`)).T === null, 'its target dead, the demon hunts the player again');
@@ -829,9 +842,9 @@ if (sky) {
   await quiet();
   const nm = await hurtAndClip();
   const p = await at();
-  // (from where the player stands, the player its shooter, so it doesn't burst on them at once)
-  await db.exec(`EXECUTE PROCEDURE monster_missile((SELECT thing_id FROM player WHERE id = 1), 9000,
-                 ${p.X}, ${p.Y}, ${p.Z}, 20, 0, ${p.X + 200}, ${p.Y}, ${p.Z})`);
+  // (P_SpawnMissile from where the player stands, the player its shooter, so it doesn't burst on
+  // them at once, and its target: east)
+  await db.query('EXECUTE PROCEDURE spawn_missile_fx((SELECT thing_id FROM player WHERE id = 1), 9000)');
   const ball = await one('SELECT SQRT(momx * momx + momy * momy) v FROM things WHERE thing_type = 9000 ORDER BY id DESC ROWS 1');
   await db.exec(`EXECUTE PROCEDURE cheat('iddqd')`);
   const god = (await one('SELECT god FROM player')).GOD;

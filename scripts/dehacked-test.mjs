@@ -128,7 +128,9 @@ assert(start.HEALTH === 150 && start.BULLETS === 25 && start.MAX_BULLETS === 300
   `a new game starts with 150 health and 25 of 300 bullets; THING_TYPES in Firebird has the patched zombieman`);
 const p = await one("SELECT x, y FROM things WHERE kind = 'player'");
 const pick = async (type) => {
-  await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN EXECUTE PROCEDURE spawn_thing(${type}, ${p.X}, ${p.Y}, NULL, 0) RETURNING_VALUES id; END`);
+  // (and the player nudged 1/65536 of a unit: DOOM picks things up only as a player moves, P_TryMove)
+  await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN EXECUTE PROCEDURE spawn_thing(${type}, ${p.X}, ${p.Y}, NULL, 0) RETURNING_VALUES id;
+    UPDATE things SET momx = momx + 1 / 65536e0 WHERE kind = 'player'; END`);
   await tic();
   return one('SELECT health, armor, armor_type, bullets, cells, max_bullets FROM player');
 };

@@ -104,7 +104,133 @@
       "sumstate": null
     }
   },
+  "e1m2-attract": {
+    "tics": 700,
+    "synced": 700,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "e1m2-barrel": {
+    "tics": 161,
+    "synced": 161,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "e1m3-attract": {
+    "tics": 700,
+    "synced": 468,
+    "first": {
+      "leveltime": 590,
+      "prndindex": 442,
+      "x": 473,
+      "y": 470,
+      "z": null,
+      "angle": 542,
+      "momx": 469,
+      "momy": 469,
+      "health": 469,
+      "mobjs": 452,
+      "sumx": 442,
+      "sumy": 442,
+      "sumz": 445,
+      "sumhealth": 452,
+      "sumstate": 442
+    }
+  },
   "map01-attract": {
+    "tics": 700,
+    "synced": 700,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "map02-attract": {
+    "tics": 700,
+    "synced": 700,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "map03-attract": {
+    "tics": 700,
+    "synced": 700,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "map04-attract": {
     "tics": 700,
     "synced": 700,
     "first": {

@@ -17,6 +17,9 @@ const wad = new Wad(fs.readFileSync(process.env.WAD ?? path.join(root, 'public/w
 const res = await loadResources(db, wad);
 
 let failures = 0;
+// (DOOM picks things up only in P_TryMove's PIT_CheckThing: something put down where the player
+// stands is touched on the next move – so the tests give the player 1/65536 of a unit of momentum)
+const NUDGE = "UPDATE things SET momx = momx + 1 / 65536e0 WHERE kind = 'player';";
 const assert = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) failures++; };
 const tic = (args) => db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', args).then((r) => r.rows[0]);
 const IDLE = [1, 0, 0, 0, 0, 0, 0, 0];
@@ -268,7 +271,8 @@ assert(bfgBurst > 0, 'BFG ball exploded');
   await db.exec('UPDATE player SET health = 40, has_shotgun = 1, weapon = 3');
   const p = (await db.query("SELECT x, y FROM things WHERE kind = 'player'")).rows[0];
   await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
-      EXECUTE PROCEDURE spawn_thing(2023, ${p.X}, ${p.Y}, NULL, 0) RETURNING_VALUES id; END`);
+      EXECUTE PROCEDURE spawn_thing(2023, ${p.X}, ${p.Y}, NULL, 0) RETURNING_VALUES id;
+      ${NUDGE} END`);
   s = await tic(IDLE);
   const healed = s.HEALTH;
   const strength = s.STRENGTH_TICS;
@@ -395,7 +399,11 @@ await db.exec(`UPDATE player SET health = 100, armor = 0, dead = 0`);
 // (and the body stood up again: dead, it lies in its death states, not solid and not to be hit)
 await db.exec(`UPDATE things SET st = 'idle', solid = 1, state = (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1), state_tic = NULL WHERE kind = 'player'`);
 const p = (await db.query(`SELECT t.x, t.y, t.z FROM things t WHERE t.kind = 'player'`)).rows[0];
-await db.exec(`EXECUTE PROCEDURE radius_attack(${p.X + 1}, ${p.Y}, ${p.Z}, 128, -1)`);   // (right beside you: 40 away can be inside a wall)
+// (P_RadiusAttack from a bomb – a barrel right beside you: 40 away can be inside a wall)
+const bomb = (await db.query(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN
+    EXECUTE PROCEDURE spawn_thing(2035, ${p.X + 1}, ${p.Y}, NULL, 0) RETURNING_VALUES id; SUSPEND; END`)).rows[0].ID;
+await db.exec(`EXECUTE PROCEDURE radius_attack(${p.X + 1}, ${p.Y}, ${p.Z}, 128, NULL, ${bomb})`);
+await db.exec(`DELETE FROM things WHERE id = ${bomb}`);
 const hp = (await db.query('SELECT health FROM player')).rows[0].HEALTH;
 assert(hp < 100, `splash damage reaches the player (${100 - hp})`);
 
@@ -404,6 +412,7 @@ await db.exec(`UPDATE player SET has_launcher = 0, has_plasma = 0, rockets = 0, 
 for (const [type, check] of [[2003, 'HAS_LAUNCHER'], [2004, 'HAS_PLASMA'], [2046, 'ROCKETS'], [17, 'CELLS']]) {
   await db.query(`EXECUTE BLOCK AS DECLARE id INTEGER; BEGIN
       EXECUTE PROCEDURE spawn_thing(${type}, (SELECT x FROM things WHERE kind = 'player'), (SELECT y FROM things WHERE kind = 'player'), NULL, 0) RETURNING_VALUES id;
+      ${NUDGE}
     END`);
   const s = await tic([1, 0, 0, 0, 0, 0, 0, 0]);
   assert(s[check] > 0, `picking up type ${type} sets ${check} (${s[check]})`);
@@ -415,10 +424,12 @@ const mult = [1, 5].includes((await db.query('SELECT skill FROM game')).rows[0].
 const one = async (sql) => (await db.query(sql)).rows[0];
 const spawnHere = async (type) => (await one(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN
     EXECUTE PROCEDURE spawn_thing(${type}, (SELECT x FROM things WHERE kind = 'player'), (SELECT y FROM things WHERE kind = 'player'), NULL, 0) RETURNING_VALUES id;
+    ${NUDGE}
     SUSPEND; END`)).ID;
 const killHere = async (type) => {
   const id = await spawnHere(type);
   await db.query(`EXECUTE PROCEDURE damage_thing(${id}, 10000)`);
+  await db.exec(NUDGE);
   return one(`SELECT FIRST 1 t.id, t.thing_type, t.flags FROM things t WHERE t.kind = 'item' ORDER BY t.id DESC`);
 };
 // (in god mode: the barrels earlier sections set off are still going off around you)
@@ -454,6 +465,7 @@ const full = await spawnHere(2001);
 await tic(IDLE);
 assert((await db.query(`SELECT id FROM things WHERE id = ${full}`)).rows.length === 1, 'an owned shotgun stays put when your shells are full');
 await db.exec('UPDATE player SET shells = 0');
+await db.exec(NUDGE);
 await tic(IDLE);
 assert((await db.query(`SELECT id FROM things WHERE id = ${full}`)).rows.length === 0, '…and is taken once there is room for its shells');
 const saw = await spawnHere(2005);

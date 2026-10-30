@@ -143,6 +143,10 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 - **A hit pushes** (`P_DamageMobj`'s thrust, L5): a test that measures from where the player or a
   monster stands must pin it after hits (`momx = 0, momy = 0`, and its `x`, `y` back), or the next
   tic carries it off; a corpse slides too.
+- **Pickups happen only in a move** (`PIT_CheckThing`, from `CHECK_POSITION_FX`): an item spawned
+  where the player stands isn't taken until they move. Tests give the player 1/65536 of a unit of
+  momentum after the spawn (`momx = momx + 1 / 65536e0`). A charging lost soul stops at a pickup
+  in its way too (DOOM's), so clear dropped clips from a test's path.
 - **Tests:** physics-test and weapons-test share one database through many sections. A monster
   woken by an earlier section can hurt the player later, so read state right after the action,
   before another tic. Make statistical assertions robust (bigger samples, fixed bounds rather than
