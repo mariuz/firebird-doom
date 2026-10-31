@@ -838,9 +838,10 @@ BEGIN
   -- P_SpawnMobj: mobj->lastlook = P_Random () % MAXPLAYERS (P_LookForPlayers' first player to try)
   lastlook = MOD(p_rand256(), 4);
   new_id = NEXT VALUE FOR thing_seq;
-  sec = sector_at(px, py);
+  sec = sector_at_fx(fx_of(px), fx_of(py));
+  -- (its floorz and ceilingz, its subsector's)
   INSERT INTO things (id, thing_type, kind, x, y, z, angle, hp, radius, height, solid, sector_id,
-                      st, state, state_tic, reaction, lastlook)
+                      st, state, state_tic, reaction, lastlook, floorz, ceilz, fz_x, fz_y)
   SELECT :new_id, tt.thing_type, tt.kind, :px, :py,
          COALESCE(:pz, (SELECT floor_h FROM sectors WHERE id = :sec)), :ang,
          tt.hp, tt.radius, tt.height, tt.solid, :sec,
@@ -853,7 +854,8 @@ BEGIN
          -- (spawned during a tic, it's at the end of the list: it counts down this tic, THINK_AHEAD)
          IIF(tt.on_states = 1, (SELECT IIF(s.tics < 0, NULL, g.tic + s.tics - think_ahead(2 * :new_id)) FROM states s CROSS JOIN game g
                                  WHERE s.id = tt.spawn_state AND g.id = 1), NULL),
-         IIF(tt.on_states = 1, (SELECT IIF(g.skill = 5, 0, tt.reaction_time) FROM game g WHERE g.id = 1), 0), :lastlook
+         IIF(tt.on_states = 1, (SELECT IIF(g.skill = 5, 0, tt.reaction_time) FROM game g WHERE g.id = 1), 0), :lastlook,
+         (SELECT floor_h FROM sectors WHERE id = :sec), (SELECT ceil_h FROM sectors WHERE id = :sec), :px, :py
     FROM thing_types tt WHERE tt.thing_type = :ttype;
 END^
 
@@ -1116,36 +1118,44 @@ BEGIN
 END^
 
 -- ── sector movers ─────────────────────────────────────────────────────────
-CREATE OR ALTER PROCEDURE door_start (sec INTEGER, spd DOUBLE PRECISION, stay SMALLINT, mode VARCHAR(8))
+-- EV_DoDoor (EV_VerticalDoor, MANUAL 1: a door used, whose sound always plays): sector SEC's door
+-- of DOOM's type MT – VDOORSPEED (2), four times that blazing, VDOORWAIT (150) at the top, up
+-- to 4 below the lowest ceiling around; a close30ThenOpen comes back up to where it was
+CREATE OR ALTER PROCEDURE door_start (sec INTEGER, mt VARCHAR(24), manual SMALLINT = 0)
 AS
 DECLARE fh DOUBLE PRECISION;
 DECLARE ch DOUBLE PRECISION;
+DECLARE top DOUBLE PRECISION;
+DECLARE dir SMALLINT;
 BEGIN
   IF (EXISTS (SELECT 1 FROM movers WHERE sector_id = :sec)) THEN EXIT;
   SELECT floor_h, ceil_h FROM sectors WHERE id = :sec INTO fh, ch;
-  IF (mode = 'close') THEN
+  top = COALESCE(neighbor_h(:sec, 'min_ceil'), ch + 64) - 4;
+  dir = 1;
+  IF (mt IN ('close', 'blazeClose')) THEN dir = -1;
+  ELSE IF (mt = 'close30ThenOpen') THEN
   BEGIN
-    INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay)
-    VALUES (:sec, 'door', -1, :spd, :ch, :fh, 0, 1);
-    EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDCLS', 'DSDORCLS'), sec);
+    dir = -1;
+    top = ch;
   END
-  ELSE
-  BEGIN
-    INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay)
-    VALUES (:sec, 'door', 1, :spd, COALESCE(neighbor_h(:sec, 'min_ceil'), :ch + 64) - 4, :fh, 150, :stay);
-    EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDOPN', 'DSDOROPN'), sec);
-  END
+  INSERT INTO movers (sector_id, kind, mtype, dir, speed, top_h, bottom_h, wait_tics, stay)
+  VALUES (:sec, 'door', :mt, :dir, IIF(:mt STARTING WITH 'blaze', 8, 2), :top, :fh, 150,
+          CASE WHEN :mt IN ('normal', 'blazeRaise') THEN 0 WHEN :mt = 'close30ThenOpen' THEN 2 ELSE 1 END);
+  IF (manual = 1) THEN EXECUTE PROCEDURE sector_sound(IIF(mt STARTING WITH 'blaze', 'DSBDOPN', 'DSDOROPN'), sec);
+  ELSE IF (mt = 'blazeClose') THEN EXECUTE PROCEDURE sector_sound('DSBDCLS', sec);
+  ELSE IF (mt IN ('close', 'close30ThenOpen')) THEN EXECUTE PROCEDURE sector_sound('DSDORCLS', sec);
+  ELSE IF (top <> ch) THEN EXECUTE PROCEDURE sector_sound(IIF(mt STARTING WITH 'blaze', 'DSBDOPN', 'DSDOROPN'), sec);
 END^
 
-CREATE OR ALTER PROCEDURE floor_start (sec INTEGER, target DOUBLE PRECISION, spd DOUBLE PRECISION)
+-- EV_DoFloor: sector SEC's floor towards TARGET at SPD in DIR (DOOM's type MT fixes the direction,
+-- not where the target is: past it at once, it stops there), crushing or not
+CREATE OR ALTER PROCEDURE floor_start (sec INTEGER, target DOUBLE PRECISION, spd DOUBLE PRECISION, dir SMALLINT = 1,
+                                       mt VARCHAR(24) = 'raiseFloor', crush SMALLINT = 0)
 AS
-DECLARE fh DOUBLE PRECISION;
 BEGIN
   IF (target IS NULL OR EXISTS (SELECT 1 FROM movers WHERE sector_id = :sec)) THEN EXIT;
-  SELECT floor_h FROM sectors WHERE id = :sec INTO fh;
-  IF (target = fh) THEN EXIT;
-  INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay)
-  VALUES (:sec, 'floor', IIF(:target > :fh, 1, -1), :spd, :target, :target, 0, 1);
+  INSERT INTO movers (sector_id, kind, mtype, dir, speed, top_h, bottom_h, wait_tics, stay, crush)
+  VALUES (:sec, 'floor', :mt, :dir, :spd, :target, :target, 0, 1, :crush);
 END^
 
 -- EV_Teleport: TID to the teleport destination (thing 14) in the first sector
@@ -1197,12 +1207,13 @@ BEGIN
   DO
     IF (vk = 'player') THEN EXECUTE PROCEDURE damage_player(10000, tid, (SELECT p.id FROM player p WHERE p.thing_id = :vid), tid);
     ELSE EXECUTE PROCEDURE damage_thing(vid, 10000, IIF(:k = 'player', NULL, :tid), tid);
-  sec = sector_at(dx, dy);
+  sec = sector_at_fx(fx_of(dx), fx_of(dy));
   SELECT floor_h FROM sectors WHERE id = :sec INTO fz;
   UPDATE things t
      SET x = :dx, y = :dy, z = :fz, angle = :da, momx = 0, momy = 0, momz = 0, sector_id = :sec,
          reaction = IIF(t.kind = 'player', 18, t.reaction),
-         floorz = NULL                                 -- (P_TeleportMove's, found where it lands)
+         -- (P_TeleportMove's floorz and ceilingz: the sector it lands in, no lines asked)
+         floorz = :fz, ceilz = (SELECT s.ceil_h FROM sectors s WHERE s.id = :sec), fz_x = :dx, fz_y = :dy
    WHERE t.id = :tid;
   EXECUTE PROCEDURE spawn_thing(9016, ox, oy, oz, 0) RETURNING_VALUES fog;
   EXECUTE PROCEDURE play_sound('DSTELEPT', fog, ox, oy);
@@ -1270,7 +1281,8 @@ BEGIN
           WHEN sp IN (53, 87) THEN 'plat_perp'
           WHEN sp IN (54, 89) THEN 'plat_stop'
           WHEN sp IN (22, 95, 20, 68, 47) THEN 'plat_near'
-          WHEN sp IN (15, 66, 59, 93) THEN 'plat_24'
+          WHEN sp IN (15, 66) THEN 'plat_24'
+          WHEN sp IN (59, 93) THEN 'fl_24chg'
           WHEN sp IN (14, 67) THEN 'plat_32'
           WHEN sp IN (38, 82, 23, 60) THEN 'fl_low'
           WHEN sp IN (37, 84) THEN 'fl_low_chg'
@@ -1339,20 +1351,15 @@ BEGIN
       IF (who IS NOT NULL) THEN
       BEGIN
         IF (EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = :bsec AND m.kind = 'door' AND m.dir = -1)) THEN
-        BEGIN
           UPDATE movers SET dir = 1 WHERE sector_id = :bsec;
-          EXECUTE PROCEDURE sector_sound('DSDOROPN', bsec);
-        END
       END
+      -- (a raise door used again: one going down goes back up; else it starts down at once)
       ELSE IF (act = 'door_man') THEN
-      BEGIN
-        UPDATE movers SET dir = IIF(dir = -1, 1, -1), wait_left = 0 WHERE sector_id = :bsec AND kind = 'door';
-        SELECT IIF(m.dir = 1, 'DSDOROPN', 'DSDORCLS') FROM movers m WHERE m.sector_id = :bsec INTO act;
-        EXECUTE PROCEDURE sector_sound(act, bsec);
-      END
+        UPDATE movers SET dir = IIF(dir = -1, 1, -1) WHERE sector_id = :bsec AND kind = 'door';
       EXIT;
     END
-    EXECUTE PROCEDURE door_start(bsec, spd, IIF(act = 'door_man1', 1, 0), 'open');
+    EXECUTE PROCEDURE door_start(bsec, CASE sp WHEN 117 THEN 'blazeRaise' WHEN 118 THEN 'blazeOpen'
+                                       ELSE IIF(act = 'door_man1', 'open', 'normal') END, 1);
     did = 1;
   END
   ELSE IF (act = 'teleport') THEN
@@ -1413,31 +1420,29 @@ BEGIN
       ELSE IF (NOT EXISTS (SELECT 1 FROM movers WHERE sector_id = :sec)) THEN
       BEGIN
         did = 1;
-        IF (act = 'door_ow') THEN EXECUTE PROCEDURE door_start(sec, spd, 0, 'open');
-        ELSE IF (act = 'door_o') THEN EXECUTE PROCEDURE door_start(sec, spd, 1, 'open');
-        ELSE IF (act = 'door_c') THEN EXECUTE PROCEDURE door_start(sec, spd, 1, 'close');
-        ELSE IF (act = 'door_c30') THEN
-        BEGIN
-          -- close30ThenOpen: down, thirty seconds, back up to where it was, and stay
-          INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay)
-          VALUES (:sec, 'door', -1, 2, :ch, :fh, 0, 2);
-          EXECUTE PROCEDURE sector_sound('DSDORCLS', sec);
-        END
+        -- EV_DoDoor: VDOORSPEED (2), four times that blazing; up to 4 below the lowest ceiling around
+        IF (act IN ('door_ow', 'door_o', 'door_c')) THEN
+          EXECUTE PROCEDURE door_start(sec, CASE
+            WHEN sp IN (105, 108, 111, 114) THEN 'blazeRaise' WHEN act = 'door_ow' THEN 'normal'
+            WHEN sp IN (106, 109, 112, 115, 99, 133, 134, 135, 136, 137) THEN 'blazeOpen' WHEN act = 'door_o' THEN 'open'
+            WHEN sp IN (107, 110, 113, 116) THEN 'blazeClose' ELSE 'close' END);
+        ELSE IF (act = 'door_c30') THEN EXECUTE PROCEDURE door_start(sec, 'close30ThenOpen');
+        -- EV_DoPlat
         ELSE IF (act = 'plat_perp') THEN
         BEGIN
-          -- perpetualRaise: between the lowest and highest floors around, for
-          -- ever, starting up or down at random (P_Random() & 1)
-          INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay)
-          VALUES (:sec, 'lift', IIF(MOD(FLOOR(p_random() * 256), 2) = 0, 1, -1), 1,
+          -- perpetualRaise: PLATSPEED, between the lowest and highest floors around (and its own),
+          -- for ever, starting up or down at random (P_Random() & 1)
+          INSERT INTO movers (sector_id, kind, mtype, dir, speed, top_h, bottom_h, wait_tics, stay)
+          VALUES (:sec, 'lift', 'perpetualRaise', 0, 1,
                   MAXVALUE(:fh, COALESCE(neighbor_h(:sec, 'max_floor'), :fh)),
                   MINVALUE(:fh, COALESCE(neighbor_h(:sec, 'min_floor'), :fh)), 105, 2);
+          UPDATE movers m SET dir = IIF(p_rand_and(1) = 0, 1, -1) WHERE m.sector_id = :sec;
           EXECUTE PROCEDURE sector_sound('DSPSTART', sec);
         END
         ELSE IF (act IN ('plat_near', 'plat_24', 'plat_32')) THEN
         BEGIN
-          -- raiseToNearestAndChange / raiseAndChange: the floor takes the flat
-          -- of the line's front sector at once, then rises at half lift speed
-          -- (to the next floor up, or by 24 or 32); the first also loses its special
+          -- raiseToNearestAndChange / raiseAndChange: the floor takes the flat of the line's front
+          -- sector at once (the first also loses its special), then rises at PLATSPEED / 2, no wait
           UPDATE sectors s SET floor_flat = (SELECT f.floor_flat FROM sectors f WHERE f.id = :fsec),
                                special = IIF(:act = 'plat_near', 0, s.special)
            WHERE s.id = :sec;
@@ -1450,12 +1455,26 @@ BEGIN
                AND s.floor_h > :fh
               INTO h;
           ELSE h = fh + IIF(act = 'plat_24', 24, 32);
-          EXECUTE PROCEDURE floor_start(sec, h, 0.5);
+          INSERT INTO movers (sector_id, kind, mtype, dir, speed, top_h, bottom_h, wait_tics, stay)
+          VALUES (:sec, 'lift', IIF(:act = 'plat_near', 'raiseToNearestAndChange', 'raiseAndChange'), 1, 0.5,
+                  COALESCE(:h, :fh), :fh, 0, 1);
+          EXECUTE PROCEDURE sector_sound('DSSTNMOV', sec);
         END
+        ELSE IF (act = 'lift') THEN
+        BEGIN
+          -- downWaitUpStay (PLATSPEED × 4) / blazeDWUS (× 8): down to the lowest floor around, three
+          -- seconds (PLATWAIT), back up
+          INSERT INTO movers (sector_id, kind, mtype, dir, speed, top_h, bottom_h, wait_tics, stay)
+          VALUES (:sec, 'lift', IIF(:sp IN (120, 121, 122, 123), 'blazeDWUS', 'downWaitUpStay'), -1,
+                  IIF(:sp IN (120, 121, 122, 123), 8, 4), :fh,
+                  MINVALUE(:fh, COALESCE(neighbor_h(:sec, 'min_floor'), :fh)), 105, 0);
+          EXECUTE PROCEDURE sector_sound('DSPSTART', sec);
+        END
+        -- EV_DoFloor: FLOORSPEED (1) unless said
         ELSE IF (act = 'fl_low_chg') THEN
         BEGIN
-          -- lowerAndChange: down to the lowest floor around; on arrival it takes
-          -- the flat and special of a neighbour at that height (the first, in line order)
+          -- lowerAndChange: down to the lowest floor around; on arrival it takes the flat and
+          -- special of a neighbour at that height (the first, in line order)
           h = MINVALUE(fh, COALESCE(neighbor_h(sec, 'min_floor'), fh));
           nflat = flat;
           nspecial = 0;
@@ -1466,12 +1485,8 @@ BEGIN
              AND s.id <> :sec AND s.floor_h = :h
            ORDER BY l.id
             INTO nflat, nspecial;
-          IF (h < fh) THEN
-          BEGIN
-            EXECUTE PROCEDURE floor_start(sec, h, 1);
-            UPDATE movers SET new_flat = :nflat, new_special = :nspecial WHERE sector_id = :sec;
-          END
-          ELSE UPDATE sectors SET floor_flat = :nflat, special = :nspecial WHERE id = :sec;
+          EXECUTE PROCEDURE floor_start(sec, h, 1, -1, 'lowerAndChange', 0);
+          UPDATE movers SET new_flat = :nflat, new_special = :nspecial WHERE sector_id = :sec;
         END
         ELSE IF (act = 'fl_tex') THEN
         BEGIN
@@ -1482,27 +1497,25 @@ BEGIN
             JOIN textures t ON t.id = sd.lower_tex
            WHERE (l.front_sector = :sec OR l.back_sector = :sec) AND l.back_sector IS NOT NULL AND sd.lower_tex > 0
             INTO h;
-          IF (h IS NOT NULL) THEN EXECUTE PROCEDURE floor_start(sec, fh + h, 1);
+          EXECUTE PROCEDURE floor_start(sec, fh + COALESCE(h, 32000), 1, 1, 'raiseToTexture', 0);
         END
-        ELSE IF (act = 'fl_512') THEN
-          EXECUTE PROCEDURE floor_start(sec, fh + 512, 1);
+        ELSE IF (act = 'fl_512') THEN EXECUTE PROCEDURE floor_start(sec, fh + 512, 1, 1, 'raiseFloor512', 0);
         ELSE IF (act = 'donut') THEN
         BEGIN
-          -- EV_DoDonut: the ring around this sector (across its first two-sided
-          -- line) rises to the floor beyond it and takes that flat; the hole
-          -- sinks to the same height. Both at half floor speed.
+          -- EV_DoDonut: the ring (across the hole's first line) rises to the floor beyond it – the
+          -- back of the ring's first line that isn't the hole's – taking that flat; the hole sinks
+          -- to the same height. Both at FLOORSPEED / 2.
           s2 = NULL;
           s3 = NULL;
           SELECT FIRST 1 IIF(l.front_sector = :sec, l.back_sector, l.front_sector)
             FROM linedefs l
-           WHERE (l.front_sector = :sec OR l.back_sector = :sec) AND l.back_sector IS NOT NULL
+           WHERE l.front_sector = :sec OR l.back_sector = :sec
            ORDER BY l.id
             INTO s2;
           IF (s2 IS NOT NULL) THEN
-            SELECT FIRST 1 IIF(l.front_sector = :s2, l.back_sector, l.front_sector)
+            SELECT FIRST 1 l.back_sector
               FROM linedefs l
-             WHERE (l.front_sector = :s2 OR l.back_sector = :s2) AND l.back_sector IS NOT NULL
-               AND IIF(l.front_sector = :s2, l.back_sector, l.front_sector) NOT IN (:sec, :s2)
+             WHERE (l.front_sector = :s2 OR l.back_sector = :s2) AND l.back_sector IS NOT NULL AND l.back_sector <> :sec
              ORDER BY l.id
               INTO s3;
           IF (s3 IS NOT NULL) THEN
@@ -1510,83 +1523,99 @@ BEGIN
             SELECT floor_h, floor_flat FROM sectors WHERE id = :s3 INTO h, nflat;
             IF (NOT EXISTS (SELECT 1 FROM movers WHERE sector_id = :s2)) THEN
             BEGIN
-              IF (h <> (SELECT floor_h FROM sectors WHERE id = :s2)) THEN
-              BEGIN
-                EXECUTE PROCEDURE floor_start(s2, h, 0.5);
-                UPDATE movers SET new_flat = :nflat, new_special = 0 WHERE sector_id = :s2;
-              END
-              ELSE UPDATE sectors SET floor_flat = :nflat, special = 0 WHERE id = :s2;
+              EXECUTE PROCEDURE floor_start(s2, h, 0.5, 1, 'donutRaise', 0);
+              UPDATE movers SET new_flat = :nflat, new_special = 0 WHERE sector_id = :s2;
             END
-            EXECUTE PROCEDURE floor_start(sec, h, 0.5);
+            EXECUTE PROCEDURE floor_start(sec, h, 0.5, -1, 'lowerFloor', 0);
           END
         END
+        -- EV_DoCeiling: CEILSPEED (1)
         ELSE IF (act = 'ceil_hi') THEN
-          -- raiseToHighest: the ceiling up to the highest ceiling around
-          INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
-          VALUES (:sec, 'crush', 1, 1, MAXVALUE(:ch, COALESCE(neighbor_h(:sec, 'max_ceil'), :ch)), :ch, 0, 1, 0, 0);
+          -- raiseToHighest: the ceiling up to the highest ceiling around (from 0)
+          INSERT INTO movers (sector_id, kind, mtype, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
+          VALUES (:sec, 'crush', 'raiseToHighest', 1, 1, MAXVALUE(0, COALESCE(neighbor_h(:sec, 'max_ceil'), 0)), :ch, 0, 1, 0, 0);
         ELSE IF (act = 'ceil_floor') THEN
           -- lowerToFloor: the ceiling down to the floor, crushing nothing
-          INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
-          VALUES (:sec, 'crush', -1, 1, :ch, :fh, 0, 1, 0, 0);
-        ELSE IF (act = 'lift') THEN
-        BEGIN
-          INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay)
-          VALUES (:sec, 'lift', -1, IIF(:spd > 2, 8, 4), :fh,
-                  MINVALUE(:fh, COALESCE(neighbor_h(:sec, 'min_floor'), :fh)), 105, 0);
-          EXECUTE PROCEDURE sector_sound('DSPSTART', sec);
-        END
+          INSERT INTO movers (sector_id, kind, mtype, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
+          VALUES (:sec, 'crush', 'lowerToFloor', -1, 1, :ch, :fh, 0, 1, 0, 0);
         ELSE IF (act = 'fl_low') THEN
-          EXECUTE PROCEDURE floor_start(sec, MINVALUE(fh, COALESCE(neighbor_h(sec, 'min_floor'), fh)), 1);
+          EXECUTE PROCEDURE floor_start(sec, MINVALUE(fh, COALESCE(neighbor_h(sec, 'min_floor'), fh)), 1, -1, 'lowerFloorToLowest', 0);
         ELSE IF (act = 'fl_hi') THEN
-          EXECUTE PROCEDURE floor_start(sec, neighbor_h(sec, 'max_floor'), 1);
+          -- lowerFloor: to the highest floor around (from -500)
+          EXECUTE PROCEDURE floor_start(sec, MAXVALUE(-500, COALESCE(neighbor_h(sec, 'max_floor'), -500)), 1, -1, 'lowerFloor', 0);
         ELSE IF (act = 'fl_hi8') THEN
-          EXECUTE PROCEDURE floor_start(sec, neighbor_h(sec, 'max_floor') + 8, 4);
-        ELSE IF (act = 'fl_ceil') THEN
-          EXECUTE PROCEDURE floor_start(sec, MINVALUE(ch, COALESCE(neighbor_h(sec, 'min_ceil'), ch)), 1);
-        ELSE IF (act = 'fl_24') THEN
-          EXECUTE PROCEDURE floor_start(sec, fh + 24, 1);
+        BEGIN
+          -- turboLower: to 8 above the highest floor around, unless that's where it is
+          h = MAXVALUE(-500, COALESCE(neighbor_h(sec, 'max_floor'), -500));
+          EXECUTE PROCEDURE floor_start(sec, h + IIF(h <> fh, 8, 0), 4, -1, 'turboLower', 0);
+        END
+        ELSE IF (act IN ('fl_ceil', 'fl_crush')) THEN
+        BEGIN
+          -- raiseFloor: to the lowest ceiling around (but not past its own); raiseFloorCrush 8 short,
+          -- crushing
+          h = MINVALUE(ch, COALESCE(neighbor_h(sec, 'min_ceil'), ch));
+          IF (act = 'fl_crush') THEN EXECUTE PROCEDURE floor_start(sec, h - 8, 1, 1, 'raiseFloorCrush', 1);
+          ELSE EXECUTE PROCEDURE floor_start(sec, h, 1, 1, 'raiseFloor', 0);
+        END
+        ELSE IF (act = 'fl_24') THEN EXECUTE PROCEDURE floor_start(sec, fh + 24, 1, 1, 'raiseFloor24', 0);
+        ELSE IF (act = 'fl_24chg') THEN
+        BEGIN
+          -- raiseFloor24AndChange: the flat and special of the line's front sector at once
+          UPDATE sectors s SET floor_flat = (SELECT f.floor_flat FROM sectors f WHERE f.id = :fsec),
+                               special = (SELECT f.special FROM sectors f WHERE f.id = :fsec)
+           WHERE s.id = :sec;
+          EXECUTE PROCEDURE floor_start(sec, fh + 24, 1, 1, 'raiseFloor24AndChange', 0);
+        END
         ELSE IF (act IN ('fl_next', 'fl_next4')) THEN
         BEGIN
+          -- raiseFloorToNearest / raiseFloorTurbo (four times as fast): the next floor up around
           SELECT MIN(s.floor_h)
             FROM linedefs l
             JOIN sectors s ON s.id = IIF(l.front_sector = :sec, l.back_sector, l.front_sector)
            WHERE (l.front_sector = :sec OR l.back_sector = :sec) AND l.back_sector IS NOT NULL
              AND s.floor_h > :fh
             INTO h;
-          EXECUTE PROCEDURE floor_start(sec, h, IIF(act = 'fl_next4', 4, 1));   -- (raiseFloorTurbo: four times as fast)
+          EXECUTE PROCEDURE floor_start(sec, COALESCE(h, fh), IIF(act = 'fl_next4', 4, 1), 1,
+                                        IIF(act = 'fl_next4', 'raiseFloorTurbo', 'raiseFloorToNearest'), 0);
         END
         ELSE IF (act = 'crush') THEN
-          INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
-          VALUES (:sec, 'crush', -1, IIF(:sp IN (6, 77), 2, 1), :ch, :fh + 8, 0, 0, 1, IIF(:sp = 141, 1, 0));
+          -- crushAndRaise (CEILSPEED), fastCrushAndRaise (× 2), silentCrushAndRaise: down to 8
+          -- above the floor and back
+          INSERT INTO movers (sector_id, kind, mtype, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
+          VALUES (:sec, 'crush', CASE WHEN :sp IN (6, 77) THEN 'fastCrushAndRaise' WHEN :sp = 141 THEN 'silentCrushAndRaise'
+                                      ELSE 'crushAndRaise' END,
+                  -1, IIF(:sp IN (6, 77), 2, 1), :ch, :fh + 8, 0, 0, 1, IIF(:sp = 141, 1, 0));
         ELSE IF (act = 'ceilcrush') THEN
-          INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
-          VALUES (:sec, 'crush', -1, 1, :ch, :fh + 8, 0, 1, 1, 0);
-        ELSE IF (act = 'fl_crush') THEN
-          INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
-          VALUES (:sec, 'floor', 1, 1, :ch - 8, :ch - 8, 0, 1, 1, 0);
+          -- lowerAndCrush: down to 8 above the floor – crushing nothing (id never set its crush)
+          INSERT INTO movers (sector_id, kind, mtype, dir, speed, top_h, bottom_h, wait_tics, stay, crush, silent)
+          VALUES (:sec, 'crush', 'lowerAndCrush', -1, 1, :ch, :fh + 8, 0, 1, 0, 0);
         ELSE IF (act IN ('stairs', 'stairs16')) THEN
         BEGIN
-          -- EV_BuildStairs: raise this sector by 8, then keep stepping into the
-          -- neighbour behind each front-facing line that shares the floor flat
-          -- (turbo16: steps of 16, four times as fast)
+          -- EV_BuildStairs: build8 (steps of 8 at FLOORSPEED / 4) or turbo16 (16, × 4): this
+          -- sector up a step, then, from each, the sector behind its first two-sided front-facing
+          -- line (line order) with the same floor flat, a step higher – the height counted on even
+          -- past one already moving, which is skipped for the next line. (Their crush is the
+          -- uninitialised field's: true.)
           step_h = IIF(act = 'stairs16', 16, 8);
-          step_spd = IIF(act = 'stairs16', 4, 1);
+          step_spd = IIF(act = 'stairs16', 4, 0.25);
           h = fh + step_h;
-          EXECUTE PROCEDURE floor_start(sec, h, step_spd);
+          EXECUTE PROCEDURE floor_start(sec, h, step_spd, 1, 'buildStair', 1);
           nxt = sec;
           WHILE (nxt IS NOT NULL) DO
           BEGIN
             sec = nxt;
             nxt = NULL;
-            SELECT FIRST 1 l.back_sector
-              FROM linedefs l JOIN sectors s ON s.id = l.back_sector
-             WHERE l.front_sector = :sec AND s.floor_flat = :flat
-               AND NOT EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = l.back_sector)
-              INTO nxt;
-            IF (nxt IS NOT NULL) THEN
+            FOR SELECT l.back_sector FROM linedefs l JOIN sectors s ON s.id = l.back_sector
+                 WHERE l.front_sector = :sec AND BIN_AND(l.flags, 4) <> 0 AND s.floor_flat = :flat
+                 ORDER BY l.id
+                  INTO s2
+            DO
             BEGIN
               h = h + step_h;
-              EXECUTE PROCEDURE floor_start(nxt, h, step_spd);
+              IF (EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = :s2)) THEN CONTINUE;
+              nxt = s2;
+              EXECUTE PROCEDURE floor_start(nxt, h, step_spd, 1, 'buildStair', 1);
+              LEAVE;
             END
           END
         END
@@ -1617,260 +1646,11 @@ BEGIN
     UPDATE linedefs SET special = 0 WHERE id = :line_id;
 END^
 
--- P_ChangeSector / PIT_ChangeSector: squeeze everything in a sector whose
--- ceiling has come down to CH. Corpses turn to gibs; the living take 10
--- damage every 4 tics and bleed. Returns 1 if anything alive was crushed.
-CREATE OR ALTER PROCEDURE crush_things (sid INTEGER, ch DOUBLE PRECISION)
-RETURNS (crushed SMALLINT)
-AS
-DECLARE tid INTEGER;
-DECLARE k VARCHAR(10);
-DECLARE st VARCHAR(8);
-DECLARE tx DOUBLE PRECISION;
-DECLARE ty DOUBLE PRECISION;
-DECLARE tz DOUBLE PRECISION;
-DECLARE th DOUBLE PRECISION;
-DECLARE tic INTEGER;
-DECLARE dummy INTEGER;
-BEGIN
-  crushed = 0;
-  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
-  FOR SELECT t.id, t.kind, t.st, t.x, t.y, t.z, t.height
-        FROM things t
-       WHERE t.sector_id = :sid AND t.z + t.height > :ch AND t.kind IN ('monster', 'player', 'barrel')
-        ORDER BY t.id
-        INTO tid, k, st, tx, ty, tz, th
-  DO
-  BEGIN
-    IF (st = 'dead') THEN
-      UPDATE things t SET height = 0, solid = 0, state_tic = NULL,   -- S_GIBS
-             state = (SELECT s.id FROM states s WHERE s.name = 'S_GIBS')
-       WHERE t.id = :tid;
-    ELSE IF (st <> 'dying') THEN
-    BEGIN
-      crushed = 1;
-      IF (MOD(tic, 4) = 0) THEN
-      BEGIN
-        IF (k = 'player') THEN EXECUTE PROCEDURE damage_player(10, NULL, (SELECT p.id FROM player p WHERE p.thing_id = :tid));
-        ELSE EXECUTE PROCEDURE damage_thing(tid, 10);
-        EXECUTE PROCEDURE spawn_thing(9011, tx + (p_random() - 0.5e0) * 16, ty + (p_random() - 0.5e0) * 16, tz + th / 2, 0)
-          RETURNING_VALUES dummy;
-      END
-    END
-  END
-END^
-
--- One mover's tic (T_VerticalDoor, T_PlatRaise, T_MoveFloor, T_MoveCeiling): the sector's
--- door, lift, floor or crusher (MOVERS) moves on, stops or waits. RUN_THINKERS calls it in its turn.
+-- (MOVER_STEP, one mover's tic, declared here for MOVERS_THINK; its body – with T_MovePlane and
+-- P_ChangeSector – comes after P_CheckPosition)
 CREATE OR ALTER PROCEDURE mover_step (sid INTEGER)
 AS
-DECLARE k VARCHAR(8);
-DECLARE dir SMALLINT;
-DECLARE spd DOUBLE PRECISION;
-DECLARE top_h DOUBLE PRECISION;
-DECLARE bottom_h DOUBLE PRECISION;
-DECLARE wait_tics INTEGER;
-DECLARE wait_left INTEGER;
-DECLARE stay SMALLINT;
-DECLARE fh DOUBLE PRECISION;
-DECLARE ch DOUBLE PRECISION;
-DECLARE nh DOUBLE PRECISION;
-DECLARE del SMALLINT;
-DECLARE crush SMALLINT;
-DECLARE silent SMALLINT;
-DECLARE crushed SMALLINT;
-DECLARE tic INTEGER;
-DECLARE new_flat INTEGER;
-DECLARE new_special INTEGER;
-DECLARE pt INTEGER;
 BEGIN
-  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
-  SELECT m.kind, m.dir, m.speed, m.top_h, m.bottom_h, m.wait_tics, m.wait_left, m.stay,
-         s.floor_h, s.ceil_h, m.crush, m.silent, m.new_flat, m.new_special
-    FROM movers m JOIN sectors s ON s.id = m.sector_id
-   WHERE m.sector_id = :sid
-    INTO k, dir, spd, top_h, bottom_h, wait_tics, wait_left, stay, fh, ch, crush, silent, new_flat, new_special;
-  IF (k IS NULL) THEN EXIT;
-  del = 0;
-  IF (k = 'door') THEN
-  BEGIN
-    IF (dir = 1) THEN
-    BEGIN
-      ch = MINVALUE(ch + spd, top_h);
-      IF (ch >= top_h) THEN
-        IF (stay >= 1) THEN del = 1; ELSE BEGIN dir = 0; wait_left = wait_tics; END
-    END
-    ELSE IF (dir = 0) THEN
-    BEGIN
-      wait_left = wait_left - 1;
-      IF (wait_left <= 0 AND stay = 2) THEN
-      BEGIN
-        -- close30ThenOpen, the thirty seconds up: back up, and stay
-        dir = 1;
-        stay = 1;
-        EXECUTE PROCEDURE sector_sound('DSDOROPN', sid);
-      END
-      ELSE IF (wait_left <= 0) THEN
-      BEGIN
-        dir = -1;
-        EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDCLS', 'DSDORCLS'), sid);
-      END
-    END
-    -- T_VerticalDoor, direction 2 (raiseIn5Mins): waiting to rise, then a normal door
-    ELSE IF (dir = 2) THEN
-    BEGIN
-      wait_left = wait_left - 1;
-      IF (wait_left <= 0) THEN
-      BEGIN
-        dir = 1;
-        EXECUTE PROCEDURE sector_sound('DSDOROPN', sid);
-      END
-    END
-    ELSE
-    BEGIN
-      nh = MAXVALUE(ch - spd, fh);
-      IF (EXISTS (SELECT 1 FROM things t WHERE t.sector_id = :sid AND t.solid = 1
-                     AND t.z + t.height > :nh)) THEN
-      BEGIN
-        dir = 1;                         -- something is in the way: reopen
-        EXECUTE PROCEDURE sector_sound(IIF(spd > 2, 'DSBDOPN', 'DSDOROPN'), sid);
-      END
-      ELSE
-      BEGIN
-        ch = nh;
-        IF (ch <= fh AND stay = 2) THEN
-        BEGIN
-          dir = 0;
-          wait_left = 30 * 35;
-        END
-        ELSE IF (ch <= fh) THEN del = 1;
-      END
-    END
-    UPDATE sectors SET ceil_h = :ch WHERE id = :sid;
-  END
-  ELSE IF (k = 'lifts') THEN
-    dir = dir;                           -- (a stopped perpetual lift: in stasis)
-  ELSE IF (k = 'lift') THEN
-  BEGIN
-    IF (dir = -1) THEN
-    BEGIN
-      fh = MAXVALUE(fh - spd, bottom_h);
-      IF (fh <= bottom_h) THEN
-      BEGIN
-        dir = 0;
-        wait_left = wait_tics;
-        EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
-      END
-    END
-    ELSE IF (dir = 0) THEN
-    BEGIN
-      wait_left = wait_left - 1;
-      IF (wait_left <= 0) THEN
-      BEGIN
-        -- (a perpetual lift may be waiting at the top: then it goes down)
-        dir = IIF(fh <= bottom_h, 1, -1);
-        EXECUTE PROCEDURE sector_sound('DSPSTART', sid);
-      END
-    END
-    ELSE
-    BEGIN
-      nh = MINVALUE(fh + spd, top_h);
-      IF (EXISTS (SELECT 1 FROM things t WHERE t.sector_id = :sid AND t.solid = 1
-                     AND :nh + t.height > :ch)) THEN
-        dir = -1;
-      ELSE
-      BEGIN
-        fh = nh;
-        IF (fh >= top_h) THEN
-        BEGIN
-          IF (stay = 2) THEN
-          BEGIN
-            dir = 0;
-            wait_left = wait_tics;
-          END
-          ELSE del = 1;
-          EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
-        END
-      END
-    END
-    UPDATE sectors SET floor_h = :fh WHERE id = :sid;
-    -- what stands on it rides along; what's in the air (tossed, or flying
-    -- above it) is only pushed up if the floor overtakes it
-    UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
-       AND (t.momz = 0 OR t.z < :fh)
-       AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type
-                        AND (tt.hang = 1 OR (tt.floats = 1 AND t.st NOT IN ('dying', 'dead') AND t.z >= :fh)));
-  END
-  ELSE IF (k = 'crush') THEN
-  BEGIN
-    -- T_MoveCeiling for crushers: down to floor + 8 squeezing everything
-    -- (the slow ones slow to an eighth while they crush), back up, again –
-    -- or stop at the bottom for a one-shot (stay = 1); dir 0 means stopped
-    IF (dir = -1 AND crush = 0) THEN
-    BEGIN
-      -- lowerToFloor: it doesn't crush – it waits while something's in the way
-      IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.sector_id = :sid AND t.solid = 1
-                         AND t.z + t.height > :ch - :spd)) THEN
-        ch = MAXVALUE(ch - spd, bottom_h);
-      IF (ch <= bottom_h) THEN
-        IF (stay = 1) THEN del = 1; ELSE dir = 1;
-    END
-    ELSE IF (dir = -1) THEN
-    BEGIN
-      EXECUTE PROCEDURE crush_things(sid, ch - spd) RETURNING_VALUES crushed;
-      ch = MAXVALUE(ch - IIF(crushed = 1 AND spd <= 1, spd / 8, spd), bottom_h);
-      IF (ch <= bottom_h) THEN
-        IF (stay = 1) THEN del = 1; ELSE dir = 1;
-    END
-    ELSE IF (dir = 1) THEN
-    BEGIN
-      ch = MINVALUE(ch + spd, top_h);
-      IF (ch >= top_h) THEN
-        IF (stay = 1) THEN del = 1; ELSE dir = -1;   -- (raiseToHighest stops there)
-    END
-    IF (dir <> 0 AND silent = 0 AND MOD(tic, 8) = 0) THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
-    UPDATE sectors SET ceil_h = :ch WHERE id = :sid;
-  END
-  ELSE
-  BEGIN
-    -- plain floor mover (T_MoveFloor): top_h is the target; it grinds every
-    -- 8 tics (sfx_stnmov) and stops with sfx_pstop, where a lowerAndChange or
-    -- a donut's ring takes its new flat and special
-    IF (dir = 1) THEN fh = MINVALUE(fh + spd, top_h); ELSE fh = MAXVALUE(fh - spd, top_h);
-    IF (silent = 0 AND MOD(tic, 8) = 0) THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
-    IF (fh = top_h) THEN
-    BEGIN
-      del = 1;
-      IF (crush = 0) THEN EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
-      IF (new_flat IS NOT NULL) THEN
-        UPDATE sectors SET floor_flat = :new_flat, special = COALESCE(:new_special, special) WHERE id = :sid;
-    END
-    UPDATE sectors SET floor_h = :fh WHERE id = :sid;
-    -- what stands on it rides along; what's in the air (tossed, or flying
-    -- above it) is only pushed up if the floor overtakes it
-    UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind NOT IN ('player', 'missile', 'fx', 'cube')
-       AND (t.momz = 0 OR t.z < :fh)
-       AND NOT EXISTS (SELECT 1 FROM thing_types tt WHERE tt.thing_type = t.thing_type
-                        AND (tt.hang = 1 OR (tt.floats = 1 AND t.st NOT IN ('dying', 'dead') AND t.z >= :fh)));
-    -- raiseFloorCrush: squeeze what rides it up against the ceiling
-    IF (crush = 1) THEN
-    BEGIN
-      UPDATE things t SET z = :fh WHERE t.sector_id = :sid AND t.kind = 'player' AND t.z < :fh;
-      EXECUTE PROCEDURE crush_things(sid, ch) RETURNING_VALUES crushed;
-    END
-  END
-
-  IF (del = 1) THEN
-    DELETE FROM movers WHERE sector_id = :sid;
-  ELSE
-    UPDATE movers SET dir = :dir, wait_left = :wait_left, stay = :stay WHERE sector_id = :sid;
-  -- P_ChangeSector: the players look again at the floor and ceiling they touch, there and
-  -- then (P_ThingHeightClip: one standing on a moving floor rides it); anything else forgets
-  -- the floor and ceiling its last move found (Z_STEP looks again)
-  FOR SELECT t.id FROM things t WHERE t.kind = 'player' ORDER BY t.id INTO pt
-  DO
-    EXECUTE PROCEDURE height_clip_fx(pt, 1);
-  UPDATE things t SET floorz = NULL WHERE t.floorz IS NOT NULL AND t.kind NOT IN ('player', 'missile');
 END^
 
 CREATE OR ALTER PROCEDURE movers_think
@@ -2099,7 +1879,7 @@ BEGIN
            WHERE t.kind IN ('monster', 'barrel', 'keen', 'brain', 'player') AND t.st NOT IN ('dying', 'dead')
              AND t.x >= (:mapx * 8388608 + :orgx) / 65536e0 AND t.x < ((:mapx + 1) * 8388608 + :orgx) / 65536e0
              AND t.y >= (:mapy * 8388608 + :orgy) / 65536e0 AND t.y < ((:mapy + 1) * 8388608 + :orgy) / 65536e0
-           ORDER BY t.id DESC
+           ORDER BY t.link_seq DESC
             INTO tid, mx, my, mr
       DO
       BEGIN
@@ -2415,7 +2195,7 @@ BEGIN
               OR (t.kind = 'player' AND t.solid = 1))
          AND BIN_SHR(fx_of(t.x) - :orgx, 23) BETWEEN :xl AND :xh
          AND BIN_SHR(fx_of(t.y) - :orgy, 23) BETWEEN :yl AND :yh
-       ORDER BY BIN_SHR(fx_of(t.y) - :orgy, 23), BIN_SHR(fx_of(t.x) - :orgx, 23), t.id DESC
+       ORDER BY BIN_SHR(fx_of(t.y) - :orgy, 23), BIN_SHR(fx_of(t.x) - :orgx, 23), t.link_seq DESC
         INTO oid, ottype, ox, oy, orad
   DO
   BEGIN
@@ -3102,7 +2882,8 @@ END^
 
 -- (TOUCH_SPECIALS, P_TouchSpecialThing, declared here for CHECK_POSITION_FX; its body comes with
 -- the player's other steps)
-CREATE OR ALTER PROCEDURE touch_specials (pid SMALLINT, tic INTEGER, at_x DOUBLE PRECISION = NULL, at_y DOUBLE PRECISION = NULL)
+CREATE OR ALTER PROCEDURE touch_specials (pid SMALLINT, tic INTEGER, at_x DOUBLE PRECISION = NULL, at_y DOUBLE PRECISION = NULL,
+                                           only_item INTEGER = NULL)
 AS
 BEGIN
 END^
@@ -3151,6 +2932,9 @@ DECLARE opentop BIGINT;
 DECLARE openbottom BIGINT;
 DECLARE lowfloor BIGINT;
 DECLARE pid SMALLINT;
+DECLARE tk_id INTEGER;
+DECLARE tk_kind VARCHAR(10);
+DECLARE tk_solid SMALLINT;
 BEGIN
   ok = 1;
   spechit = '';
@@ -3166,22 +2950,29 @@ BEGIN
     xh = BIN_SHR(x + rad - orgx + 2097152, 23);
     yl = BIN_SHR(y - rad - orgy - 2097152, 23);
     yh = BIN_SHR(y + rad - orgy + 2097152, 23);
-    -- PIT_CheckThing for a player's body (MF_PICKUP): it touches the specials it overlaps here,
-    -- wherever a move tries – the move may yet fail
+    -- PIT_CheckThing over the blocks, column by column, each block's things newest-linked first:
+    -- a pickup (MF_SPECIAL) a player's body touches (MF_PICKUP) – wherever a move tries, the move
+    -- may yet fail; the first solid thing stops it, and what comes after isn't touched
     pid = NULL;
     SELECT p.id FROM player p WHERE p.thing_id = :tid INTO pid;
-    IF (pid IS NOT NULL) THEN
-      EXECUTE PROCEDURE touch_specials(pid, (SELECT g.tic FROM game g WHERE g.id = 1), :x / 65536e0, :y / 65536e0);
-    IF (EXISTS (SELECT 1 FROM things t
-                 WHERE t.x BETWEEN (:x - :rad) / 65536e0 - 160 AND (:x + :rad) / 65536e0 + 160
-                   AND t.solid = 1 AND t.id <> :tid
-                   AND ABS(fx_of(t.x) - :x) < fx_of(t.radius) + :rad
-                   AND ABS(fx_of(t.y) - :y) < fx_of(t.radius) + :rad
-                   AND BIN_SHR(fx_of(t.x) - :orgx, 23) BETWEEN MAXVALUE(:xl, 0) AND MINVALUE(:xh, :bw - 1)
-                   AND BIN_SHR(fx_of(t.y) - :orgy, 23) BETWEEN MAXVALUE(:yl, 0) AND MINVALUE(:yh, :bh - 1))) THEN
+    FOR SELECT t.id, t.kind, t.solid FROM things t
+         WHERE t.x BETWEEN (:x - :rad) / 65536e0 - 160 AND (:x + :rad) / 65536e0 + 160
+           AND (t.solid = 1 OR (t.kind = 'item' AND :pid IS NOT NULL)) AND t.id <> :tid
+           AND ABS(fx_of(t.x) - :x) < fx_of(t.radius) + :rad
+           AND ABS(fx_of(t.y) - :y) < fx_of(t.radius) + :rad
+           AND BIN_SHR(fx_of(t.x) - :orgx, 23) BETWEEN MAXVALUE(:xl, 0) AND MINVALUE(:xh, :bw - 1)
+           AND BIN_SHR(fx_of(t.y) - :orgy, 23) BETWEEN MAXVALUE(:yl, 0) AND MINVALUE(:yh, :bh - 1)
+         ORDER BY BIN_SHR(fx_of(t.x) - :orgx, 23), BIN_SHR(fx_of(t.y) - :orgy, 23), t.link_seq DESC
+          INTO tk_id, tk_kind, tk_solid
+    DO
     BEGIN
-      ok = 0;
-      EXIT;
+      IF (tk_kind = 'item' AND pid IS NOT NULL) THEN
+        EXECUTE PROCEDURE touch_specials(pid, (SELECT g.tic FROM game g WHERE g.id = 1), :x / 65536e0, :y / 65536e0, tk_id);
+      IF (tk_solid = 1) THEN
+      BEGIN
+        ok = 0;
+        EXIT;
+      END
     END
   END
   xl = BIN_SHR(x - rad - orgx, 23);
@@ -3223,6 +3014,395 @@ BEGIN
     IF (lowfloor < dropoffz) THEN dropoffz = lowfloor;
     IF (lspecial <> 0) THEN spechit = lid || ',' || spechit;
   END
+END^
+
+-- P_ThingHeightClip: TID's floor and ceiling found again where it stands (P_CheckPosition: the
+-- lines its box touches, as far as they go – a solid thing in the way leaves them its
+-- subsector's; a player touches the pickups there), kept as its own; on its floor before, it
+-- rides it; else the ceiling may push it down. → FITS 0: the gap is now lower than it is tall.
+CREATE OR ALTER PROCEDURE thing_height_clip (tid INTEGER)
+RETURNS (fits SMALLINT)
+AS
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE z BIGINT;
+DECLARE h BIGINT;
+DECLARE rad BIGINT;
+DECLARE fz0 BIGINT;
+DECLARE noclip SMALLINT;
+DECLARE isp SMALLINT;
+DECLARE ok SMALLINT;
+DECLARE fz BIGINT;
+DECLARE cz BIGINT;
+DECLARE dz BIGINT;
+DECLARE spec VARCHAR(4000);
+BEGIN
+  fits = 1;
+  x = NULL;
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), fx_of(t.height), fx_of(t.radius), fx_of(t.floorz),
+         COALESCE((SELECT p.noclip FROM player p WHERE p.thing_id = t.id), 0), IIF(t.kind = 'player', 1, 0)
+    FROM things t WHERE t.id = :tid INTO x, y, z, h, rad, fz0, noclip, isp;
+  IF (x IS NULL) THEN EXIT;
+  EXECUTE PROCEDURE check_position_fx(tid, x, y, rad, noclip, 1, 1 - isp) RETURNING_VALUES ok, fz, cz, dz, spec;
+  -- (onfloor: z == floorz, the floor it had; walking monsters rise and fall with it)
+  IF (z = COALESCE(fz0, z)) THEN z = fz;
+  ELSE IF (z + h > cz) THEN z = cz - h;
+  UPDATE things t SET z = :z / 65536e0, floorz = :fz / 65536e0, ceilz = :cz / 65536e0, fz_x = t.x, fz_y = t.y
+   WHERE t.id = :tid;
+  IF (cz - fz < h) THEN fits = 0;
+END^
+
+-- P_ChangeSector: every thing in the blocks around sector SID (its block box, MAXRADIUS wider:
+-- SECTORS.BB_*), column by column, each block's newest-linked first, looks again at its floor and
+-- ceiling (PIT_ChangeSector, P_ThingHeightClip). One that no longer fits: a corpse is crunched
+-- to gibs (S_GIBS, not solid, no height or radius), a dropped item is gone, a shootable thing
+-- doesn't fit (NOFIT) – and with CRUNCH, every fourth tic, it takes 10 (P_DamageMobj, from
+-- nothing) and bleeds: MT_BLOOD half way up it, thrown P_SubRandom() << 12 each way.
+-- (Missiles, puffs, blood, fire and fog aren't in the blockmap: MF_NOBLOCKMAP.)
+CREATE OR ALTER PROCEDURE change_sector (sid INTEGER, crunch SMALLINT)
+RETURNS (nofit SMALLINT)
+AS
+DECLARE xl INTEGER;
+DECLARE xh INTEGER;
+DECLARE yl INTEGER;
+DECLARE yh INTEGER;
+DECLARE orgx BIGINT;
+DECLARE orgy BIGINT;
+DECLARE tic INTEGER;
+DECLARE tid INTEGER;
+DECLARE fits SMALLINT;
+DECLARE hp INTEGER;
+DECLARE flags INTEGER;
+DECLARE shoot SMALLINT;
+DECLARE x DOUBLE PRECISION;
+DECLARE y DOUBLE PRECISION;
+DECLARE bz BIGINT;
+DECLARE pid SMALLINT;
+DECLARE mid INTEGER;
+DECLARE r INTEGER;
+DECLARE alive SMALLINT;
+BEGIN
+  nofit = 0;
+  SELECT s.bb_xl, s.bb_xh, s.bb_yl, s.bb_yh FROM sectors s WHERE s.id = :sid INTO xl, xh, yl, yh;
+  IF (xl IS NULL) THEN EXIT;
+  SELECT CAST(b.org_x AS BIGINT) * 65536, CAST(b.org_y AS BIGINT) * 65536 FROM blockmap_info b WHERE b.id = 1 INTO orgx, orgy;
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  FOR SELECT t.id FROM things t
+       WHERE t.x >= (:orgx + :xl * 8388608) / 65536e0 AND t.x < (:orgx + (:xh + 1) * 8388608) / 65536e0
+         AND t.y >= (:orgy + :yl * 8388608) / 65536e0 AND t.y < (:orgy + (:yh + 1) * 8388608) / 65536e0
+         AND t.kind NOT IN ('missile', 'fx', 'flame', 'marker', 'cube')
+       ORDER BY BIN_SHR(fx_of(t.x) - :orgx, 23), BIN_SHR(fx_of(t.y) - :orgy, 23), t.link_seq DESC
+        INTO tid
+  DO
+  BEGIN
+    IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.id = :tid)) THEN CONTINUE;
+    EXECUTE PROCEDURE thing_height_clip(tid) RETURNING_VALUES fits;
+    IF (fits = 1) THEN CONTINUE;
+    SELECT COALESCE(t.hp, 1000), t.flags,
+           IIF((t.kind IN ('monster', 'barrel', 'keen', 'brain') AND t.st NOT IN ('dying', 'dead') AND t.state IS NOT NULL)
+               OR (t.kind = 'player' AND t.solid = 1), 1, 0),
+           t.x, t.y, fx_of(t.z) + fx_of(t.height) / 2
+      FROM things t WHERE t.id = :tid INTO hp, flags, shoot, x, y, bz;
+    IF (hp <= 0) THEN
+    BEGIN
+      -- (crunch bodies to giblets)
+      EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_GIBS'), tic) RETURNING_VALUES alive;
+      UPDATE things t SET solid = 0, height = 0, radius = 0 WHERE t.id = :tid;
+      CONTINUE;
+    END
+    IF (BIN_AND(flags, 65536) <> 0) THEN
+    BEGIN
+      DELETE FROM things t WHERE t.id = :tid;   -- (crunch dropped items)
+      CONTINUE;
+    END
+    IF (shoot = 0) THEN CONTINUE;
+    nofit = 1;
+    IF (crunch = 1 AND MOD(tic, 4) = 0) THEN
+    BEGIN
+      pid = NULL;
+      SELECT p.id FROM player p WHERE p.thing_id = :tid INTO pid;
+      IF (pid IS NOT NULL) THEN EXECUTE PROCEDURE damage_player(10, NULL, pid, NULL);
+      ELSE EXECUTE PROCEDURE damage_thing(tid, 10, NULL, NULL);
+      EXECUTE PROCEDURE spawn_thing(9011, x, y, bz / 65536e0, 0) RETURNING_VALUES mid;
+      r = p_rand256();
+      r = r - p_rand256();
+      UPDATE things t SET momx = :r * 4096 / 65536e0 WHERE t.id = :mid;
+      r = p_rand256();
+      r = r - p_rand256();
+      UPDATE things t SET momy = :r * 4096 / 65536e0 WHERE t.id = :mid;
+    END
+  END
+END^
+
+-- T_MovePlane: sector SID's floor (CEILING 0) or ceiling (1) a step of SPEED towards DEST in
+-- DIR, then P_ChangeSector with CRUSH. Arriving (past DEST) it stops there – unless something
+-- no longer fits, when it stays where it was; on the way, something that doesn't fit puts it
+-- back too (CRUSHED), except under a crushing floor going up or ceiling coming down, which
+-- carry on squeezing; a ceiling going up never stops. → RES 0 ok, 1 crushed, 2 pastdest.
+CREATE OR ALTER PROCEDURE move_plane (sid INTEGER, speed DOUBLE PRECISION, dest DOUBLE PRECISION, crush SMALLINT,
+                                      ceiling SMALLINT, dir SMALLINT)
+RETURNS (res SMALLINT)
+AS
+DECLARE h DOUBLE PRECISION;
+DECLARE lastpos DOUBLE PRECISION;
+DECLARE nofit SMALLINT;
+BEGIN
+  res = 0;
+  SELECT IIF(:ceiling = 1, s.ceil_h, s.floor_h) FROM sectors s WHERE s.id = :sid INTO h;
+  lastpos = h;
+  IF ((dir = -1 AND h - speed < dest) OR (dir = 1 AND h + speed > dest)) THEN
+  BEGIN
+    IF (ceiling = 1) THEN UPDATE sectors s SET ceil_h = :dest WHERE s.id = :sid;
+    ELSE UPDATE sectors s SET floor_h = :dest WHERE s.id = :sid;
+    EXECUTE PROCEDURE change_sector(sid, crush) RETURNING_VALUES nofit;
+    IF (nofit = 1) THEN
+    BEGIN
+      IF (ceiling = 1) THEN UPDATE sectors s SET ceil_h = :lastpos WHERE s.id = :sid;
+      ELSE UPDATE sectors s SET floor_h = :lastpos WHERE s.id = :sid;
+      EXECUTE PROCEDURE change_sector(sid, crush) RETURNING_VALUES nofit;
+    END
+    res = 2;
+    EXIT;
+  END
+  IF (ceiling = 1) THEN UPDATE sectors s SET ceil_h = :h + :dir * :speed WHERE s.id = :sid;
+  ELSE UPDATE sectors s SET floor_h = :h + :dir * :speed WHERE s.id = :sid;
+  EXECUTE PROCEDURE change_sector(sid, crush) RETURNING_VALUES nofit;
+  -- (a ceiling going up: never put back)
+  IF (nofit = 1 AND NOT (ceiling = 1 AND dir = 1)) THEN
+  BEGIN
+    res = 1;
+    -- (going down a floor, it can't crush: put back; up, or a ceiling down, crushing goes on)
+    IF (crush = 1 AND NOT (ceiling = 0 AND dir = -1)) THEN EXIT;
+    IF (ceiling = 1) THEN UPDATE sectors s SET ceil_h = :lastpos WHERE s.id = :sid;
+    ELSE UPDATE sectors s SET floor_h = :lastpos WHERE s.id = :sid;
+    EXECUTE PROCEDURE change_sector(sid, crush) RETURNING_VALUES nofit;
+  END
+END^
+
+-- (a mover from an old save, made before movers carried DOOM's own types: its type worked out
+-- from what it is)
+CREATE OR ALTER FUNCTION mover_type (kind VARCHAR(8), dir SMALLINT, speed DOUBLE PRECISION, stay SMALLINT, crush SMALLINT,
+                                     silent SMALLINT, top_h DOUBLE PRECISION, bottom_h DOUBLE PRECISION)
+RETURNS VARCHAR(24)
+AS
+BEGIN
+  IF (kind = 'door') THEN
+    RETURN CASE WHEN stay = 2 THEN 'close30ThenOpen' WHEN dir = 2 THEN 'raiseIn5Mins'
+                WHEN stay = 1 AND speed > 2 THEN 'blazeOpen' WHEN stay = 1 THEN 'open'
+                WHEN speed > 2 THEN 'blazeRaise' ELSE 'normal' END;
+  IF (kind IN ('lift', 'lifts')) THEN
+    RETURN CASE WHEN stay = 2 THEN 'perpetualRaise' WHEN speed > 4 THEN 'blazeDWUS' ELSE 'downWaitUpStay' END;
+  IF (kind = 'crush') THEN
+    RETURN CASE WHEN crush = 0 AND dir = 1 THEN 'raiseToHighest' WHEN crush = 0 THEN 'lowerToFloor'
+                WHEN stay = 1 THEN 'lowerAndCrush' WHEN silent = 1 THEN 'silentCrushAndRaise'
+                WHEN speed > 1 THEN 'fastCrushAndRaise' ELSE 'crushAndRaise' END;
+  RETURN IIF(crush = 1, 'raiseFloorCrush', 'lowerFloor');
+END^
+
+-- One mover's tic, by DOOM's own thinkers and types (MOVERS.MTYPE): T_VerticalDoor (a door,
+-- KIND 'door'), T_PlatRaise ('lift'; 'lifts' in stasis), T_MoveFloor ('floor'), T_MoveCeiling
+-- ('crush'), each moving its plane by MOVE_PLANE. RUN_THINKERS calls it in its turn.
+CREATE OR ALTER PROCEDURE mover_step (sid INTEGER)
+AS
+DECLARE k VARCHAR(8);
+DECLARE mt VARCHAR(24);
+DECLARE dir SMALLINT;
+DECLARE spd DOUBLE PRECISION;
+DECLARE top_h DOUBLE PRECISION;
+DECLARE bottom_h DOUBLE PRECISION;
+DECLARE wait_tics INTEGER;
+DECLARE wait_left INTEGER;
+DECLARE stay SMALLINT;
+DECLARE fh DOUBLE PRECISION;
+DECLARE del SMALLINT;
+DECLARE crush SMALLINT;
+DECLARE silent SMALLINT;
+DECLARE tic INTEGER;
+DECLARE new_flat INTEGER;
+DECLARE new_special INTEGER;
+DECLARE res SMALLINT;
+BEGIN
+  SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
+  k = NULL;
+  SELECT m.kind, m.dir, m.speed, m.top_h, m.bottom_h, m.wait_tics, m.wait_left, m.stay,
+         m.crush, m.silent, m.new_flat, m.new_special,
+         COALESCE(m.mtype, mover_type(m.kind, m.dir, m.speed, m.stay, m.crush, m.silent, m.top_h, m.bottom_h))
+    FROM movers m WHERE m.sector_id = :sid
+    INTO k, dir, spd, top_h, bottom_h, wait_tics, wait_left, stay, crush, silent, new_flat, new_special, mt;
+  IF (k IS NULL) THEN EXIT;
+  del = 0;
+  IF (k = 'door') THEN
+  BEGIN
+    -- T_VerticalDoor
+    IF (dir = 0) THEN
+    BEGIN
+      -- (waiting: !--topcountdown)
+      wait_left = wait_left - 1;
+      IF (wait_left = 0) THEN
+      BEGIN
+        IF (mt = 'blazeRaise') THEN
+        BEGIN
+          dir = -1;
+          EXECUTE PROCEDURE sector_sound('DSBDCLS', sid);
+        END
+        ELSE IF (mt = 'normal') THEN
+        BEGIN
+          dir = -1;
+          EXECUTE PROCEDURE sector_sound('DSDORCLS', sid);
+        END
+        ELSE IF (mt = 'close30ThenOpen') THEN
+        BEGIN
+          dir = 1;
+          EXECUTE PROCEDURE sector_sound('DSDOROPN', sid);
+        END
+      END
+    END
+    ELSE IF (dir = 2) THEN
+    BEGIN
+      -- (the initial wait: raiseIn5Mins, then a normal door)
+      wait_left = wait_left - 1;
+      IF (wait_left = 0 AND mt = 'raiseIn5Mins') THEN
+      BEGIN
+        dir = 1;
+        mt = 'normal';
+        EXECUTE PROCEDURE sector_sound('DSDOROPN', sid);
+      END
+    END
+    ELSE IF (dir = -1) THEN
+    BEGIN
+      SELECT s.floor_h FROM sectors s WHERE s.id = :sid INTO fh;
+      EXECUTE PROCEDURE move_plane(sid, spd, fh, 0, 1, -1) RETURNING_VALUES res;
+      IF (res = 2) THEN
+      BEGIN
+        IF (mt IN ('blazeRaise', 'blazeClose')) THEN
+        BEGIN
+          del = 1;
+          EXECUTE PROCEDURE sector_sound('DSBDCLS', sid);
+        END
+        ELSE IF (mt IN ('normal', 'close')) THEN del = 1;
+        ELSE IF (mt = 'close30ThenOpen') THEN
+        BEGIN
+          dir = 0;
+          wait_left = 35 * 30;
+        END
+      END
+      ELSE IF (res = 1 AND mt NOT IN ('blazeClose', 'close')) THEN
+      BEGIN
+        -- (something in the way: back up – but a closing door doesn't)
+        dir = 1;
+        EXECUTE PROCEDURE sector_sound('DSDOROPN', sid);
+      END
+    END
+    ELSE IF (dir = 1) THEN
+    BEGIN
+      EXECUTE PROCEDURE move_plane(sid, spd, top_h, 0, 1, 1) RETURNING_VALUES res;
+      IF (res = 2) THEN
+      BEGIN
+        IF (mt IN ('blazeRaise', 'normal')) THEN
+        BEGIN
+          dir = 0;
+          wait_left = wait_tics;
+        END
+        ELSE IF (mt IN ('close30ThenOpen', 'blazeOpen', 'open')) THEN del = 1;
+      END
+    END
+  END
+  ELSE IF (k = 'lifts') THEN
+    dir = dir;                           -- (a perpetual lift stopped: in stasis)
+  ELSE IF (k = 'lift') THEN
+  BEGIN
+    -- T_PlatRaise: DIR 1 up, -1 down, 0 waiting
+    IF (dir = 1) THEN
+    BEGIN
+      EXECUTE PROCEDURE move_plane(sid, spd, top_h, crush, 0, 1) RETURNING_VALUES res;
+      IF (mt IN ('raiseAndChange', 'raiseToNearestAndChange') AND BIN_AND(tic, 7) = 0) THEN
+        EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
+      IF (res = 1 AND crush = 0) THEN
+      BEGIN
+        wait_left = wait_tics;
+        dir = -1;
+        EXECUTE PROCEDURE sector_sound('DSPSTART', sid);
+      END
+      ELSE IF (res = 2) THEN
+      BEGIN
+        wait_left = wait_tics;
+        dir = 0;
+        EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
+        IF (mt IN ('blazeDWUS', 'downWaitUpStay', 'raiseAndChange', 'raiseToNearestAndChange')) THEN del = 1;
+      END
+    END
+    ELSE IF (dir = -1) THEN
+    BEGIN
+      EXECUTE PROCEDURE move_plane(sid, spd, bottom_h, 0, 0, -1) RETURNING_VALUES res;
+      IF (res = 2) THEN
+      BEGIN
+        wait_left = wait_tics;
+        dir = 0;
+        EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
+      END
+    END
+    ELSE
+    BEGIN
+      wait_left = wait_left - 1;
+      IF (wait_left = 0) THEN
+      BEGIN
+        SELECT s.floor_h FROM sectors s WHERE s.id = :sid INTO fh;
+        dir = IIF(fh = bottom_h, 1, -1);
+        EXECUTE PROCEDURE sector_sound('DSPSTART', sid);
+      END
+    END
+  END
+  ELSE IF (k = 'crush') THEN
+  BEGIN
+    -- T_MoveCeiling: DIR 0 in stasis
+    IF (dir = 1) THEN
+    BEGIN
+      EXECUTE PROCEDURE move_plane(sid, spd, top_h, 0, 1, 1) RETURNING_VALUES res;
+      IF (BIN_AND(tic, 7) = 0 AND mt <> 'silentCrushAndRaise') THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
+      IF (res = 2) THEN
+      BEGIN
+        IF (mt = 'raiseToHighest') THEN del = 1;
+        ELSE IF (mt IN ('silentCrushAndRaise', 'fastCrushAndRaise', 'crushAndRaise')) THEN
+        BEGIN
+          IF (mt = 'silentCrushAndRaise') THEN EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
+          dir = -1;
+        END
+      END
+    END
+    ELSE IF (dir = -1) THEN
+    BEGIN
+      EXECUTE PROCEDURE move_plane(sid, spd, bottom_h, crush, 1, -1) RETURNING_VALUES res;
+      IF (BIN_AND(tic, 7) = 0 AND mt <> 'silentCrushAndRaise') THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
+      IF (res = 2) THEN
+      BEGIN
+        IF (mt = 'silentCrushAndRaise') THEN EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
+        IF (mt IN ('silentCrushAndRaise', 'crushAndRaise')) THEN spd = 1;   -- (CEILSPEED again)
+        IF (mt IN ('silentCrushAndRaise', 'crushAndRaise', 'fastCrushAndRaise')) THEN dir = 1;
+        ELSE IF (mt IN ('lowerAndCrush', 'lowerToFloor')) THEN del = 1;
+      END
+      ELSE IF (res = 1 AND mt IN ('silentCrushAndRaise', 'crushAndRaise', 'lowerAndCrush')) THEN
+        spd = 0.125;                     -- (CEILSPEED / 8 while it crushes)
+    END
+  END
+  ELSE
+  BEGIN
+    -- T_MoveFloor: TOP_H is floordestheight; it grinds every 8 tics and stops with DSPSTOP,
+    -- where a lowerAndChange or a donut's ring takes its new flat and special
+    EXECUTE PROCEDURE move_plane(sid, spd, top_h, crush, 0, dir) RETURNING_VALUES res;
+    IF (BIN_AND(tic, 7) = 0) THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
+    IF (res = 2) THEN
+    BEGIN
+      IF ((dir = 1 AND mt = 'donutRaise') OR (dir = -1 AND mt = 'lowerAndChange')) THEN
+        UPDATE sectors s SET floor_flat = COALESCE(:new_flat, s.floor_flat), special = COALESCE(:new_special, 0) WHERE s.id = :sid;
+      del = 1;
+      EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
+    END
+  END
+
+  IF (del = 1) THEN
+    DELETE FROM movers WHERE sector_id = :sid;
+  ELSE
+    UPDATE movers SET dir = :dir, wait_left = :wait_left, speed = :spd, mtype = :mt WHERE sector_id = :sid;
 END^
 
 -- P_TryMove for a player: to (X, Y), if P_CheckPosition lets it and it fits there (the gap as
@@ -3596,6 +3776,8 @@ END^
 -- ticcmd's), when a running body stands
 CREATE OR ALTER PROCEDURE xy_movement_fx (tid INTEGER, pid SMALLINT, cmd_fwd INTEGER, cmd_side INTEGER, tic INTEGER)
 AS
+DECLARE sfz BIGINT;
+DECLARE dead SMALLINT;
 DECLARE momx BIGINT;
 DECLARE momy BIGINT;
 DECLARE x BIGINT;
@@ -3637,8 +3819,13 @@ BEGIN
     IF (ok = 0) THEN EXECUTE PROCEDURE slide_move_fx(tid, pid);
     IF (xmove = 0 AND ymove = 0) THEN LEAVE;
   END
-  SELECT fx_of(t.momx), fx_of(t.momy), fx_of(t.z), fx_of(t.floorz) FROM things t WHERE t.id = :tid INTO momx, momy, z, fz;
+  SELECT fx_of(t.momx), fx_of(t.momy), fx_of(t.z), fx_of(t.floorz),
+         (SELECT fx_of(s.floor_h) FROM sectors s WHERE s.id = t.sector_id), (SELECT p.dead FROM player p WHERE p.id = :pid)
+    FROM things t WHERE t.id = :tid INTO momx, momy, z, fz, sfz, dead;
   IF (z > fz) THEN EXIT;                         -- (no friction in the air)
+  -- (a dead player's body is a corpse (MF_CORPSE): with some speed left, it doesn't stop while
+  -- it's halfway off a step)
+  IF (dead = 1 AND (momx > 16384 OR momx < -16384 OR momy > 16384 OR momy < -16384) AND fz <> sfz) THEN EXIT;
   IF (momx > -4096 AND momx < 4096 AND momy > -4096 AND momy < 4096 AND cmd_fwd = 0 AND cmd_side = 0) THEN
   BEGIN
     IF (EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
@@ -3739,6 +3926,7 @@ CREATE OR ALTER PROCEDURE player_think (
   pid SMALLINT, fwd DOUBLE PRECISION, side DOUBLE PRECISION, turn DOUBLE PRECISION,
   fire SMALLINT, use_key SMALLINT, weapon_sel SMALLINT, run SMALLINT, tic INTEGER)
 AS
+DECLARE hurt SMALLINT;
 DECLARE alive SMALLINT;
 DECLARE iron INTEGER;
 DECLARE tid INTEGER;
@@ -3882,8 +4070,9 @@ BEGIN
         UPDATE player SET damage_count = damage_count + 1 WHERE id = :pid AND damage_count > 0;   -- (DOOM_TIC's countdown waits)
       END
     END
-    -- G_DoReborn: alone, the level starts over; in a netgame you come back at your start
-    IF (use_key = 1 AND use_down = 0) THEN
+    -- G_DoReborn: alone, the level starts over; in a netgame you come back at your start (P_DeathThink:
+    -- BT_USE in the ticcmd, held from before or not)
+    IF (use_key = 1) THEN
     BEGIN
       IF ((SELECT g.players FROM game g WHERE g.id = 1) > 1) THEN
       BEGIN
@@ -3971,26 +4160,40 @@ BEGIN
   SELECT sector_at_fx(fx_of(t.x), fx_of(t.y)) FROM things t WHERE t.id = :tid INTO sec;
   SELECT floor_h, ceil_h, special FROM sectors WHERE id = :sec INTO fz, cz, sspec;
 
-  -- sector specials under the player
-  -- E1M8's exit floor (11): IDDQD off every tic you stand on it, before its damage
-  IF (sspec = 11 AND z <= fz) THEN UPDATE player SET god = 0 WHERE id = :pid;
-  IF (sspec = 9) THEN
+  -- P_PlayerInSpecialSector: only standing on the floor (z == its sector's floorheight; falling,
+  -- not yet), every tic: the damage every 32nd (leveltime & 0x1f), from nothing
+  IF (sspec > 0 AND z = fz) THEN
   BEGIN
-    UPDATE sectors SET special = 0 WHERE id = :sec;
-    UPDATE player SET secrets = secrets + 1, msg = 'A secret is revealed!', msg_tics = 70 WHERE id = :pid;
-  END
-  ELSE IF (sspec IN (4, 5, 7, 11, 16) AND z <= fz AND MOD(tic, 32) = 0) THEN
-  BEGIN
-    -- pw_ironfeet: the radiation suit keeps out nukage and slime; the worst
-    -- floors (4, 16) still get through 5 times in 256, and E1M8's (11) always
     SELECT p.iron_tics FROM player p WHERE p.id = :pid INTO iron;
-    IF (iron = 0 OR sspec = 11 OR (sspec IN (4, 16) AND p_random() * 256 < 5)) THEN
-      EXECUTE PROCEDURE damage_player(CASE sspec WHEN 7 THEN 5 WHEN 5 THEN 10 ELSE 20 END, NULL, pid);
+    -- hellslime (10) and nukage (5): none in the radiation suit (pw_ironfeet)
+    IF (sspec IN (5, 7)) THEN
+    BEGIN
+      IF (iron = 0 AND BIN_AND(tic, 31) = 0) THEN
+        EXECUTE PROCEDURE damage_player(IIF(sspec = 5, 10, 5), NULL, pid);
+    END
+    -- super hellslime and the strobe hurt (20): through the suit when P_Random() < 5 – drawn every
+    -- tic the suit is worn here
+    ELSE IF (sspec IN (4, 16)) THEN
+    BEGIN
+      hurt = 1;
+      IF (iron > 0) THEN hurt = IIF(p_rand256() < 5, 1, 0);
+      IF (hurt = 1 AND BIN_AND(tic, 31) = 0) THEN EXECUTE PROCEDURE damage_player(20, NULL, pid);
+    END
+    ELSE IF (sspec = 9) THEN
+    BEGIN
+      UPDATE sectors SET special = 0 WHERE id = :sec;
+      UPDATE player SET secrets = secrets + 1, msg = 'A secret is revealed!', msg_tics = 70 WHERE id = :pid;
+    END
+    -- E1M8's exit floor (11): IDDQD off, 20 every 32nd tic, and at 10 or less (even if that hit
+    -- killed you) G_ExitLevel
+    ELSE IF (sspec = 11) THEN
+    BEGIN
+      UPDATE player SET god = 0 WHERE id = :pid;
+      IF (BIN_AND(tic, 31) = 0) THEN EXECUTE PROCEDURE damage_player(20, NULL, pid);
+      IF ((SELECT p.health FROM player p WHERE p.id = :pid) <= 10) THEN
+        UPDATE game SET exit_kind = 1 WHERE id = 1 AND exit_kind = 0;
+    END
   END
-  -- …and once its damage leaves you at 10 or less, G_ExitLevel (even if that
-  -- hit killed you: the check follows the damage)
-  IF (sspec = 11 AND z <= fz AND (SELECT p.health FROM player p WHERE p.id = :pid) <= 10) THEN
-    UPDATE game SET exit_kind = 1 WHERE id = 1 AND exit_kind = 0;
 
   -- P_UseLines: the nearest line within 64 units straight ahead
   IF (use_key = 1 AND use_down = 0) THEN
@@ -4021,19 +4224,21 @@ BEGIN
     ELSE IF (lid IS NOT NULL) THEN EXECUTE PROCEDURE play_sound('DSNOWAY', tid, x, y);
   END
 
-  -- P_PlayerThink: a weapon key only picks the pending weapon, any time (only
-  -- weapons we own; 1 cycles fist/chainsaw and 3 shotgun/super shotgun, as in
-  -- DOOM II). The one in hand changes when it has been lowered.
+  -- P_PlayerThink: BT_CHANGE only picks the pending weapon (WEAPON_SEL: DOOM's wp_ number + 1, the
+  -- port's own numbering – 1 the fist … 7 the BFG, 8 the chainsaw), any time; the one in hand
+  -- changes once it has been lowered. The fist's key gives the chainsaw if you have one – unless
+  -- it's in hand and you're berserk; in DOOM II the shotgun's gives the super shotgun if you have
+  -- one and it isn't in hand. Only a weapon you own, and not the one in hand.
   old_weapon = weapon;
-  neww = 0;
-  IF (weapon_sel = 1) THEN
-    neww = IIF(has_saw = 1 AND weapon <> 8, 8, 1);
-  ELSE IF (weapon_sel = 3 AND (has_sg = 1 OR has_ssg = 1)) THEN
-    neww = IIF(has_ssg = 1 AND weapon <> 9 AND shells >= 2, 9, IIF(has_sg = 1, 3, 9));
-  ELSE IF (weapon_sel = 2 OR (weapon_sel = 4 AND has_cg = 1)
-      OR (weapon_sel = 5 AND has_rl = 1) OR (weapon_sel = 6 AND has_pl = 1) OR (weapon_sel = 7 AND has_bfg = 1)) THEN
-    neww = weapon_sel;
-  IF (neww > 0 AND neww <> weapon) THEN pending = neww;
+  neww = weapon_sel;
+  IF (neww = 1 AND has_saw = 1 AND NOT (weapon = 8 AND (SELECT p.strength_tics FROM player p WHERE p.id = :pid) > 0)) THEN
+    neww = 8;
+  IF (neww = 3 AND has_ssg = 1 AND weapon <> 9
+      AND EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.map_name STARTING WITH 'MAP')) THEN neww = 9;
+  IF (neww > 0 AND neww <> weapon
+      AND CASE neww WHEN 1 THEN 1 WHEN 2 THEN 1 WHEN 3 THEN has_sg WHEN 4 THEN has_cg WHEN 5 THEN has_rl
+                    WHEN 6 THEN has_pl WHEN 7 THEN has_bfg WHEN 8 THEN has_saw WHEN 9 THEN has_ssg ELSE 0 END = 1) THEN
+    pending = neww;
 
 
   UPDATE player SET pending_weapon = :pending, use_down = :use_key WHERE id = :pid;
@@ -4046,8 +4251,10 @@ BEGIN
 END^
 
 -- P_TouchSpecialThing for a player at (AT_X, AT_Y) (PIT_CheckThing, as a move tries it; NULL:
--- where it stands): whatever it overlaps there, within its reach in height, it picks up
-CREATE OR ALTER PROCEDURE touch_specials (pid SMALLINT, tic INTEGER, at_x DOUBLE PRECISION = NULL, at_y DOUBLE PRECISION = NULL)
+-- where it stands): whatever it overlaps there (ONLY_ITEM: that one), within its reach in
+-- height, it picks up
+CREATE OR ALTER PROCEDURE touch_specials (pid SMALLINT, tic INTEGER, at_x DOUBLE PRECISION = NULL, at_y DOUBLE PRECISION = NULL,
+                                          only_item INTEGER = NULL)
 AS
 DECLARE alive SMALLINT;
 DECLARE iron INTEGER;
@@ -4154,6 +4361,7 @@ BEGIN
   FOR SELECT t.id, tt.pickup, tt.amount, tt.label, IIF(BIN_AND(t.flags, 65536) <> 0, 1, 0), tt.count_item
         FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
        WHERE t.kind = 'item' AND ABS(t.x - :x) < t.radius + 16 AND ABS(t.y - :y) < t.radius + 16
+         AND (:only_item IS NULL OR t.id = :only_item)
          AND t.z - :z <= 56 AND t.z - :z >= -8   -- (P_TouchSpecialThing: not above its head, nor 8 below its feet)
         ORDER BY t.id
         INTO iid, pk, amt, lbl, dropped, count_item
@@ -4461,11 +4669,11 @@ BEGIN
   ELSE IF ((mn = 'E1M8' AND ttype = 3003) OR (mn = 'E4M8' AND ttype = 7) OR (mn = 'MAP07' AND ttype = 67)) THEN
     -- lowerFloorToLowest, tag 666
     FOR SELECT id, floor_h FROM sectors WHERE tag = 666 ORDER BY id INTO sec, fh DO
-      EXECUTE PROCEDURE floor_start(sec, MINVALUE(fh, COALESCE(neighbor_h(sec, 'min_floor'), fh)), 1);
+      EXECUTE PROCEDURE floor_start(sec, MINVALUE(fh, COALESCE(neighbor_h(sec, 'min_floor'), fh)), 1, -1, 'lowerFloorToLowest', 0);
   ELSE IF (mn = 'E4M6' AND ttype = 16) THEN
     -- blazeOpen, tag 666
     FOR SELECT id FROM sectors WHERE tag = 666 ORDER BY id INTO sec DO
-      EXECUTE PROCEDURE door_start(sec, 8, 1, 'open');
+      EXECUTE PROCEDURE door_start(sec, 'blazeOpen');
   ELSE IF (mn = 'MAP07' AND ttype = 68) THEN
     -- raiseToTexture, tag 667: by the height of the shortest lower texture around it
     FOR SELECT id, floor_h FROM sectors WHERE tag = 667 ORDER BY id INTO sec, fh DO
@@ -4475,7 +4683,7 @@ BEGIN
         JOIN textures tx ON tx.id = sd.lower_tex
        WHERE l.front_sector = :sec OR l.back_sector = :sec
         INTO h;
-      EXECUTE PROCEDURE floor_start(sec, fh + COALESCE(h, 24), 1);
+      EXECUTE PROCEDURE floor_start(sec, fh + COALESCE(h, 24), 1, 1, 'raiseToTexture', 0);
     END
 END^
 
@@ -4486,7 +4694,7 @@ DECLARE sec INTEGER;
 BEGIN
   IF (EXISTS (SELECT 1 FROM things t WHERE t.kind = 'keen' AND t.st NOT IN ('dying', 'dead'))) THEN EXIT;
   FOR SELECT id FROM sectors WHERE tag = 666 ORDER BY id INTO sec DO
-    EXECUTE PROCEDURE door_start(sec, 2, 1, 'open');
+    EXECUTE PROCEDURE door_start(sec, 'open');
 END^
 
 -- A_Look / A_Chase / A_FaceTarget / A_PosAttack / A_TroopAttack / A_SargAttack,
@@ -5471,7 +5679,7 @@ BEGIN
          AND ABS(fx_of(t.x) - :x) < fx_of(t.radius) + :rad AND ABS(fx_of(t.y) - :y) < fx_of(t.radius) + :rad
          AND BIN_SHR(fx_of(t.x) - :orgx, 23) BETWEEN :xl AND :xh
          AND BIN_SHR(fx_of(t.y) - :orgy, 23) BETWEEN :yl AND :yh
-       ORDER BY BIN_SHR(fx_of(t.x) - :orgx, 23), BIN_SHR(fx_of(t.y) - :orgy, 23), t.id DESC
+       ORDER BY BIN_SHR(fx_of(t.x) - :orgx, 23), BIN_SHR(fx_of(t.y) - :orgy, 23), t.link_seq DESC
         INTO hid, htype, hkind, hz, hh, shoot, hsolid
   DO
   BEGIN
@@ -6687,21 +6895,28 @@ BEGIN
   x = NULL;
   SELECT t.x, t.y, t.z, t.momz, t.radius, t.height, IIF(tt.floats = 1 AND t.kind = 'monster', 1, 0), t.flags,
          IIF(t.st IN ('dying', 'dead'), 0, 1), t.thing_type, t.st, tt.nogravity, IIF(t.kind = 'fx', 1, 0),
-         IIF(t.fz_x = t.x AND t.fz_y = t.y, t.floorz, NULL), t.ceilz
+         t.floorz, t.ceilz
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
    WHERE t.id = :tid AND t.state IS NOT NULL AND t.kind NOT IN ('missile', 'cube', 'player')
      AND (t.momz <> 0 OR tt.floats = 1 OR BIN_AND(t.flags, 1048576) <> 0)
     INTO x, y, z, momz, rad, hgt, floats, flags, living, ttype, st, nograv, fx, sfz, scz;
   IF (x IS NULL) THEN EXIT;
-  -- (a puff or blood never moves across: its floorz and ceilingz are P_SpawnMobj's, its sector's;
-  -- a thing that has moved, P_TryMove's where it moved to, its box's – until a sector moves)
-  IF (fx = 1) THEN SELECT s.floor_h, s.ceil_h FROM sectors s WHERE s.id = sector_at_fx(fx_of(:x), fx_of(:y)) INTO fz, cz;
-  ELSE IF (sfz IS NOT NULL) THEN
+  -- (mobj->floorz and ceilingz: P_SpawnMobj's, its subsector's, then P_TryMove's where it moved
+  -- to and P_ChangeSector's when a sector moved – a puff or blood, out of the blockmap, keeps
+  -- the ones it was born with)
+  IF (sfz IS NOT NULL) THEN
   BEGIN
     fz = sfz;
     cz = scz;
   END
   ELSE EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
+  -- (P_MobjThinker: P_ZMovement only for one off its floor or moving up or down – a flier at rest
+  -- on its floor stays there)
+  IF (sfz IS NOT NULL AND z = sfz AND momz = 0) THEN
+  BEGIN
+    UPDATE things t SET flags = BIN_AND(t.flags, BIN_NOT(1048576)) WHERE t.id = :tid AND BIN_AND(t.flags, 1048576) <> 0;
+    EXIT;
+  END
   z = z + momz;
   skullfly = IIF(BIN_AND(flags, 262144) <> 0, 1, 0);
   doom2 = IIF(EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.map_name STARTING WITH 'MAP'), 1, 0);
@@ -6711,11 +6926,10 @@ BEGIN
     EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
     IF (px IS NOT NULL) THEN
     BEGIN
-      adx = ABS(px - x);
-      ady = ABS(py - y);
-      dist = adx + ady - MINVALUE(adx, ady) / 2;
-      delta = pz + COALESCE((SELECT o.height FROM things o WHERE o.id = COALESCE(:tgt,
-                (SELECT p.thing_id FROM player p WHERE p.id = :tp))), 56) / 2 - z;
+      -- (in 16.16: P_AproxDistance to the target; delta from its feet plus half the flier's own
+      -- height, mo->height >> 1, to where the flier is)
+      dist = aprox_distance(fx_of(x) - fx_of(px), fx_of(y) - fx_of(py)) / 65536e0;
+      delta = (fx_of(pz) + BIN_SHR(fx_of(hgt), 1) - fx_of(z)) / 65536e0;
       IF (delta < 0 AND dist < -delta * 3) THEN z = z - 4;
       ELSE IF (delta > 0 AND dist < delta * 3) THEN z = z + 4;
     END
@@ -6774,7 +6988,7 @@ BEGIN
      AND ABS(fx_of(t.x) - :x) < fx_of(t.radius) + :rad AND ABS(fx_of(t.y) - :y) < fx_of(t.radius) + :rad
      AND BIN_SHR(fx_of(t.x) - :orgx, 23) BETWEEN :xl AND :xh
      AND BIN_SHR(fx_of(t.y) - :orgy, 23) BETWEEN :yl AND :yh
-   ORDER BY BIN_SHR(fx_of(t.x) - :orgx, 23), BIN_SHR(fx_of(t.y) - :orgy, 23), t.id DESC
+   ORDER BY BIN_SHR(fx_of(t.x) - :orgx, 23), BIN_SHR(fx_of(t.y) - :orgy, 23), t.link_seq DESC
     INTO hit;
 END^
 
@@ -7241,13 +7455,13 @@ END^
 CREATE OR ALTER PROCEDURE spawn_door_specials (sid INTEGER = NULL)
 AS
 BEGIN
-  INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, wait_left, stay)
-  SELECT s.id, 'door', 0, 2, s.ceil_h, s.floor_h, 150, 30 * 35, 0
+  INSERT INTO movers (sector_id, kind, mtype, dir, speed, top_h, bottom_h, wait_tics, wait_left, stay)
+  SELECT s.id, 'door', 'normal', 0, 2, s.ceil_h, s.floor_h, 150, 30 * 35, 0
     FROM sectors s
    WHERE s.special = 10 AND (s.id = :sid OR :sid IS NULL) AND NOT EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = s.id)
    ORDER BY s.id;
-  INSERT INTO movers (sector_id, kind, dir, speed, top_h, bottom_h, wait_tics, wait_left, stay)
-  SELECT s.id, 'door', 2, 2, COALESCE(neighbor_h(s.id, 'min_ceil'), s.ceil_h + 64) - 4, s.floor_h, 150, 5 * 60 * 35, 0
+  INSERT INTO movers (sector_id, kind, mtype, dir, speed, top_h, bottom_h, wait_tics, wait_left, stay)
+  SELECT s.id, 'door', 'raiseIn5Mins', 2, 2, COALESCE(neighbor_h(s.id, 'min_ceil'), s.ceil_h + 64) - 4, s.floor_h, 150, 5 * 60 * 35, 0
     FROM sectors s
    WHERE s.special = 14 AND (s.id = :sid OR :sid IS NULL) AND NOT EXISTS (SELECT 1 FROM movers m WHERE m.sector_id = s.id)
    ORDER BY s.id;
@@ -7496,11 +7710,20 @@ BEGIN
      SET z = (SELECT IIF(tt.hang = 1, s.ceil_h - tt.height, s.floor_h)
                 FROM sectors s, thing_types tt
                WHERE s.id = t.sector_id AND tt.thing_type = t.thing_type);
-  -- P_SpawnMobj: a player's floorz and ceilingz are its subsector's to start with
+  -- P_SpawnMobj: a thing's floorz and ceilingz are its subsector's to start with
   UPDATE things t
      SET floorz = (SELECT s.floor_h FROM sectors s WHERE s.id = t.sector_id),
-         ceilz = (SELECT s.ceil_h FROM sectors s WHERE s.id = t.sector_id), fz_x = t.x, fz_y = t.y
-   WHERE t.kind = 'player';
+         ceilz = (SELECT s.ceil_h FROM sectors s WHERE s.id = t.sector_id), fz_x = t.x, fz_y = t.y;
+  -- P_GroupLines: each sector's box of blocks, MAXRADIUS wider, for P_ChangeSector
+  UPDATE sectors s
+     SET bb_xl = (SELECT MAXVALUE(BIN_SHR(CAST(MIN(l.minx) AS BIGINT) * 65536 - CAST(b.org_x AS BIGINT) * 65536 - 2097152, 23), 0)
+                    FROM linedefs l, blockmap_info b WHERE b.id = 1 AND (l.front_sector = s.id OR l.back_sector = s.id) GROUP BY b.org_x),
+         bb_xh = (SELECT MINVALUE(BIN_SHR(CAST(MAX(l.maxx) AS BIGINT) * 65536 - CAST(b.org_x AS BIGINT) * 65536 + 2097152, 23), MIN(b.w) - 1)
+                    FROM linedefs l, blockmap_info b WHERE b.id = 1 AND (l.front_sector = s.id OR l.back_sector = s.id) GROUP BY b.org_x),
+         bb_yl = (SELECT MAXVALUE(BIN_SHR(CAST(MIN(l.miny) AS BIGINT) * 65536 - CAST(b.org_y AS BIGINT) * 65536 - 2097152, 23), 0)
+                    FROM linedefs l, blockmap_info b WHERE b.id = 1 AND (l.front_sector = s.id OR l.back_sector = s.id) GROUP BY b.org_y),
+         bb_yh = (SELECT MINVALUE(BIN_SHR(CAST(MAX(l.maxy) AS BIGINT) * 65536 - CAST(b.org_y AS BIGINT) * 65536 + 2097152, 23), MIN(b.h) - 1)
+                    FROM linedefs l, blockmap_info b WHERE b.id = 1 AND (l.front_sector = s.id OR l.back_sector = s.id) GROUP BY b.org_y);
 
   UPDATE game g
      SET total_kills = (SELECT COUNT(*) FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type

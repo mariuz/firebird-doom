@@ -147,6 +147,14 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   where the player stands isn't taken until they move. Tests give the player 1/65536 of a unit of
   momentum after the spawn (`momx = momx + 1 / 65536e0`). A charging lost soul stops at a pickup
   in its way too (DOOM's), so clear dropped clips from a test's path.
+- **Things keep their floors** (L6): every thing has `FLOORZ`/`CEILZ` (P_SpawnMobj's, P_TryMove's,
+  P_ChangeSector's) and falls or floats by them; a flier on its floor stays there (P_ZMovement runs
+  only off the floor or with momz). A test that puts a thing somewhere by `UPDATE` keeps its old
+  floor unless it sets those too. `THINGS.LINK_SEQ` (a trigger on x, y) is DOOM's blocklinks' order:
+  write new block walks `ORDER BY` block, then `link_seq DESC`, never `id`.
+- **Finding where the port parts from vanilla:** `npm run test:lmp` names the first tic; then
+  `test-logs`-style probes: vanilla's thinkers at a tic (`ORACLE_MOBJS`), its sectors per tic
+  (`ORACLE_SECTORS`), and `npm run lmp-rnglog` for who drew each random number.
 - **Tests:** physics-test and weapons-test share one database through many sections. A monster
   woken by an earlier section can hurt the player later, so read state right after the action,
   before another tic. Make statistical assertions robust (bigger samples, fixed bounds rather than

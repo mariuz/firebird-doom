@@ -47,9 +47,11 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `P_CheckPosition`, `P_TryMove`, `PIT_CheckThing` | in 16.16: `CHECK_POSITION_FX`; `TRY_MOVE_FX` (the player, whose pickups `PIT_CheckThing` touches there), `TRY_MOVE_MOBJ` (monsters, corpses, a charging lost soul's `SKULL_CONTACT`), `TRY_MOVE_MISSILE`; `CHECK_POSITION` for the rest |
 | `P_MovePlayer`, `P_CalcHeight`, `P_XYMovement`, `P_SlideMove`, `P_ZMovement` (the player) | `PLAYER_THINK`, `XY_MOVEMENT_FX`, `SLIDE_MOVE_FX` (`SLIDE_TRAVERSE`, `HIT_SLIDE_LINE`), `Z_MOVEMENT_FX` |
 | `P_CheckSight` | for monsters, `SIGHT_FX()`: `REJECT`, then the BSP walk (`CROSS_BSP`, `CROSS_SUBSECTOR`) in 16.16; elsewhere `CHECK_SIGHT()` walks the blockmap cells along the sight line |
-| `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor`, stairs, exits | `ACTIVATE_LINE`, `MOVERS`, `MOVERS_THINK` |
+| `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor/Ceiling`, `EV_BuildStairs`, `EV_DoDonut`, exits | `ACTIVATE_LINE`, `DOOR_START`, `FLOOR_START`, `MOVERS` (`MTYPE`: DOOM's own types) |
+| `T_VerticalDoor`, `T_PlatRaise`, `T_MoveFloor`, `T_MoveCeiling`, `T_MovePlane` | `MOVER_STEP`, `MOVE_PLANE` |
 | `G_DoCompleted`: which map comes next, secret exits included | [src/progress.js](src/progress.js) |
-| `EV_DoCeiling` crushers, `EV_CeilingCrushStop`, `raiseFloorCrush`, `P_ChangeSector` | the `crush` mover kind, `CRUSH_THINGS` |
+| `P_ChangeSector`, `PIT_ChangeSector`, `P_ThingHeightClip` (crushers, gibs, a door closing on you) | `CHANGE_SECTOR`, `THING_HEIGHT_CLIP` |
+| blocklinks (`P_SetThingPosition`): each block's things, the last linked first | `THINGS.LINK_SEQ` (the `THINGS_LINK` trigger) |
 | `P_SetMobjState`, `P_MobjThinker`, `info.c`'s states | `SET_STATE`, `STATES_THINK`, `STATE_ACTION`, the `STATES` table ([src/states.js](src/states.js)) |
 | `P_SpawnMissile`, `P_SpawnPlayerMissile`, `P_CheckMissileSpawn`, `P_ExplodeMissile`, `P_XYMovement` / `P_ZMovement` for missiles | `SPAWN_MISSILE_FX`, `FIRE_MISSILE`, `CHECK_MISSILE_SPAWN`, `EXPLODE_MISSILE`, `MISSILE_STEP` |
 | `A_Look` / `A_Chase` / attacks, pain, death, barrels | `A_LOOK`, `A_CHASE`, `A_BULLETS`, `A_MELEE_MISSILE`, …, `DAMAGE_THING` |
@@ -817,11 +819,21 @@ measured against vanilla itself:
   the oracle's list of every thinker agrees with the port's one by one. So do a demo firing a
   shot and one where the player walks into the zombiemen's view and stands while they wake and
   chase. The scripted walk (turns, runs, strafes, along walls, down a lowering stair, shots)
-  keeps step for all 215 tics, and so does a barrel shot until it bursts. Of the title loop's
-  seven demos, six keep step in every column for all 700 tics: firefights with zombiemen, imps'
-  fireballs, lost souls and a spectre, deaths and restarts. E1M3's parts at tic 442, where a
-  closing door hides the player from a zombieman a tic sooner than in vanilla: the movers are
-  the next phase, L6.
+  keeps step for all 215 tics, and so does a barrel shot until it bursts. All seven of the title
+  loop's demos keep step in every column for all 700 tics: firefights with zombiemen, imps'
+  fireballs, lost souls and a spectre, deaths and restarts. So do ten longer walks by the same
+  scripted player, a minute each on E1M1–E1M5 and MAP01–MAP05, through doors, lifts and
+  crushers.
+- **The world (phase L6, done):** doors, lifts, floors and crushers move as DOOM's thinkers move
+  them (`T_VerticalDoor`, `T_PlatRaise`, `T_MoveFloor`, `T_MoveCeiling`), each type at DOOM's
+  speed and with its quirks, and after every step `P_ChangeSector` has everything near the
+  sector look again at its floor and ceiling: what stands on a lift rides it, a door closing
+  on you (or on a monster in the doorway beside it) goes back up, a crusher squeezes and bleeds
+  what it catches, crunches corpses to gibs and swallows dropped items. Things in a block are
+  met in DOOM's order (the one that moved last, first), every thing has DOOM's own size, the
+  damaging floors hurt as `P_PlayerInSpecialSector` decides, and the weapon keys pick as
+  `P_PlayerThink` does. What's left before the page can play a `.lmp`: a demo through a level's
+  end (the intermission and the next map), and then playing them (phase L7).
 
 ### Co-op and deathmatch over the network
 
@@ -1181,8 +1193,9 @@ statements separated by `-- @@` lines.
 Click the view to capture the mouse. <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or the
 arrow keys move, <kbd>Ctrl</kbd> or a click fires, <kbd>Space</kbd>/<kbd>E</kbd> uses,
 <kbd>Shift</kbd> runs, <kbd>1</kbd>–<kbd>7</kbd> pick weapons (fist, pistol, shotgun, chaingun, rocket
-launcher, plasma gun, BFG9000). As in DOOM II, pressing <kbd>1</kbd> again toggles the chainsaw and
-<kbd>3</kbd> again the super shotgun. A change takes the old weapon down and the new one up. <kbd>Tab</kbd> shows the
+launcher, plasma gun, BFG9000). As in DOOM (`P_PlayerThink`), <kbd>1</kbd> brings out the chainsaw
+when you have one – the fist only when the chainsaw is in hand and you're berserk – and in DOOM II
+<kbd>3</kbd> the super shotgun when you have it and it isn't in hand. A change takes the old weapon down and the new one up. <kbd>Tab</kbd> shows the
 automap (type IDDT on it to reveal everything), <kbd>P</kbd> pauses, <kbd>Esc</kbd> opens the menu, and the function keys do what DOOM's do: <kbd>F1</kbd> help, <kbd>F2</kbd> save, <kbd>F3</kbd> load, <kbd>F4</kbd> sound volume, <kbd>F5</kbd> detail, <kbd>F6</kbd>/<kbd>F9</kbd> quicksave and quickload, <kbd>F7</kbd> end game, <kbd>F8</kbd> messages on/off, <kbd>F10</kbd> quit, <kbd>F11</kbd> gamma correction. Under the view you can set **Detail** (320 or 160 columns),
 **Renderer** (BSP + solidsegs, or brute force), **Skill** (1–5), **No monsters**, **Respawn** and **Fast** (DOOM's
 command-line options, for this visit only), **Display** (WebGL palette shader or Canvas 2D),
@@ -1355,23 +1368,16 @@ not the demons' `DSDMPAIN`.) `npm run test:states` wakes, hurts, kills and gibs 
 step.
 
 What's still not vanilla, and why `.lmp` demos can't play yet (docs/ROADMAP.md):
-- **Arithmetic:** the player, the monsters, the shots, the projectiles and what a hit throws move
-  in DOOM's 16.16 fixed point, with BAM angles and the `finesine` table; the movers (doors,
-  lifts, floors, crushers) still move in doubles, at their own pace (phase L6).
-- **Random numbers:** `P_Random` is DOOM's `rndtable`, but its draws come in DOOM's order only
-  where the code follows DOOM's (the map's setup, the lights, the actions, the damage), not yet
-  everywhere.
+- **Arithmetic:** what moves, moves in DOOM's 16.16 fixed point, with BAM angles and the
+  `finesine` table (the sector heights stay doubles, exact at DOOM's speeds). Code the demos
+  haven't reached yet – some rarer monster attacks, the boss brain – still does its sums in
+  doubles and may draw `P_Random` in another order.
 - **Keys:** the page's own keys aren't quite `G_BuildTiccmd`'s: a strafe is 25 (50 running)
   rather than 24 (40), and the turn keys have no slow start.
-- **Collision:** everything that moves goes through the `BLOCKMAP` as DOOM's does, and
-  monsters see through the BSP as DOOM's do. Within a block, though, things are met newest first,
-  where DOOM's list puts the one that last moved first: two things in one block, both in reach,
-  can be met the other way round. The movers (doors, lifts, crushers) push things by their own
-  rules, not `P_ChangeSector`'s.
-- **Crushers:** a crusher turns only corpses to gibs: not the dying, and dropped items aren't
-  removed (`PIT_ChangeSector`).
-- **Weapon keys:** they choose as the port always has, not quite as `P_PlayerThink` does (see
-  *Weapons*).
+- **Demos through a level's end:** the `.lmp` harness stops at an exit; the intermission's
+  tics and the next map aren't followed yet (and the page doesn't play `.lmp` files: phase L7).
+- **Switches:** a repeatable switch stays pressed; DOOM's button timer (`BUTTONTIME`) puts its
+  texture back after a second with a click. Nothing the simulation sees.
 Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods
 out from your sector through every open two-sided line. A closed door stops it, and a line flagged
 *sound block* lets it through once but never twice. Every sector it reaches remembers. Idle

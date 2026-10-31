@@ -38,6 +38,11 @@ export function stateModes(states = STATES, mobjinfo = MOBJINFO) {
 export function typeHealth(type, mobjinfo = MOBJINFO) {
   return mobjinfo[MOBJ_TYPE[type] ?? MOBJ_BY_ED.get(type)]?.health ?? null;
 }
+/** mobjinfo's radius and height for a thing type, in map units ({} if DOOM has no such type) */
+export function typeSize(type) {
+  const m = MOBJINFO[MOBJ_TYPE[type] ?? MOBJ_BY_ED.get(type)];
+  return m ? { radius: m.radius, height: m.height } : {};
+}
 export function typeStates(type, mobjinfo = MOBJINFO) {
   const m = mobjinfo[MOBJ_TYPE[type] ?? MOBJ_BY_ED.get(type)];
   if (!m) return [0, 0, 0, 0, 0, 0, 0, 0];
@@ -119,7 +124,9 @@ export async function createSchema(db, sql) {
 export async function loadResources(db, wad, { width = 320, height = 168, projy = 160, dehacked = '' } = {}) {
   // DeHackEd: the WAD's DEHACKED lump, then any patch given (a .deh file)
   const dehText = wad.dehacked() + '\n' + (dehacked ?? '');
-  const deh = applyDehacked(THING_TYPES, parseDehacked(dehText));
+  // (each type DOOM's own size first, mobjinfo's radius and height – collisions, P_ChangeSector's
+  // fit and a hanging thing's place go by them – then whatever a patch changes)
+  const deh = applyDehacked(THING_TYPES.map((t) => ({ ...t, ...typeSize(t.type) })), parseDehacked(dehText));
   const strings = parseDehStrings(dehText);
   // Wall textures: first definition of a name wins (R_TextureNumForName).
   const texDefs = [];
@@ -290,6 +297,7 @@ export async function loadMap(db, wad, res, name, {
   const skillBit = skill <= 2 ? 1 : skill === 3 ? 2 : 4;
   // the same thing ids on every load, so a level always starts identical (demos)
   await db.exec('ALTER SEQUENCE thing_seq RESTART WITH 1');   // (from 1: origin 0 means the player's own sounds)
+  await db.exec('ALTER SEQUENCE link_seq RESTART WITH 1');    // (and the blocklinks' order: the same on every load)
   // P_Random's index goes in first (G_InitNew's M_ClearRandom, 0, comes before the level): the
   // map's things draw from it as they spawn. A seed is where in rndtable to start (mod 256).
   if (seed != null) await db.exec(`UPDATE game SET rng = ${((Number(seed) % 256) + 256) % 256} WHERE id = 1`);

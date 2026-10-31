@@ -50,7 +50,9 @@ if (crushMap) {
   const imp = await spawn(3001, at.X, at.Y);
   await db.exec(`UPDATE things SET st = 'idle', flags = 8, hp = 10000 WHERE id = ${imp}`);  // deaf, tough, stays put
   const corpse = await spawn(3004, at.X + 4, at.Y + 4);
-  await db.exec(`UPDATE things SET st = 'dead', state = (SELECT id FROM states WHERE name = 'S_POSS_DIE5'), state_tic = NULL, solid = 0 WHERE id = ${corpse}`);
+  // (a corpse: no health left, a quarter as tall, P_KillMobj's – what PIT_ChangeSector crunches)
+  await db.exec(`UPDATE things SET st = 'dead', state = (SELECT id FROM states WHERE name = 'S_POSS_DIE5'), state_tic = NULL, solid = 0,
+    hp = -10, height = height / 4 WHERE id = ${corpse}`);
   await db.exec(`EXECUTE PROCEDURE activate_line(${line.ID}, 'walk')`);
   const spd = [6, 77].includes(line.SPECIAL) ? 2 : 1;
   let low = sec.CEIL_H;
@@ -1119,7 +1121,8 @@ if (slimeMap) {
   // a door that closes for thirty seconds
   await reset();
   const c30 = await fire(16);
-  const shut = await until((s) => s.CEIL_H === s.FLOOR_H);
+  // (T_MovePlane lands on the floor, and the tic after finds itself past it: then it waits)
+  const shut = await until((s) => s.CEIL_H === s.FLOOR_H && s.DIR === 0);
   await db.exec(`UPDATE movers SET wait_left = 2 WHERE sector_id = ${X.ID}`);
   const back = await until((s) => s.KIND === null);
   assert(c30.DIR === -1 && c30.STAY === 2 && shut.DIR === 0 && shut.WAIT_LEFT >= 30 * 35 - 1 && back.CEIL_H === X.CEIL_H,

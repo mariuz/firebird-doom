@@ -145,6 +145,9 @@ export async function restoreGame(db, save) {
   }
   // new things must not reuse the restored ids
   await db.exec(`ALTER SEQUENCE thing_seq RESTART WITH ${save.seq + 1}`);
+  // …nor reorder the blocks' things: links made from here on come after the restored ones
+  const links = (await db.query('SELECT COALESCE(MAX(link_seq), 0) n FROM things')).rows[0].N;
+  await db.exec(`ALTER SEQUENCE link_seq RESTART WITH ${Number(links) + 1}`);
   // saves from before a type moved onto DOOM's frame tables: its things take the
   // state that matches where they were (ADOPT_STATES; nothing to do for newer saves)
   await db.query('EXECUTE BLOCK AS BEGIN EXECUTE PROCEDURE adopt_states; END');

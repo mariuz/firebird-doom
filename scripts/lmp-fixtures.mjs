@@ -24,7 +24,11 @@ fs.mkdirSync(out, { recursive: true });
 const clamp = (v) => Math.max(-127, Math.min(127, Math.round(v)));
 /** an attract demo's DOOM_TIC calls ([tics, fwd, side, turn, fire, use, weapon, run]) as ticcmds */
 function fromAttract(file, limit) {
-  const d = JSON.parse(fs.readFileSync(path.join(root, 'public/demos', file), 'utf8'));
+  return fromCalls(JSON.parse(fs.readFileSync(path.join(root, 'public/demos', file), 'utf8')), limit);
+}
+
+/** a recording's DOOM_TIC calls (the attract demos' JSON shape) as ticcmds */
+function fromCalls(d, limit) {
   const tics = [];
   for (const c of d.calls) {
     if (typeof c[0] !== 'number') continue;
@@ -37,6 +41,26 @@ function fromAttract(file, limit) {
   }
   const m = /^(?:E(\d)M(\d)|MAP(\d\d))$/.exec(d.map);
   return { skill: d.skill, episode: m[1] ? Number(m[1]) : 1, map: Number(m[2] ?? m[3]), players: [true, false, false, false], tics };
+}
+
+/**
+ * the attract demos' scripted player (record-attract.mjs's Bot), run in the port for TICS on
+ * MAP from SEED, as ticcmds: longer walks than the title loop's, through doors and onto lifts.
+ * (What it does is decided in the port; vanilla plays the same ticcmds.)
+ */
+async function fromBot(wadFile, map, tics, seed) {
+  const { FirebirdBrowser, DirectTransport } = await import('firebird-wasm/browser');
+  const { Wad } = await import('../src/wad.js');
+  const { createSchema, loadResources } = await import('../src/loader.js');
+  const { record } = await import('./record-attract.mjs');
+  const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
+  const db = new FirebirdBrowser(`memory://bot-${map}`, { transport: new DirectTransport({ threads: false }) });
+  await createSchema(db, sql);
+  const wad = new Wad(fs.readFileSync(path.join(root, 'public/wads', wadFile)));
+  const res = await loadResources(db, wad);
+  const { demo } = await record(db, wad, res, wadFile, map, tics, seed);
+  await db.close();
+  return fromCalls(demo, tics);
 }
 
 /** scripted: walk, turn, run and strafe, fire, use – each step [tics, forwardmove, sidemove, angleturn, buttons] */
@@ -61,6 +85,17 @@ const DEMOS = [
   ['e1m2-barrel', 'freedoom1.wad', scripted(1, 2, [[1, 0, 0, 10122, 0], [10, 0, 0, 0, 0], [60, 0, 0, 0, BT_ATTACK], [90, 0, 0, 0, 0]])],
   ['e1m1-attract', 'freedoom1.wad', fromAttract('freedoom1-demo1.json', 700)],
   ['map01-attract', 'freedoom2.wad', fromAttract('freedoom2-demo1.json', 700)],
+  // longer walks by the attract demos' scripted player: doors, lifts, floors (phase L6)
+  ['e1m1-bot', 'freedoom1.wad', () => fromBot('freedoom1.wad', 'E1M1', 2100, 1001)],
+  ['e1m2-bot', 'freedoom1.wad', () => fromBot('freedoom1.wad', 'E1M2', 2100, 1002)],
+  ['e1m3-bot', 'freedoom1.wad', () => fromBot('freedoom1.wad', 'E1M3', 2100, 1003)],
+  ['map01-bot', 'freedoom2.wad', () => fromBot('freedoom2.wad', 'MAP01', 2100, 2001)],
+  ['map02-bot', 'freedoom2.wad', () => fromBot('freedoom2.wad', 'MAP02', 2100, 2002)],
+  ['e1m4-bot', 'freedoom1.wad', () => fromBot('freedoom1.wad', 'E1M4', 2100, 1004)],
+  ['e1m5-bot', 'freedoom1.wad', () => fromBot('freedoom1.wad', 'E1M5', 2100, 1005)],
+  ['map03-bot', 'freedoom2.wad', () => fromBot('freedoom2.wad', 'MAP03', 2100, 2003)],
+  ['map04-bot', 'freedoom2.wad', () => fromBot('freedoom2.wad', 'MAP04', 2100, 2004)],
+  ['map05-bot', 'freedoom2.wad', () => fromBot('freedoom2.wad', 'MAP05', 2100, 2005)],
   ['e1m2-attract', 'freedoom1.wad', fromAttract('freedoom1-demo2.json', 700)],
   ['e1m3-attract', 'freedoom1.wad', fromAttract('freedoom1-demo3.json', 700)],
   ['map02-attract', 'freedoom2.wad', fromAttract('freedoom2-demo2.json', 700)],
@@ -71,7 +106,8 @@ const DEMOS = [
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-home-'));
 // (names on the command line: only those)
 const only = process.argv.slice(2);
-for (const [name, wadFile, demo, mobjTics] of DEMOS.filter(([n]) => !only.length || only.includes(n))) {
+for (const [name, wadFile, make, mobjTics] of DEMOS.filter(([n]) => !only.length || only.includes(n))) {
+  const demo = typeof make === 'function' ? await make() : make;
   const lmp = path.join(out, `${name}.lmp`);
   const trace = path.join(out, `${name}.trace`);
   // (and for some, every thinker at those leveltimes: NAME.mobjs, ORACLE_MOBJS)

@@ -37,7 +37,7 @@ const TESTS = [
   ['smoke', npm('test'), 10],
   ['pwad', npm('test:pwad'), 10],
   ['dehacked', npm('test:dehacked'), 9],
-  ['lmp', npm('test:lmp'), 12],
+  ['lmp', npm('test:lmp'), 390],
   ...both('weapons', 6),
   ['relay', npm('test:relay'), 3],
   ...both('states', 5),

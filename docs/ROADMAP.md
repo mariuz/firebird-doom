@@ -40,8 +40,8 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   fidelity ends (the README lists "no `.lmp` demos" as a deviation). *Under way*, in phases
   (under **Simulation** below: *Original `.lmp` demos, in phases*): phases L0, the yardstick,
   L1, DOOM's random numbers, L2, the player in fixed point, L3, the map as DOOM spawns it
-  and its thinkers' order, L4, the monsters' sight and walk, and L5, the attacks, are done;
-  L6, the world (the movers), is next.
+  and its thinkers' order, L4, the monsters' sight and walk, L5, the attacks, and L6, the world,
+  are done; L7, playing them on the page, is next.
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
@@ -504,9 +504,47 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   within a block: things met newest first, where DOOM's blocklinks put the one that last moved
   first.
 
-**Phase L6: the world.** Movers at DOOM's speeds and in its order (T_MoveFloor/T_MoveCeiling,
-the crushers and PIT_ChangeSector's gibs and dropped items), sector specials, lights, switches;
-the weapon keys as P_PlayerThink chooses. Test: whole demos in step, level end included.
+**Phase L6: the world.** *Done* (but for the level's end in a demo, below).
+- **The planes:** T_MovePlane (`MOVE_PLANE`): a step of the speed, past the destination it
+  stops there, and P_ChangeSector after every step (`CHANGE_SECTOR`): every thing in the
+  sector's block box (P_GroupLines' blockbox, MAXRADIUS wider: `SECTORS.BB_*`), in the blocks'
+  order, looks again at its floor and ceiling (P_ThingHeightClip, `THING_HEIGHT_CLIP`, through
+  `CHECK_POSITION_FX`: a player touches the pickups there); one on its floor rides it. One
+  that no longer fits: a corpse is crunched to gibs, a dropped item is gone, a shootable
+  thing makes the plane go back – or, crushing, every fourth tic takes 10 and bleeds (MT_BLOOD
+  thrown P_SubRandom() << 12 each way). A door closing on someone in the next sector goes
+  back up.
+- **The thinkers:** T_VerticalDoor, T_PlatRaise, T_MoveFloor and T_MoveCeiling (`MOVER_STEP`)
+  by DOOM's own types (`MOVERS.MTYPE`: vldoor_e, plattype_e, floor_e, ceiling_e; an old save's
+  are worked out, `MOVER_TYPE`), and their set-up as EV_DoDoor, EV_VerticalDoor, EV_DoPlat,
+  EV_DoFloor, EV_DoCeiling, EV_BuildStairs and EV_DoDonut set them up: VDOORSPEED and the blazing
+  ×4, a close door that doesn't go back up, PLATSPEED's halves and quadruples, the perpetual
+  lift's random start, lowerFloor from −500, raiseToHighest from 0, raiseFloorCrush 8 short of
+  the lowest ceiling around, raiseFloor24AndChange (59, 93) a floor, lowerAndCrush that doesn't
+  crush, the crushers' slow eighth while they crush, the stairs' FLOORSPEED / 4 and the height
+  counted past a step already moving; the sounds as theirs.
+- **Things' floors:** every thing keeps its floorz and ceilingz (P_SpawnMobj's, its subsector's;
+  P_TryMove's; P_ChangeSector's), and P_ZMovement goes by them – a puff or blood, out of the
+  blockmap, keeps the ones it was born with; a flier at rest on its floor stays there. A
+  teleport lands on the sector's own floor (P_TeleportMove).
+- **The blocks' order:** DOOM's blocklinks put the thing last linked – spawned or moved – first
+  in its block (`THINGS.LINK_SEQ`, a trigger on x and y), and every block walk goes by it:
+  P_CheckPosition (which now meets things in order: a pickup touched until a solid thing stops
+  the move), P_PathTraverse, the blasts, the lost soul, the missiles.
+- **And:** mobjinfo's radius and height for every type (`gen-states` now writes them: the
+  decorations are 16 tall, not 48); P_PlayerInSpecialSector only on the floor, the suit's
+  P_Random() drawn every tic on the worst floors; P_DeathThink's restart on any use; a dead
+  player's body, a corpse, sliding off a step; the weapon keys as P_PlayerThink picks them (the
+  fist's gives the chainsaw unless it's in hand and you're berserk).
+- **The oracle:** `dump.c` writes each sector whose floor, ceiling, light or special changed
+  (`ORACLE_SECTORS`), for setting the port's beside it. `npm run lmp-fixtures` makes ten more
+  fixtures: the attract demos' scripted player walking E1M1–E1M5 and MAP01–MAP05 for 2100 tics
+  each (`fromBot`).
+- **Where it stands:** every fixture – the scripted ones, the seven title demos', the ten bot
+  walks (through doors, lifts, crushers, deaths and restarts) – agrees with vanilla in every
+  column to its end; `npm run test:lmp` asserts it. Left: a demo through the level's end (the
+  intermission's tics and the next map: the harness stops at the exit), the switches' button
+  timers (BUTTONTIME: the texture back and the click, nothing the simulation sees).
 
 **Phase L7: playing them.** The page plays a `.lmp` (a file, or an IWAD's DEMO1–4) and the
 title loop shows a WAD's own demos, once they keep step. Test: id's demos where a user has the

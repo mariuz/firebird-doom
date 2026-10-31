@@ -20,6 +20,27 @@
       "sumstate": null
     }
   },
+  "e1m1-bot": {
+    "tics": 2100,
+    "synced": 2100,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
   "e1m1-idle": {
     "tics": 350,
     "synced": 350,
@@ -146,30 +167,135 @@
       "sumstate": null
     }
   },
+  "e1m2-bot": {
+    "tics": 2100,
+    "synced": 2100,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
   "e1m3-attract": {
     "tics": 700,
-    "synced": 468,
+    "synced": 700,
     "first": {
-      "leveltime": 590,
-      "prndindex": 442,
-      "x": 473,
-      "y": 470,
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
       "z": null,
-      "angle": 542,
-      "momx": 469,
-      "momy": 469,
-      "health": 469,
-      "mobjs": 452,
-      "sumx": 442,
-      "sumy": 442,
-      "sumz": 445,
-      "sumhealth": 452,
-      "sumstate": 442
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "e1m3-bot": {
+    "tics": 2100,
+    "synced": 2100,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "e1m4-bot": {
+    "tics": 2100,
+    "synced": 2100,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "e1m5-bot": {
+    "tics": 2100,
+    "synced": 2100,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
     }
   },
   "map01-attract": {
     "tics": 700,
     "synced": 700,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "map01-bot": {
+    "tics": 2100,
+    "synced": 2100,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -209,6 +335,27 @@
       "sumstate": null
     }
   },
+  "map02-bot": {
+    "tics": 2100,
+    "synced": 2100,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
   "map03-attract": {
     "tics": 700,
     "synced": 700,
@@ -230,9 +377,72 @@
       "sumstate": null
     }
   },
+  "map03-bot": {
+    "tics": 2100,
+    "synced": 2100,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
   "map04-attract": {
     "tics": 700,
     "synced": 700,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "map04-bot": {
+    "tics": 2100,
+    "synced": 2100,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    }
+  },
+  "map05-bot": {
+    "tics": 2100,
+    "synced": 2100,
     "first": {
       "leveltime": null,
       "prndindex": null,

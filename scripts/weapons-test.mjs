@@ -241,8 +241,14 @@ assert(bfgBurst > 0, 'BFG ball exploded');
   const snd = (await db.query("SELECT LIST(DISTINCT sound) l FROM sound_events WHERE sound STARTING WITH 'DSSAW'")).rows[0].L ?? '';
   assert(hp1 < hp0, `chainsaw: the monster took ${hp0 - hp1} damage`);
   assert(snd.includes('DSSAWUP') && snd.includes('DSSAWHIT'), `chainsaw: played ${snd}`);
+  // (P_PlayerThink: the fist's key gives the chainsaw whenever you have one – the fist only with the
+  // chainsaw in hand and berserk)
   s = await select(1);
-  assert(s.WEAPON === 1, 'chainsaw: key 1 again goes back to the fist');
+  assert(s.WEAPON === 8, `chainsaw: key 1 again keeps it, not berserk (weapon ${s.WEAPON})`);
+  await db.exec('UPDATE player SET strength_tics = 1');
+  s = await select(1);
+  assert(s.WEAPON === 1, `…berserk, key 1 with the chainsaw in hand puts the fist up (weapon ${s.WEAPON})`);
+  await db.exec('UPDATE player SET strength_tics = 0, has_chainsaw = 0');
 
   // the berserk pack: health back to 100, out comes the fist, and it hits ten times as hard
   // (it doesn't stand still beside you – P_NewChaseDir walks it round you – so put it back in reach)

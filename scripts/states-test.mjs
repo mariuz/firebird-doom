@@ -410,7 +410,9 @@ assert(flightTics > 1 && travelled >= 20 && fly1.F === 0 && /S_SKULL_(STND|RUN)/
 const lx = pl.X + Math.cos(pl.ANGLE) * 48;
 const ly = pl.Y + Math.sin(pl.ANGLE) * 48;
 await db.exec(`UPDATE things SET x = ${lx}, y = ${ly}, sector_id = sector_at(${lx}, ${ly}), momz = 0,
-  z = (SELECT floor_h FROM sectors WHERE id = sector_at(${lx}, ${ly})), flags = BIN_AND(flags, BIN_NOT(131072)) WHERE id = ${skull}`);
+  z = (SELECT floor_h FROM sectors WHERE id = sector_at(${lx}, ${ly})) + 1, flags = BIN_AND(flags, BIN_NOT(131072)) WHERE id = ${skull}`);
+// (a unit off the floor: P_MobjThinker runs P_ZMovement only for a thing off its floor or moving up
+// or down – one at rest on the floor stays there, as DOOM's do)
 await setState(skull, 'S_SKULL_RUN1', P + 300);   // (awake, with its target: the port's ST says so)
 const zStart = (await flag(skull)).Z;
 const rises = [];

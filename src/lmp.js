@@ -94,14 +94,15 @@ export function lmpMapName(demo, commercial) {
  * One of a demo's ticcmds as this port's DOOM_TIC takes it ([fwd, side, turn, fire, use,
  * weapon, run]): DOOM thrusts forwardmove × 2048 (fixed point, so forwardmove / 32 units),
  * which is the port's walking 25/32 × fwd; angleturn << 16 is a BAM (65536 to a circle);
- * BT_CHANGE's weapon (wp_fist 0 … wp_supershotgun 8) is the port's key (the fist's 1 also
- * reaching the chainsaw, the shotgun's 3 the super shotgun, as P_PlayerThink decides).
+ * BT_CHANGE's weapon (wp_fist 0 … wp_chainsaw 7) is the port's weapon number, one more
+ * (P_PlayerThink in PLAYER_THINK decides from there: the fist's key reaching the chainsaw, the
+ * shotgun's the super shotgun).
  */
 export function portCmd([fwd, side, turn, buttons]) {
   let weapon = 0;
   if (buttons & BT_CHANGE && !(buttons & 0x80)) {
     const wp = (buttons >> 3) & 7;
-    weapon = wp === 7 ? 1 : wp + 1;
+    weapon = wp + 1;
   }
   return [fwd / 25, side / 25, (turn * 2 * Math.PI) / 65536, buttons & BT_ATTACK ? 1 : 0, buttons & BT_USE ? 1 : 0, weapon, 0];
 }

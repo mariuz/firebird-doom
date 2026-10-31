@@ -54,7 +54,11 @@ for (const m of infoC.matchAll(/\{\s*\/\/\s*(MT_\w+)([\s\S]*?)\n\s*\}/g)) {
   const [, mt, body] = m;
   const field = (f) => new RegExp(`\\n\\s*([^,\\n]+?),?\\s*\\/\\/\\s*${f}\\b`).exec(body)?.[1].trim();
   const st = (v) => (v === undefined || v === '0' ? 0 : stateIndex.get(v));
-  mobj[mt] = { ednum: Number(field('doomednum')), health: Number(field('spawnhealth')), states: FIELDS.map((f) => st(field(f))) };
+  // (a size in map units: info.c writes 20*FRACUNIT)
+  const units = (v) => { const m = /^(\d+)\s*\*\s*FRACUNIT$/.exec(v ?? ''); return m ? Number(m[1]) : Number(v) / 65536; };
+  mobj[mt] = { ednum: Number(field('doomednum')), health: Number(field('spawnhealth')), states: FIELDS.map((f) => st(field(f))),
+    radius: units(field('radius')), height: units(field('height')) };
+  if (!Number.isFinite(mobj[mt].radius) || !Number.isFinite(mobj[mt].height)) throw new Error(`${mt}: no radius or height`);
   if (!Number.isFinite(mobj[mt].health)) throw new Error(`${mt}: no spawnhealth`);
   if (mobj[mt].states.some((s) => s === undefined)) throw new Error(`${mt}: a state info.h doesn't name`);
 }
@@ -136,7 +140,7 @@ export const SPRITES = ${JSON.stringify(sprites)};
 /** the order of each MOBJINFO entry's states */
 export const STATE_FIELDS = ${JSON.stringify(FIELDS)};
 
-/** MT_ name → { ednum (the map's thing number, -1: none), health (spawnhealth), states (statenums, STATE_FIELDS order; 0 = none) } */
+/** MT_ name → { ednum (the map's thing number, -1: none), health (spawnhealth), states (statenums, STATE_FIELDS order; 0 = none), radius and height (map units) } */
 export const MOBJINFO = {
 ${Object.entries(mobj).map(([k, v]) => `  ${k}: ${JSON.stringify(v)},`).join('\n')}
 };

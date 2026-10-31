@@ -96,8 +96,13 @@ Per tic, `DOOM_TIC` runs:
     walks by `P_MOVE_FX` / `NEW_CHASE_DIR_FX` through `TRY_MOVE_MOBJ` (P_TryMove on
     `CHECK_POSITION_FX`, the player's own);
   - a light at the end of its count (`LIGHT_STEP`: T_LightFlash, T_StrobeFlash, T_FireFlicker);
-  - a door, lift, floor or crusher (`MOVER_STEP`). Each one that moves has the players look again
-    at their floor and ceiling (`HEIGHT_CLIP_FX`, `P_ThingHeightClip`).
+  - a door, lift, floor or crusher (`MOVER_STEP`: T_VerticalDoor, T_PlatRaise, T_MoveFloor,
+    T_MoveCeiling by `MOVERS.MTYPE`, DOOM's own types). Each step is `MOVE_PLANE` (T_MovePlane),
+    then `CHANGE_SECTOR` (P_ChangeSector): everything in the sector's block box looks again at its
+    floor and ceiling (`THING_HEIGHT_CLIP`), and what no longer fits is crunched, removed, hurt
+    or sends the plane back. Every thing keeps its `FLOORZ` and `CEILZ` (P_SpawnMobj's, then
+    P_TryMove's and P_ChangeSector's); `THINGS.LINK_SEQ` is DOOM's blocklinks' order (a trigger
+    bumps it when x or y change), and every walk over a block's things goes newest-linked first.
 
   What a thinker makes on its turn (a missile, blood, a door) runs this same tic, after the
   rest, as DOOM's new thinkers do at the end of its list. `THINK_KEY`, a context variable,

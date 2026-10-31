@@ -137,12 +137,21 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.mobjs')).sort(
 // thrust and pain, a monster thrown back in its own turn, the player killed, turned to the killer
 // and the level restarted; the missiles (P_SpawnMissile, their flight through P_TryMove and
 // PIT_CheckThing), the lost souls' charge, a barrel's blast, pickups as a move touches them: the
-// scripted shots, the barrel and the title demos agree in every column to the end. (E1M3's parts
-// at 442, where a closing door hides the player a tic sooner than vanilla's: the movers, L6.)
+// scripted shots, the barrel and the title demos agree in every column to the end.
 for (const name of ['e1m1-shoot', 'e1m1-walk', 'e1m2-barrel', 'e1m1-attract', 'e1m2-attract', 'map01-attract', 'map02-attract', 'map03-attract', 'map04-attract']) {
   const w = results[name];
   const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
   assert(w && off.length === 0, `the attacks in fixed point: ${name} stays in step with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
+}
+
+// phase L6: the world – doors, lifts, floors and crushers as DOOM's thinkers move them (T_MovePlane,
+// P_ChangeSector over the sector's blocks: a door closing on someone goes back up, what rides a lift
+// rides it, a corpse is crunched), the blocks' things in DOOM's order (blocklinks: the newest moved
+// first), sector specials, deaths and restarts: ten bot walks of 2100 tics, each in step to the end
+for (const name of ['e1m3-attract', 'e1m1-bot', 'e1m2-bot', 'e1m3-bot', 'e1m4-bot', 'e1m5-bot', 'map01-bot', 'map02-bot', 'map03-bot', 'map04-bot', 'map05-bot']) {
+  const w = results[name];
+  const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
+  assert(w && off.length === 0, `the world in step: ${name} agrees with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
 }
 
 // phase L2: the scripted walk (turns, runs, strafes, a wall) keeps the player in step all the way

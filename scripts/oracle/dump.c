@@ -16,6 +16,9 @@
 //   leveltime k M type  spawnpoint x y type options  x y z angle momx momy momz health
 //   statenum tics flags floorz ceilingz reactiontime movedir movecount threshold lastlook
 // and any other thinker as  leveltime k T name  (T_LightFlash, T_StrobeFlash, …).
+//
+// With $ORACLE_SECTORS, each sector whose floor, ceiling, light or special changed since the last
+// tic (all of them at the setup), as  leveltime sector floorheight ceilingheight lightlevel special.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -94,6 +97,37 @@ static void dump_mobjs(void)
     fflush(mobjs);
 }
 
+static FILE *secs;
+static fixed_t *was;
+
+static void dump_sectors(int setup)
+{
+    int i;
+    if (!secs)
+    {
+        const char *path = getenv("ORACLE_SECTORS");
+        if (!path || !(secs = fopen(path, "w"))) return;
+    }
+    if (setup)
+    {
+        free(was);
+        was = calloc(numsectors * 4, sizeof(fixed_t));
+    }
+    for (i = 0; i < numsectors; i++)
+    {
+        sector_t *s = &sectors[i];
+        fixed_t *w = &was[i * 4];
+        if (!setup && w[0] == s->floorheight && w[1] == s->ceilingheight && w[2] == s->lightlevel && w[3] == s->special)
+            continue;
+        w[0] = s->floorheight;
+        w[1] = s->ceilingheight;
+        w[2] = s->lightlevel;
+        w[3] = s->special;
+        fprintf(secs, "%d %d %d %d %d %d\n", leveltime, i, s->floorheight, s->ceilingheight, s->lightlevel, s->special);
+    }
+    fflush(secs);
+}
+
 static void dump(void)
 {
     thinker_t *th;
@@ -128,14 +162,21 @@ static void dump(void)
     if (getenv("ORACLE_MOBJS")) dump_mobjs();
 }
 
+
+
 void __wrap_G_Ticker(void)
 {
     __real_G_Ticker();
-    if (gamestate == GS_LEVEL) dump();
+    if (gamestate == GS_LEVEL)
+    {
+        dump();
+        if (getenv("ORACLE_SECTORS")) dump_sectors(0);
+    }
 }
 
 void __wrap_P_SetupLevel(int episode, int map, int playermask, skill_t skill)
 {
     __real_P_SetupLevel(episode, map, playermask, skill);
     dump();
+    if (getenv("ORACLE_SECTORS")) dump_sectors(1);
 }

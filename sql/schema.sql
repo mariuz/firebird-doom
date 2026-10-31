@@ -235,7 +235,13 @@ CREATE TABLE sectors (
   lfx_key    BIGINT,                         -- its place in the thinkers' list, as it was made
   tag        INTEGER NOT NULL,
   sky        SMALLINT DEFAULT 0 NOT NULL,
-  sound_heard SMALLINT DEFAULT 0 NOT NULL     -- soundtarget: the player whose gunfire reached this sector (0: none)
+  sound_heard SMALLINT DEFAULT 0 NOT NULL,    -- soundtarget: the player whose gunfire reached this sector (0: none)
+  -- sector->blockbox: the blockmap blocks its lines span, MAXRADIUS wider (P_GroupLines; INIT_MAP),
+  -- where P_ChangeSector looks for things when it moves
+  bb_xl      INTEGER,
+  bb_xh      INTEGER,
+  bb_yl      INTEGER,
+  bb_yh      INTEGER
 );
 CREATE INDEX sectors_tag ON sectors (tag);
 
@@ -408,8 +414,21 @@ CREATE TABLE things (
   -- its place in P_RunThinkers' list (RUN_THINKERS): NULL is twice its id, the order things are
   -- made in; a player's body at the level's start sits among the map's things, where its start is
   think_key   BIGINT,
-  lastlook    SMALLINT DEFAULT 0 NOT NULL      -- mobj->lastlook: the player P_LookForPlayers tries first (0–3)
+  lastlook    SMALLINT DEFAULT 0 NOT NULL,     -- mobj->lastlook: the player P_LookForPlayers tries first (0–3)
+  -- when it was last linked into its block (P_SetThingPosition: spawned, or moved): DOOM's
+  -- blocklinks keep a block's things newest-linked first, the order P_BlockThingsIterator meets
+  -- them in (THINGS_LINK sets it)
+  link_seq    BIGINT
 );
+CREATE SEQUENCE link_seq;
+SET TERM ^ ;
+CREATE TRIGGER things_link FOR things BEFORE INSERT OR UPDATE AS
+BEGIN
+  -- (a row written back from a save keeps the order it had)
+  IF ((INSERTING AND NEW.link_seq IS NULL) OR (UPDATING AND (NEW.x IS DISTINCT FROM OLD.x OR NEW.y IS DISTINCT FROM OLD.y))) THEN
+    NEW.link_seq = NEXT VALUE FOR link_seq;
+END^
+SET TERM ; ^
 CREATE INDEX things_kind ON things (kind);
 CREATE INDEX things_sector ON things (sector_id);
 CREATE INDEX things_x ON things (x);
@@ -556,7 +575,13 @@ CREATE TABLE movers (
   silent    SMALLINT DEFAULT 0 NOT NULL, -- type 141: no grinding noise
   new_flat  INTEGER,                     -- a floor's flat when it arrives (lowerAndChange, donut)
   new_special INTEGER,                   -- …and its new sector special
-  think_key BIGINT                       -- its place in the thinkers' list, as it was made (MOVERS_KEY)
+  think_key BIGINT,                      -- its place in the thinkers' list, as it was made (MOVERS_KEY)
+  -- DOOM's own type: vldoor_e (normal, close30ThenOpen, close, open, raiseIn5Mins, blazeRaise,
+  -- blazeOpen, blazeClose), plattype_e (perpetualRaise, downWaitUpStay, raiseAndChange,
+  -- raiseToNearestAndChange, blazeDWUS), floor_e (lowerFloor, …, donutRaise, buildStair) or
+  -- ceiling_e (lowerToFloor, raiseToHighest, lowerAndCrush, crushAndRaise, fastCrushAndRaise,
+  -- silentCrushAndRaise); NULL in an old save (MOVER_TYPE works it out)
+  mtype     VARCHAR(24)
 );
 SET TERM ^ ;
 -- A mover is a new thinker: it takes its place at the end of the list (twice the next THING_SEQ)
