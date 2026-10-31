@@ -15,7 +15,10 @@ import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
-import { parseLmp, writeLmp, portCmd, lmpMapName, BT_ATTACK, BT_USE, BT_CHANGE } from '../src/lmp.js';
+import os from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { parseLmp, writeLmp, portCmd, lmpMapName, lmpProblem, LmpPlayer, BT_ATTACK, BT_USE, BT_CHANGE } from '../src/lmp.js';
+import { wadFromEnv } from './wad-arg.mjs';
 import { FIELDS, parseTrace, playAgainst, startDemo, restartDemo, nextDemoMap, exitPwad, EXIT_PWADS, parseMobjs, portThinkers, compareThinkers } from './lmp-sync.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -202,6 +205,71 @@ if (update) {
 } else if (better) {
   console.log(`(${better} demo(s) closer to vanilla than the baseline: npm run test:lmp -- --update to keep it)`);
 }
+// ── phase L7: the page's player (LmpPlayer: the turns main.js takes, as the harness plays them) ──
+{
+  const demo = parseLmp(fs.readFileSync(path.join(dir, 'e1m1-exit.lmp')));
+  const pl = new LmpPlayer(demo, false);
+  const tic = pl.take('tic');
+  pl.index = 29;
+  pl.carry(false, false);
+  // (WI_checkForAccelerate: the fixture's fire pressed a tic at a time, 46 and 67 tics into the
+  // screen – a press each, the tic after none)
+  const wi = [];
+  for (let i = 0; i < 70; i++) wi.push(pl.take('wi'));
+  const presses = wi.filter((c) => c[3] === 1).length;
+  pl.index = demo.tics.length - 1;
+  const last = pl.take('tic');
+  assert(pl.map === 'E1M1' && tic.length === 8 && tic[0] === 1 && tic[1] === 1 && JSON.stringify(pl.take('map')) === 'null' && last && pl.done
+    && presses === 2 && wi[46][3] === 1 && wi[47][3] === 0 && wi[67][3] === 1 && pl.take('tic') === null,
+    `LmpPlayer: DOOM_TIC's arguments a tic (${JSON.stringify(tic)}), the intermission's presses as WI_checkForAccelerate sees them (${presses} in its first 70 tics), null at the demo's end`);
+  const two = { ...demo, players: [true, true, false, false] };
+  assert(/2-player/.test(lmpProblem(two) ?? '') && /deathmatch/.test(lmpProblem({ ...demo, deathmatch: 1 }) ?? '') && lmpProblem(demo) === null,
+    `the page plays one player's demos: a netgame's is refused ("${lmpProblem(two)}")`);
+}
+
+// ── phase L7: a WAD's own demos. WAD=/path/to/doom.wad (id's, never in the repo; PWAD= adds files
+// over it, separated by the path delimiter): each DEMOn the WAD has, played against vanilla's trace
+// of it – the oracle's, made here (npm run oracle first) – through deaths and level ends, every
+// column in step to its end ──
+{
+  const w = wadFromEnv();
+  const extra = (process.env.PWAD ?? '').split(path.delimiter).filter(Boolean).map((p) => path.resolve(p));
+  const oracle = process.env.ORACLE ?? path.join(root, 'oracle-build/build/src/chocolate-doom');
+  if (!w) console.log("(WAD= not set: a WAD's own demos aren't played; WAD=/path/to/doom.wad npm run test:lmp plays id's)");
+  else if (!fs.existsSync(oracle)) console.log(`(WAD=${w.name}: no oracle at ${oracle} to make vanilla's traces – npm run oracle first)`);
+  else {
+    const wad = extra.length ? new Wad(fs.readFileSync(w.path), ...extra.map((p) => fs.readFileSync(p))) : w.wad;
+    const res = await loadResources(db, wad);
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-home-'));
+    let played = 0;
+    for (let n = 1; n <= 4; n++) {
+      const lump = wad.lump(`DEMO${n}`);
+      if (!lump) continue;
+      const demo = parseLmp(wad.data(lump));
+      const problem = lmpProblem(demo);
+      if (problem) { console.log(`(DEMO${n}: ${problem})`); continue; }
+      const tracePath = path.join(home, `demo${n}.trace`);
+      try {
+        execFileSync(oracle, ['-iwad', w.path, ...(extra.length ? ['-file', ...extra] : []), '-timedemo', `DEMO${n}`, '-nodraw', '-nosound', '-nomusic'],
+          { env: { ...process.env, HOME: home, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy', ORACLE_TRACE: tracePath }, stdio: 'pipe', timeout: 600000 });
+      } catch { /* (-timedemo ends with I_Error's report) */ }
+      const trace = parseTrace(fs.readFileSync(tracePath, 'utf8'));
+      await startDemo(db, wad, res, demo, loadMap);
+      const r = await playAgainst(db, demo, trace, { restart: () => restartDemo(db, wad, res, demo, loadMap),
+        worldDone: (secret) => nextDemoMap(db, wad, res, demo, loadMap, secret) });
+      const off = FIELDS.filter((f) => r.first[f]);
+      const map = (await db.query('SELECT map_name FROM game WHERE id = 1')).rows[0].MAP_NAME.trim();
+      assert(off.length === 0 && r.unplayed === 0 && r.tics === demo.tics.length,
+        `${w.name}${extra.length ? ` + ${extra.map((p) => path.basename(p)).join(' + ')}` : ''}'s DEMO${n} (${lmpMapName(demo, w.doom2)}, skill ${demo.skill}, version ${demo.version}): ${r.tics} of ${demo.tics.length} tics, ending on ${map}, `
+        + (off.length ? `out of step: ${off.map((f) => `${f} at tic ${r.first[f].tic} (port ${r.first[f].port}, vanilla ${r.first[f].vanilla})`).slice(0, 4).join('; ')}` : 'in step with vanilla in every column')
+        + (r.unplayed ? `; ${r.unplayed} lines of vanilla's trace left over` : ''));
+      played++;
+    }
+    if (!played) console.log(`(WAD=${w.name}: no demo lumps to play)`);
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'lmp ok');
 process.exit(failures ? 1 : 0);

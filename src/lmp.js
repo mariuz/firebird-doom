@@ -106,3 +106,67 @@ export function portCmd([fwd, side, turn, buttons]) {
   }
   return [fwd / 25, side / 25, (turn * 2 * Math.PI) / 65536, buttons & BT_ATTACK ? 1 : 0, buttons & BT_USE ? 1 : 0, weapon, 0];
 }
+
+/**
+ * Why a parsed .lmp can't be played on the page, or null. The page plays one player's demos:
+ * a netgame's (more than one player in it) or a deathmatch's would need every player's
+ * ticcmds through NET_TIC.
+ */
+export function lmpProblem(demo) {
+  const n = demo.players.filter(Boolean).length;
+  if (n !== 1 || !demo.players[demo.consoleplayer]) return `a demo of a ${n}-player game; the page plays one player's demos`;
+  if (demo.deathmatch) return 'a deathmatch demo; the page plays one player\'s demos';
+  if (!demo.tics.length) return 'an empty demo';
+  return null;
+}
+
+/**
+ * A .lmp played on the page: the same turns as the page's own demos (DemoPlayer's take), each
+ * one of the demo's tics, as G_Ticker reads a ticcmd every tic whatever the game shows.
+ *   take('tic')  a level's tic: DOOM_TIC's arguments, [1, fwd, side, turn, fire, use, weapon, run]
+ *   take('wi')   an intermission's tic: ['wi', 1, held, pressed] – pressed is
+ *                WI_checkForAccelerate's new press of fire or use (player->attackdown, usedown,
+ *                carried over from the level: carry())
+ *   take('fin')  a text screen's tic: ['fin', 1, held, 0]
+ *   take('map')  the next level, or the restart after a death: ['map', '*', null, 0] – which
+ *                one is the game's to say (G_DoWorldDone, G_DoReborn), and no seed: P_Random's
+ *                index carries on
+ * null when the demo is over (its 0x80: G_CheckDemoStatus).
+ */
+export class LmpPlayer {
+  constructor(demo, commercial) {
+    const problem = lmpProblem(demo);
+    if (problem) throw new Error(problem);
+    this.demo = demo;
+    this.lmp = true;
+    this.map = lmpMapName(demo, commercial);
+    this.index = 0;
+    this.attackdown = false;
+    this.usedown = false;
+  }
+
+  get done() { return this.index >= this.demo.tics.length; }
+
+  /** the level's end: player->attackdown and usedown as the level left them, for WI_checkForAccelerate */
+  carry(attackdown, usedown) {
+    this.attackdown = !!attackdown;
+    this.usedown = !!usedown;
+  }
+
+  take(kind) {
+    if (this.done) return null;
+    if (kind === 'map') return ['map', '*', null, 0];
+    const tic = this.demo.tics[this.index++];
+    const cmd = tic[this.demo.consoleplayer] ?? tic[0];
+    if (kind === 'tic') return [1, ...portCmd(cmd)];
+    const atk = (cmd[3] & BT_ATTACK) !== 0;
+    const use = (cmd[3] & BT_USE) !== 0;
+    if (kind === 'wi') {
+      const pressed = (atk && !this.attackdown) || (use && !this.usedown);
+      this.attackdown = atk;
+      this.usedown = use;
+      return ['wi', 1, atk || use ? 1 : 0, pressed ? 1 : 0];
+    }
+    return ['fin', 1, atk || use ? 1 : 0, 0];
+  }
+}

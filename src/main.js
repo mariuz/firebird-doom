@@ -21,6 +21,7 @@ import { Menu, TitleLoop } from './menu.js';
 import { captureGame, restoreGame, saveStore, exportSaves, importSaves, rememberFiles, recallFiles, SLOTS,
   savePlayers, saveSetting, packSave, unpackSave, SAVE_VERSION } from './savegame.js';
 import { DemoPlayer, DemoRecorder, demoProblem, attractDemoFile, ATTRACT_DEMOS } from './demo.js';
+import { parseLmp, LmpPlayer } from './lmp.js';
 import { Intermission, levelOf, setParOverrides } from './intermission.js';
 import { DoomAudio, musicLumpFor } from './audio.js';
 import { createPresenter } from './present.js';
@@ -93,6 +94,7 @@ let saveSlots = Array(SLOTS).fill(null);   // the slots' descriptions, for the m
 let recorder = null;                // a demo being recorded (demo.js)
 let demoPlayer = null;              // …or played back
 let lastDemo = null;                // the last one recorded or loaded, for Play and Download
+let gameSkill = 0;                  // gameskill: the game's, kept from level to level (0: none yet)
 let attract = 0;                    // the title loop's demo playing now (D_DoAdvanceDemo's DEMOn), 0 outside it
 let attractDemos = new Map();       // this WAD's bundled demos, by number
 let lastSeed = null;                // the seed the current map started from
@@ -327,11 +329,58 @@ async function playDemo(demo) {
   updateDemoButtons();
 }
 
+/**
+ * G_DoPlayDemo for DOOM's own demos (.lmp, or a WAD's DEMOn lump): the header's skill, map and
+ * options as G_InitNew sets them up (P_Random's index from 0), then a ticcmd a tic – through
+ * deaths, the intermission and the levels after, as long as the demo goes. → whether it started.
+ */
+async function playLmp(bytes, name = 'the demo', { forTitle = 0 } = {}) {
+  let player;
+  try {
+    player = new LmpPlayer(parseLmp(bytes), wad.mapNames().some((m) => m.startsWith('MAP')));
+  } catch (err) {
+    if (!forTitle) setStatus(`Can't play ${name}: ${err.message}`, true);
+    return false;
+  }
+  const d = player.demo;
+  if (!wad.mapNames().includes(player.map)) {
+    if (!forTitle) setStatus(`Can't play ${name}: this WAD has no ${player.map}`, true);
+    return false;
+  }
+  if (!forTitle) $('map').value = player.map;
+  await startMap(player.map, true, { skill: d.skill, seed: 0, keepDemo: !!forTitle, attract: !!forTitle, fromFrame: !!forTitle,
+    options: demoOptions(d) });
+  if (forTitle && (attract !== forTitle || !title)) return true;   // (a game started meanwhile)
+  demoPlayer = player;
+  if (!forTitle) setStatus(`▶ Playing ${name}: ${player.map}, skill ${d.skill}, ${d.tics.length} tics (Esc stops it)`);
+  updateDemoButtons();
+  return true;
+}
+
+/** where a .lmp left the game, read before anything else runs (doom.demo.lmpEnd, for tests) */
+let lmpEnd = null;
+function noteLmpEnd(player, why) {
+  lmpEnd = null;
+  db.query(`SELECT g.tic, g.rng, t.x, t.y, t.z, t.angle, p.health, g.map_name FROM player p JOIN things t ON t.id = p.thing_id
+      CROSS JOIN game g WHERE p.id = 1 AND g.id = 1`)
+    .then((r) => { lmpEnd = { ...r.rows[0], MAP_NAME: r.rows[0].MAP_NAME?.trim(), played: player.index, tics: player.demo.tics.length, why }; })
+    .catch(() => {});
+}
+
 /** the launch options a demo was recorded with (none, in one from before they were kept) */
 const demoOptions = (demo) => Object.fromEntries(LAUNCH_OPTIONS.map((o) => [o, demo[o] ? 1 : 0]));
 
 function endPlayback(why) {
+  if (demoPlayer?.lmp) noteLmpEnd(demoPlayer, why);
   if (attract) { endAttract(); return; }
+  if (demoPlayer?.lmp && !timedemo) {
+    // G_CheckDemoStatus: DOOM's demo over, D_AdvanceDemo – back to the title loop
+    demoPlayer = null;
+    setStatus(`Demo ended: ${why}.`);
+    goTitle();
+    updateDemoButtons();
+    return;
+  }
   demoPlayer = null;
   if (timedemo && timedemo.ms == null && timedemo.start != null) {
     // G_CheckDemoStatus with -timedemo: how long it took, in tics and frames a second
@@ -356,6 +405,12 @@ async function runCommandLine() {
   if (cl.problems.length) setStatus(`Command line: ${cl.problems.join('; ')}.`, true);
   if (cl.demo) {
     let demo = null;
+    const lump = cl.demo.name !== 'last' && wad.lump(cl.demo.name.toUpperCase());
+    if (lump) {
+      // the WAD's own DEMOn (-playdemo demo1 in DOOM reads the lump)
+      if (await playLmp(wad.data(lump), cl.demo.name.toUpperCase()) && cl.demo.timed && demoPlayer) timedemo = { start: null, frames: 0, tics: 0 };
+      return;
+    }
     if (cl.demo.name === 'last') demo = await saves.get(`${wadKey}|demo`).catch(() => null);
     else if (!pwads.length && !dehPatch) {
       const n = Number(cl.demo.name.slice(4));
@@ -385,6 +440,17 @@ async function runCommandLine() {
  * loop moves on, where DOOM would stop for the missing lump.
  */
 async function startAttract(n) {
+  // the WAD's own DEMOn lump, as DOOM plays it (id's WADs, a PWAD's); else the port's own
+  // recording for a bundled WAD (Freedoom has no demo lumps)
+  const lump = wad.lump(`DEMO${n}`);
+  if (lump && !net && !lobby.role) {
+    attract = n;
+    frameStarting = true;
+    let ok = false;
+    try { ok = await playLmp(wad.data(lump), `DEMO${n}`, { forTitle: n }); } finally { frameStarting = false; }
+    if (!ok && attract === n) { attract = 0; title?.advance(); }
+    return;
+  }
   const demo = attractDemos.get(n);
   // (not while players are gathering for a netgame, or in one: the map is theirs)
   if (!demo || demo.wad !== wadKey || !wad.mapNames().includes(demo.map) || net || lobby.role) { title.advance(); return; }
@@ -670,7 +736,7 @@ function startMap(name, newGame, opts) {
   return run;
 }
 
-async function startMapNow(name, newGame, { skill = settings.skill, seed = null, reborn = false, keepDemo = false, netgame = false, attract: forTitle = false, fromFrame = false, restore = null, options = null } = {}) {
+async function startMapNow(name, newGame, { skill = null, seed = null, reborn = false, keepDemo = false, netgame = false, attract: forTitle = false, fromFrame = false, restore = null, options = null } = {}) {
   if (net && !netgame) leaveNet('you started another game');
   running = false;
   // (a start from outside the loop – the menu, the panel, a message – waits for
@@ -693,6 +759,10 @@ async function startMapNow(name, newGame, { skill = settings.skill, seed = null,
     demoPlayer = null;
   }
   if (newGame) didSecret.clear();
+  // the skill: the one asked for, or within a game (the next level, a restart) the game's own
+  // (gameskill, as G_DoLoadLevel keeps it), else the setting's
+  skill = skill ?? (keepDemo && gameSkill ? gameSkill : settings.skill);
+  gameSkill = skill;
   setStatus(`Loading ${name} into Firebird…`);
   const t0 = performance.now();
   // P_Random's index: a demo's own seed, or 0 for a new game as G_InitNew's M_ClearRandom
@@ -744,14 +814,20 @@ async function nextLevel(name, newGame, reborn = false) {
   let seed = null;
   if (demoPlayer) {
     const c = demoPlayer.take('map');
-    if (c && c[1] === name) seed = c[2];
+    if (c && (c[1] === name || c[1] === '*')) seed = c[2];
     else endPlayback(demoPlayer.done ? 'the demo is over' : 'it is out of step with the game');
   }
   const rec = recorder;
+  const lmp = demoPlayer?.lmp && !reborn ? demoPlayer : null;
   frameStarting = true;
   try {
-    await startMap(name, newGame, { seed, reborn, keepDemo: true, netgame: !!net, fromFrame: true });
+    // (the title loop's demo stays the title loop's through its next level)
+    await startMap(name, newGame, { seed, reborn, keepDemo: true, netgame: !!net, fromFrame: true, attract: !!attract });
   } finally { frameStarting = false; }
+  // (G_DoWorldDone: player->attackdown and usedown as the intermission left them)
+  if (lmp && demoPlayer === lmp) {
+    await db.query('UPDATE player p SET attack_down = ?, use_down = ? WHERE p.id = 1', [lmp.attackdown ? 1 : 0, lmp.usedown ? 1 : 0]);
+  }
   rec?.push(['map', name, lastSeed, newGame ? 1 : 0]);
 }
 
@@ -1224,7 +1300,9 @@ async function frameNow() {
       const n = c ? c[1] : tics;
       const buttons = c ? c[2] === 1 : input[4] === 1 || input[5] === 1;
       recorder?.push(['wi', n, buttons ? 1 : 0]);
-      for (let i = 0; i < n; i++) intermission.tick(i === 0 && buttons && !wiButtons);
+      // (a .lmp says the press itself: WI_checkForAccelerate, fire and use apart)
+      const pressed = c && c.length > 3 ? c[3] === 1 : buttons && !wiButtons;
+      for (let i = 0; i < n; i++) intermission.tick(i === 0 && pressed);
       wiButtons = buttons;
       if (intermission.done) {
         // G_WorldDone: a text screen if this exit has one, else the next map
@@ -1328,6 +1406,10 @@ async function frameNow() {
           }, didSecret.has(level.episode));
           intermission.secret = secret;
           wiButtons = true;   // (the button that pulled the switch doesn't count)
+          if (demoPlayer?.lmp) {
+            const p = (await db.query('SELECT p.attack_down, p.use_down FROM player p WHERE p.id = 1')).rows[0];
+            demoPlayer.carry(p.ATTACK_DOWN === 1, p.USE_DOWN === 1);
+          }
         }
       }
       nextFrame();
@@ -1756,7 +1838,9 @@ async function boot() {
       get files() { return { base: baseWad?.label, pwads: pwads.map((p) => p.name), deh: dehPatch?.name ?? null }; },
       addPwad: async (buffer, name) => { pwads.push({ buffer, name }); await reloadWads(); },
       useDeh: async (text, name = 'patch.deh') => { dehPatch = { text, name }; await reloadWads(); },
-      get demo() { return { recording: !!recorder, playing: !!demoPlayer && !attract, attract, played: demoPlayer?.index ?? 0, last: lastDemo }; },
+      get demo() { return { recording: !!recorder, playing: !!demoPlayer && !attract, attract, lmp: !!demoPlayer?.lmp, lmpEnd, played: demoPlayer?.index ?? 0, last: lastDemo }; },
+      // a .lmp (its bytes), as the Load… button plays one
+      playLmp: (bytes, name) => playLmp(Uint8Array.from(bytes), name),
       get chat() { return net && { on: net.chat.on, line: net.chat.line.text, queued: net.chat.queue.length }; },
       get net() { return net && { me: net.me, players: net.players, deathmatch: net.deathmatch, timer: net.timer, nomonsters: net.nomonsters, respawn: net.respawn, fast: net.fast, tic: net.ls.executed, error: net.ls.error, sums: Object.fromEntries(net.sums), paused: net.paused }; },
       // a slot's save, for tests: its name, map and the game it holds
@@ -1975,10 +2059,16 @@ $('demo-file').addEventListener('change', async (e) => {
   const f = e.target.files[0];
   if (!f) return;
   try {
-    const demo = JSON.parse(await f.text());
-    lastDemo = demo;
-    updateDemoButtons();
-    await playDemo(demo);
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    // DOOM's own (.lmp: a version byte, or a v1.2 skill, first), or the port's (JSON)
+    if (/\.lmp$/i.test(f.name) || bytes[0] !== 0x7b) {
+      await playLmp(bytes, f.name);
+    } else {
+      const demo = JSON.parse(new TextDecoder().decode(bytes));
+      lastDemo = demo;
+      updateDemoButtons();
+      await playDemo(demo);
+    }
   } catch (err) { setStatus(`Can't read that demo: ${err.message}`, true); }
   e.target.value = '';
 });

@@ -28,6 +28,7 @@ npm run test:demo      # determinism (and without WAD=)
 npm run test:attract       # the title loop's demos (public/demos/) replay to their checksums; npm run attract records them
 npm run test:dehacked      # DeHackEd patches
 npm run test:lmp           # .lmp demos: the format, and how long the port keeps step with vanilla (a ratchet: -- --update)
+WAD=~/doom.wad npm run test:lmp   # …and the WAD's own DEMO1–4 against the oracle's traces of them (PWAD= adds files)
 npm run oracle             # vanilla as a reference: Chocolate Doom built headless into oracle-build/ (needs SDL2 -dev packages)
 npm run lmp-fixtures       # the .lmp fixtures and vanilla's trace of each (needs the oracle); -- NAME … for only those
 npm run lmp-rnglog -- e1m1-walk 119 119   # every P_Random draw in those tics of a fixture, with the procedures that drew it

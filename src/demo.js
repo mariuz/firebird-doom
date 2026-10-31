@@ -15,12 +15,11 @@
 //                                  one again after a death (with a new seed)
 // Playing checks the game takes the same turns; if not, it stops, out of step.
 //
-// DOOM's own .lmp demos can't be played: they need DOOM's exact simulation
-// (fixed point, its random table consumed in the same order), and this one is
-// a re-implementation in SQL that is faithful but not bit-identical. So the
-// demos the title loop plays between its pages (DEMO1–3, DOOM II's DEMO4) are
-// the port's own, recorded by a scripted player (scripts/record-attract.mjs)
-// and shipped in public/demos/ for the bundled WADs.
+// DOOM's own .lmp demos are played too (src/lmp.js, LmpPlayer: the page's Load…, -playdemo, a
+// WAD's DEMO1–4 in the title loop); they keep step since the .lmp phases L0–L6 made the
+// simulation DOOM's own, bit for bit. Freedoom has no demo lumps, so for the bundled WADs the
+// title loop plays the port's own recordings, made by a scripted player
+// (scripts/record-attract.mjs) and shipped in public/demos/.
 
 export const DEMO_VERSION = 2;
 

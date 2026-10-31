@@ -237,12 +237,13 @@ export async function nextDemoMap(db, wad, res, demo, loadMap, secret) {
 /**
  * A PWAD of MAP from the IWAD with one line's special changed – an exit where a demo walks
  * (52, W1 exit) – the rest as it was, so the BSP and the blockmap still hold. For demos through a
- * level's end where Freedoom's exits lie behind keys and switches. → the PWAD's bytes.
+ * level's end where Freedoom's exits lie behind keys and switches. EXTRA: more lumps, [name,
+ * bytes] (a DEMO1, for the page's title loop). → the PWAD's bytes.
  */
-export function exitPwad(iwad, map, line, special) {
+export function exitPwad(iwad, map, line, special, extra = []) {
   const LUMPS = ['THINGS', 'LINEDEFS', 'SIDEDEFS', 'VERTEXES', 'SEGS', 'SSECTORS', 'NODES', 'SECTORS', 'REJECT', 'BLOCKMAP'];
   const at = iwad.lump(map).index;
-  const lumps = [[map, new Uint8Array(0)], ...LUMPS.map((n, k) => [n, Uint8Array.from(iwad.data(iwad.lumps[at + 1 + k]))])];
+  const lumps = [[map, new Uint8Array(0)], ...LUMPS.map((n, k) => [n, Uint8Array.from(iwad.data(iwad.lumps[at + 1 + k]))]), ...extra];
   const ld = lumps[2][1];
   new DataView(ld.buffer).setUint16(line * 14 + 6, special, true);
   const size = lumps.reduce((a, [, b]) => a + b.length, 0);

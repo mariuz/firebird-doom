@@ -631,14 +631,16 @@ WAD=~/wads/doom2.wad npm run test:finale         # the cast call's frames, Freed
 The game opens on the title loop (`D_DoAdvanceDemo`, [src/menu.js](src/menu.js)): `TITLEPIC` to
 the title music (`D_INTRO`, `D_DM2TTL` on DOOM II), a demo, the credits page, a demo, the
 credits again (`HELP2` on a three-episode WAD; DOOM II shows `TITLEPIC` again), a demo, round
-and round – DOOM II has a fourth demo after the third. DOOM's demos are its `.lmp` files, which
-this port can't play (see Demos below), so these are its own: for each Freedoom WAD a scripted
+and round – DOOM II has a fourth demo after the third. DOOM's demos are its `.lmp` files, the
+WAD's `DEMO1`–`DEMO4` lumps, and where a WAD has them (id's, or a PWAD's) the loop plays them as
+DOOM does: through deaths, exits and the intermission, for as long as the demo goes. Freedoom has
+none, so for its WADs the demos are the port's own: for each a scripted
 player (`npm run attract`, [scripts/record-attract.mjs](scripts/record-attract.mjs)) runs the
 first maps for twenty seconds, shooting what it sees, and the recordings ship in
 [public/demos/](public/demos/). The demo plays through the game loop like any other, melting in
 and out; any key brings up the menu over it while it goes on, as DOOM's `G_Responder` has it;
-starting a game ends it. A WAD of your own has no demos, and its title loop skips them (DOOM would
-stop for the missing lump). `npm run test:attract` replays each demo against the checksum stored
+starting a game ends it. A WAD with no demos of its own, and none of ours, has its title loop
+skip them (DOOM would stop for the missing lump). `npm run test:attract` replays each demo against the checksum stored
 in it, so a change to the simulation that alters how they play out is caught, and they're recorded
 again. Any key brings up the main menu (`m_menu.c`), drawn with the WAD's own `M_*` graphics and the blinking
 skull. In play, Esc opens it, and so does letting go of the mouse. The game waits behind it, as DOOM's single player does (in co-op it goes on).
@@ -774,12 +776,22 @@ That works because the game is deterministic. Every chance in `sql/game.sql` goe
 kept in the `GAME.RNG` column (so a save keeps it too). A new game starts it at 0, as
 `G_InitNew`'s `M_ClearRandom` does; the next level and the restart after a death carry on. And
 every load numbers the things from 1. Cheats are switched off while recording
-or playing, because they aren't inputs and would desync the demo. DOOM's own `.lmp` demos can't be
-played yet: they need DOOM's exact fixed-point simulation and random table, and this is a
-re-implementation in SQL. `npm run test:demo` replays a busy 531-tic recording and compares every
-row of the resulting game, on both WADs.
+or playing, because they aren't inputs and would desync the demo. `npm run test:demo` replays a
+busy 531-tic recording and compares every row of the resulting game, on both WADs.
 
-Getting there is the roadmap's stretch goal, in phases (docs/ROADMAP.md, *Original `.lmp` demos*),
+**DOOM's own demos play too.** **Load…** takes a `.lmp` file as well as the port's JSON, and
+`?playdemo=demo1` (or `?timedemo=demo1`) plays the WAD's own `DEMO1` lump where it has one. The
+title loop plays a WAD's `DEMO1`–`DEMO4` (above). The demo's header gives the map, the skill and
+the options, and `G_InitNew` starts the random numbers from 0. Then each of its ticcmds is a
+tic, whatever the game shows (`G_Ticker` reads one every tic, `LmpPlayer` in
+[src/lmp.js](src/lmp.js)): a level's tic, an intermission's (a fresh press of fire or use hurries
+it on, `WI_checkForAccelerate`, the buttons held at the exit carried over), a text screen's, then
+the next level, or the same one after a death. At the demo's end the page goes back to the title
+loop, as `G_CheckDemoStatus` does. Demos of netgames (more than one player) aren't played yet:
+they'd need every player's ticcmds through `NET_TIC`. Running the demo through the port's own
+game is the point: it keeps step with vanilla because the simulation is DOOM's, bit for bit.
+
+Getting there was the roadmap's stretch goal, in phases (docs/ROADMAP.md, *Original `.lmp` demos*),
 measured against vanilla itself:
 - **Reading demos:** `src/lmp.js` reads and writes DOOM's demo format: v1.9, the old v1.2
   header, and Chocolate Doom's longtics.
@@ -844,8 +856,13 @@ measured against vanilla itself:
   as vanilla's (`WI_Ticker`, hurried on by a fresh press of fire or use) and the next map
   loads with the player and the random numbers carried over. Freedoom's exits all lie behind
   keys or switches, so two fixtures play on a PWAD of E1M1 and of MAP01 with one line the walk
-  crosses made into an exit; they keep step through E1M2 and MAP02. What's left before the page
-  can play a `.lmp` is playing them (phase L7).
+  crosses made into an exit; they keep step through E1M2 and MAP02.
+- **Playing them (phase L7, done):** the page plays them (above). `npm run test:browser` gives the
+  page a PWAD whose `DEMO1` is the E1M1 exit fixture: the title loop plays it through the
+  intermission into E1M2 and ends where vanilla's trace ends, every value the same, and so does a
+  `.lmp` through **Load…**. With id's WADs, `WAD=/path/to/doom.wad npm run test:lmp` makes vanilla's
+  trace of each of the WAD's `DEMOn` with the oracle and plays it against it (`PWAD=` adds files
+  over the WAD).
 
 ### Co-op and deathmatch over the network
 
@@ -1379,15 +1396,16 @@ at its target the tic they appear. An old save's monsters join the table where t
 not the demons' `DSDMPAIN`.) `npm run test:states` wakes, hurts, kills and gibs them and times each
 step.
 
-What's still not vanilla, and why `.lmp` demos can't play yet (docs/ROADMAP.md):
+What's still not vanilla (docs/ROADMAP.md):
 - **Arithmetic:** what moves, moves in DOOM's 16.16 fixed point, with BAM angles and the
   `finesine` table (the sector heights stay doubles, exact at DOOM's speeds). Code the demos
   haven't reached yet – some rarer monster attacks, the boss brain – still does its sums in
   doubles and may draw `P_Random` in another order.
 - **Keys:** the page's own keys aren't quite `G_BuildTiccmd`'s: a strafe is 25 (50 running)
   rather than 24 (40), and the turn keys have no slow start.
-- **Playing them:** the page doesn't play `.lmp` files yet (phase L7); only the test harness
-  does, through deaths, restarts and level ends.
+- **DOOM's demos of netgames:** the page plays one player's `.lmp` demos; a co-op or deathmatch
+  demo would need every player's ticcmds through `NET_TIC`. Nobody has played id's own demos
+  against vanilla here yet: the repo can't hold id's WADs (`WAD=` above).
 Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods
 out from your sector through every open two-sided line. A closed door stops it, and a line flagged
 *sound block* lets it through once but never twice. Every sector it reaches remembers. Idle

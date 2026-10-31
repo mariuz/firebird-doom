@@ -41,7 +41,8 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   (under **Simulation** below: *Original `.lmp` demos, in phases*): phases L0, the yardstick,
   L1, DOOM's random numbers, L2, the player in fixed point, L3, the map as DOOM spawns it
   and its thinkers' order, L4, the monsters' sight and walk, L5, the attacks, and L6, the world,
-  are done; L7, playing them on the page, is next.
+  and L7, playing them on the page, are done. Left: netgame demos (more than one player), and
+  someone with id's WADs running `WAD=/path/to/doom.wad npm run test:lmp` against their demos.
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
@@ -559,9 +560,28 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   back after BUTTONTIME, 35 tics. Always DSSWTCHN (vanilla's exit switch has lost its special
   before the DSSWTCHX test). Not saved, as vanilla's aren't.
 
-**Phase L7: playing them.** The page plays a `.lmp` (a file, or an IWAD's DEMO1–4) and the
-title loop shows a WAD's own demos, once they keep step. Test: id's demos where a user has the
-WAD (test:lmp with WAD=, like the id-style finale tests).
+**Phase L7: playing them.** *Done.*
+- **The player:** `LmpPlayer` (`src/lmp.js`) answers the page's demo turns (`take`) from a
+  `.lmp`'s ticcmds, one a tic whatever the game shows, as G_Ticker reads them: a level's
+  (DOOM_TIC's arguments), an intermission's (WI_checkForAccelerate's press, fire and use apart,
+  attackdown and usedown carried over from the level and back into the next), a text screen's,
+  and the next level or the restart, which the game names (no seed: P_Random goes on). It
+  refuses a netgame's demo (`lmpProblem`).
+- **On the page:** **Load…** takes a `.lmp`; `?playdemo=` and `?timedemo=` play a WAD's `DEMOn`
+  lump; the title loop plays a WAD's `DEMO1`–`DEMO4` where it has them (D_DoAdvanceDemo; Freedoom
+  has none, so its loop keeps the port's recordings), and a demo there stays in the loop through
+  its next levels. At the end, G_CheckDemoStatus: the title loop (`doom.demo.lmpEnd` keeps where
+  the game stood, for tests). The next level and a restart keep the game's skill (gameskill), not
+  the setting's: a demo at another skill went on at the wrong one before.
+- **Tests:** the browser test gives the page a PWAD with E1M1's exit line and the `e1m1-exit`
+  fixture as its `DEMO1`: the title loop plays it through the intermission into E1M2 and ends
+  where vanilla's trace ends (tic, P_Random's index, the player's x, y, z, angle and health),
+  then goes on to CREDIT; `e1m2-barrel.lmp` through Load… the same. `test:lmp` checks
+  LmpPlayer's turns, and with `WAD=` (and `PWAD=`) plays each of the WAD's `DEMOn` against the
+  oracle's trace of it, made there. Checked here on Freedoom with a PWAD of three fixtures as
+  `DEMO1`–`DEMO3`; id's own demos wait for someone with the WADs.
+- **Left:** netgame demos (NET_TIC with every player's ticcmds; the consistency of a 2–4 player
+  game is there from co-op).
 
 - ~~**Armour types.**~~ Done: green armour (type 1) absorbs ⅓, and blue armour, the megasphere
   and IDKFA (type 2) absorb ½. Bonuses keep the type, and used-up armour loses it.

@@ -590,7 +590,50 @@ try {
     await p3.close();
   }
 
-  // offline play (sw.js): a first visit leaves the page, the engine and the WAD it
+  // DOOM's own demos (phase L7): a PWAD's DEMO1 – E1M1 with an exit where the demo walks
+  // (lmp-sync's EXIT_PWADS), and the e1m1-exit fixture as its demo – plays in the title loop
+  // as D_DoAdvanceDemo plays it: through E1M1's exit, the intermission (its tics the demo's,
+  // fire pressed to hurry it) and into E1M2, ending where vanilla's trace of it ends (the oracle's,
+  // scripts/fixtures/lmp). Then a .lmp through the Load… button, E1M2's barrel shot, the same.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1000, height: 800 } });
+    const p5 = await ctx.newPage();
+    p5.on('pageerror', (e) => errors.push(e.message));
+    const { Wad } = await import('../src/wad.js');
+    const { exitPwad, parseTrace } = await import('./lmp-sync.mjs');
+    const fsm = await import('node:fs');
+    const fixture = (n) => path.join(root, 'scripts/fixtures/lmp', n);
+    const iwad = new Wad(fsm.readFileSync(path.join(root, 'public/wads/freedoom1.wad')));
+    const pwad = exitPwad(iwad, 'E1M1', 834, 52, [['DEMO1', fsm.readFileSync(fixture('e1m1-exit.lmp'))]]);
+    // the trace's last line, against where the page's game stood at the demo's end
+    const agree = (end, n) => {
+      const v = parseTrace(fsm.readFileSync(fixture(`${n}.trace`), 'utf8')).at(-1);
+      const fx = (d) => Math.round(d * 65536);
+      const bam = (r) => { const t = r / (2 * Math.PI); return Math.round((t - Math.floor(t)) * 4294967296) % 4294967296; };
+      const mine = end && { leveltime: end.TIC, prndindex: Number(end.RNG), x: fx(end.X), y: fx(end.Y), z: fx(end.Z), angle: bam(end.ANGLE), health: end.HEALTH };
+      const off = mine ? Object.keys(mine).filter((k) => mine[k] !== v[k]) : ['no end'];
+      return { off, mine, v };
+    };
+    await load(p5, `http://localhost:${port}/?nomusic`, () => window.doom?.title);
+    await p5.evaluate((b) => window.doom.addPwad(Uint8Array.from(b).buffer, 'lmp-exit.wad'), [...pwad]);
+    await p5.evaluate(() => window.doom.menu.actions.endGame());   // (D_StartTitle: the title loop, from its first page)
+    await p5.waitForFunction(() => window.doom.demo.attract === 1 && window.doom.demo.lmp, null, { timeout: 120000, polling: 100 });
+    await p5.waitForFunction(() => window.doom.demo.lmpEnd, null, { timeout: 300000, polling: 200 });
+    const end1 = await p5.evaluate(() => ({ ...window.doom.demo.lmpEnd, page: window.doom.title?.page }));
+    const a1 = agree(end1, 'e1m1-exit');
+    assert(end1.MAP_NAME === 'E1M2' && end1.played === end1.tics && a1.off.length === 0 && end1.page === 'CREDIT',
+      `the title loop plays the PWAD's DEMO1 (.lmp): all ${end1.played} tics, through E1M1's exit and the intermission into ${end1.MAP_NAME}, ending where vanilla's ends (${a1.off.length ? `but ${a1.off.map((k) => `${k} ${a1.mine?.[k]} ≠ ${a1.v[k]}`).join(', ')}` : `tic ${a1.v.leveltime}, P_Random at ${a1.v.prndindex}, the player at ${(a1.v.x / 65536).toFixed(1)}, ${(a1.v.y / 65536).toFixed(1)}`}); then the title loop goes on to its next page (${end1.page})`);
+    // the Load… button: a .lmp file
+    await p5.setInputFiles('#demo-file', fixture('e1m2-barrel.lmp'));
+    await p5.waitForFunction(() => window.doom.demo.lmpEnd && window.doom.demo.lmpEnd.MAP_NAME === 'E1M2' && window.doom.demo.lmpEnd.tics !== 349, null, { timeout: 300000, polling: 200 });
+    const end2 = await p5.evaluate(() => ({ ...window.doom.demo.lmpEnd, screen: window.doom.screen, status: document.getElementById('status').textContent }));
+    const a2 = agree(end2, 'e1m2-barrel');
+    assert(end2.played === end2.tics && a2.off.length === 0 && end2.screen === 'title',
+      `Load… plays a .lmp file: e1m2-barrel.lmp's ${end2.played} tics, the barrel shot and burst as in vanilla (${a2.off.length ? `but ${a2.off.map((k) => `${k} ${a2.mine?.[k]} ≠ ${a2.v[k]}`).join(', ')}` : 'every value of its last line'}), then back to the title loop ("${end2.status}")`);
+    await ctx.close();
+  }
+
+    // offline play (sw.js): a first visit leaves the page, the engine and the WAD it
   // played in the caches; offline, a reload still starts, and a game plays. A WAD
   // never downloaded says why it can't come. (Offline is the server stopped: Playwright's
   // setOffline doesn't reach a service worker's own fetches. So this goes last.)
