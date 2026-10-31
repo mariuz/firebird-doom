@@ -11,6 +11,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { writeLmp, BT_ATTACK, BT_USE } from '../src/lmp.js';
+import { Wad } from '../src/wad.js';
+import { exitPwad, EXIT_PWADS } from './lmp-sync.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'scripts/fixtures/lmp');
@@ -70,6 +72,13 @@ function scripted(episode, map, steps) {
   return { skill: 3, episode, map, players: [true, false, false, false], tics };
 }
 
+// through a level's end (EXIT_PWADS: the line a demo walks over made an exit): the intermission
+// hurried on by fire pressed now and then – the stats all there, the map (DOOM I), "entering" –
+// and then the next level, the player and P_Random's index carried over
+const WI_PRESSES = [[40, 0, 0, 0, 0], [1, 0, 0, 0, BT_ATTACK], [20, 0, 0, 0, 0], [1, 0, 0, 0, BT_ATTACK],
+  [60, 0, 0, 0, 0], [1, 0, 0, 0, BT_ATTACK], [30, 0, 0, 0, 0]];
+const then = (demo, steps) => ({ ...demo, tics: [...demo.tics, ...scripted(demo.episode, demo.map, steps).tics] });
+
 const DEMOS = [
   // standing still: only the world moves (the monsters, the randoms, the lights)
   ['e1m1-idle', 'freedoom1.wad', scripted(1, 1, [[350, 0, 0, 0, 0]]), '0,1,175,350'],
@@ -96,6 +105,12 @@ const DEMOS = [
   ['map03-bot', 'freedoom2.wad', () => fromBot('freedoom2.wad', 'MAP03', 2100, 2003)],
   ['map04-bot', 'freedoom2.wad', () => fromBot('freedoom2.wad', 'MAP04', 2100, 2004)],
   ['map05-bot', 'freedoom2.wad', () => fromBot('freedoom2.wad', 'MAP05', 2100, 2005)],
+  // E1M1's walk over line 834 (an exit here, tic 29), the screen, and E1M2's barrel
+  ['e1m1-exit', 'freedoom1.wad', scripted(1, 1, [[35, 25, 0, 0, 0], ...WI_PRESSES,
+    [1, 0, 0, 10122, 0], [10, 0, 0, 0, 0], [60, 0, 0, 0, BT_ATTACK], [90, 50, 0, 320, 0]])],
+  // MAP01's title demo to line 88 (an exit here, tic 39), the screen, and MAP02's start
+  ['map01-exit', 'freedoom2.wad', then(fromAttract('freedoom2-demo1.json', 40), [...WI_PRESSES,
+    [35, 50, 0, 0, 0], [20, 0, 0, 640, BT_ATTACK], [60, 50, 10, -320, 0], [40, 0, 0, 0, BT_ATTACK]])],
   ['e1m2-attract', 'freedoom1.wad', fromAttract('freedoom1-demo2.json', 700)],
   ['e1m3-attract', 'freedoom1.wad', fromAttract('freedoom1-demo3.json', 700)],
   ['map02-attract', 'freedoom2.wad', fromAttract('freedoom2-demo2.json', 700)],
@@ -114,8 +129,16 @@ for (const [name, wadFile, make, mobjTics] of DEMOS.filter(([n]) => !only.length
   const mobjs = path.join(out, `${name}.mobjs`);
   fs.writeFileSync(lmp, writeLmp(demo));
   fs.rmSync(trace, { force: true });
+  // (on a PWAD of the IWAD's map with an exit where the demo walks: W_AddFile, -file)
+  const pwad = [];
+  if (EXIT_PWADS[name]) {
+    const [iwadFile, map, line, special] = EXIT_PWADS[name];
+    const file = path.join(home, `${name}.wad`);
+    fs.writeFileSync(file, exitPwad(new Wad(fs.readFileSync(path.join(root, 'public/wads', iwadFile))), map, line, special));
+    pwad.push('-file', file);
+  }
   try {
-    execFileSync(oracle, ['-iwad', path.join(root, 'public/wads', wadFile), '-timedemo', lmp, '-nodraw', '-nosound', '-nomusic'],
+    execFileSync(oracle, ['-iwad', path.join(root, 'public/wads', wadFile), ...pwad, '-timedemo', lmp, '-nodraw', '-nosound', '-nomusic'],
       { env: { ...process.env, HOME: home, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy', ORACLE_TRACE: trace,
         ...(mobjTics ? { ORACLE_MOBJS: mobjs, ORACLE_MOBJS_TICS: mobjTics } : {}) }, stdio: 'pipe', timeout: 120000 });
   } catch { /* (-timedemo ends with I_Error's report and a non-zero exit) */ }

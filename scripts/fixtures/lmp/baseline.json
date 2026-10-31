@@ -2,6 +2,7 @@
   "e1m1-attract": {
     "tics": 700,
     "synced": 700,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -18,11 +19,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M1"
   },
   "e1m1-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -39,11 +42,36 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M1"
+  },
+  "e1m1-exit": {
+    "tics": 349,
+    "synced": 349,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "E1M2"
   },
   "e1m1-idle": {
     "tics": 350,
     "synced": 350,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -60,11 +88,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M1"
   },
   "e1m1-shoot": {
     "tics": 102,
     "synced": 102,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -81,11 +111,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M1"
   },
   "e1m1-wake": {
     "tics": 230,
     "synced": 230,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -102,11 +134,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M1"
   },
   "e1m1-walk": {
     "tics": 215,
     "synced": 215,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -123,11 +157,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M1"
   },
   "e1m2-attract": {
     "tics": 700,
     "synced": 700,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -144,11 +180,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M2"
   },
   "e1m2-barrel": {
     "tics": 161,
     "synced": 161,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -165,11 +203,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M2"
   },
   "e1m2-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -186,11 +226,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M2"
   },
   "e1m3-attract": {
     "tics": 700,
     "synced": 700,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -207,11 +249,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M3"
   },
   "e1m3-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -228,11 +272,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M3"
   },
   "e1m4-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -249,11 +295,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M4"
   },
   "e1m5-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -270,11 +318,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "E1M5"
   },
   "map01-attract": {
     "tics": 700,
     "synced": 700,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -291,11 +341,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "MAP01"
   },
   "map01-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -312,11 +364,36 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "MAP01"
+  },
+  "map01-exit": {
+    "tics": 348,
+    "synced": 348,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP02"
   },
   "map02-attract": {
     "tics": 700,
     "synced": 700,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -333,11 +410,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "MAP02"
   },
   "map02-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -354,11 +433,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "MAP02"
   },
   "map03-attract": {
     "tics": 700,
     "synced": 700,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -375,11 +456,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "MAP03"
   },
   "map03-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -396,11 +479,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "MAP03"
   },
   "map04-attract": {
     "tics": 700,
     "synced": 700,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -417,11 +502,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "MAP04"
   },
   "map04-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -438,11 +525,13 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "MAP04"
   },
   "map05-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
     "first": {
       "leveltime": null,
       "prndindex": null,
@@ -459,6 +548,7 @@
       "sumz": null,
       "sumhealth": null,
       "sumstate": null
-    }
+    },
+    "map": "MAP05"
   }
 }

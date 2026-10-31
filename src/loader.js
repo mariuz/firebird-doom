@@ -260,7 +260,7 @@ export async function loadMap(db, wad, res, name, {
   const flat = (n) => res.flatId.get(n) ?? null;
 
   await db.exec(
-    'DELETE FROM sound_events; DELETE FROM movers; DELETE FROM line_blocks; DELETE FROM blockmap; DELETE FROM blockmap_info; DELETE FROM things; DELETE FROM map_things; DELETE FROM nodes; DELETE FROM ssectors; ' +
+    'DELETE FROM sound_events; DELETE FROM movers; DELETE FROM buttons; DELETE FROM line_blocks; DELETE FROM blockmap; DELETE FROM blockmap_info; DELETE FROM things; DELETE FROM map_things; DELETE FROM nodes; DELETE FROM ssectors; ' +
       'DELETE FROM segs; DELETE FROM linedefs; DELETE FROM sidedefs; DELETE FROM sectors; DELETE FROM vertexes; DELETE FROM reject',
   );
   await insertRows(db, 'vertexes', ['id', 'x', 'y'], m.vertexes.map((v) => [v.id, v.x, v.y]));

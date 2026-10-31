@@ -155,6 +155,11 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 - **Finding where the port parts from vanilla:** `npm run test:lmp` names the first tic; then
   `test-logs`-style probes: vanilla's thinkers at a tic (`ORACLE_MOBJS`), its sectors per tic
   (`ORACLE_SECTORS`), and `npm run lmp-rnglog` for who drew each random number.
+- **Demos through a level's end:** Freedoom's exits all lie behind keys or switches, so the
+  level-end fixtures play on a PWAD of the map with one line the walk crosses made an exit
+  (`EXIT_PWADS` and `exitPwad` in `scripts/lmp-sync.mjs`; the oracle gets it with `-file`).
+  `playAgainst` needs `worldDone` (`nextDemoMap`) to go on past an exit, and its `unplayed`
+  says whether vanilla's trace went further than the port did.
 - **Tests:** physics-test and weapons-test share one database through many sections. A monster
   woken by an earlier section can hurt the player later, so read state right after the action,
   before another tic. Make statistical assertions robust (bigger samples, fixed bounds rather than

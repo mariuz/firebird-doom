@@ -16,7 +16,7 @@ import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
 import { parseLmp, writeLmp, portCmd, lmpMapName, BT_ATTACK, BT_USE, BT_CHANGE } from '../src/lmp.js';
-import { FIELDS, parseTrace, playAgainst, startDemo, restartDemo, parseMobjs, portThinkers, compareThinkers } from './lmp-sync.mjs';
+import { FIELDS, parseTrace, playAgainst, startDemo, restartDemo, nextDemoMap, exitPwad, EXIT_PWADS, parseMobjs, portThinkers, compareThinkers } from './lmp-sync.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -68,12 +68,15 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.lmp')).sort())
     const wad = new Wad(fs.readFileSync(path.join(root, 'public/wads', wadFile)));
     wads.set(wadFile, { wad, res: null });
   }
-  const w = wads.get(wadFile);
+  // (some on a PWAD over the IWAD: its map with an exit where the demo walks – EXIT_PWADS)
+  const pw = EXIT_PWADS[name];
+  const w = pw ? { wad: new Wad(wads.get(wadFile).wad.files[0].bytes, exitPwad(wads.get(wadFile).wad, pw[1], pw[2], pw[3])) } : wads.get(wadFile);
   w.res = await loadResources(db, w.wad);   // (each WAD's resources again: they share one database)
   await startDemo(db, w.wad, w.res, demo, loadMap);
-  const r = await playAgainst(db, demo, trace, { restart: () => restartDemo(db, w.wad, w.res, demo, loadMap) });
+  const r = await playAgainst(db, demo, trace, { restart: () => restartDemo(db, w.wad, w.res, demo, loadMap),
+    worldDone: (secret) => nextDemoMap(db, w.wad, w.res, demo, loadMap, secret) });
   const firsts = Object.fromEntries(FIELDS.map((f) => [f, r.first[f]?.tic ?? null]));
-  results[name] = { tics: r.tics, synced: r.synced, first: firsts };
+  results[name] = { tics: r.tics, synced: r.synced, unplayed: r.unplayed, first: firsts, map: (await db.query('SELECT map_name FROM game WHERE id = 1')).rows[0].MAP_NAME.trim() };
   const was = baseline[name];
   const worse = [];
   const gained = [];
@@ -152,6 +155,16 @@ for (const name of ['e1m3-attract', 'e1m1-bot', 'e1m2-bot', 'e1m3-bot', 'e1m4-bo
   const w = results[name];
   const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
   assert(w && off.length === 0, `the world in step: ${name} agrees with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
+}
+
+// phase L6: through a level's end – an exit walked over (a PWAD of Freedoom's map: EXIT_PWADS), the
+// intermission's tics as WI_Ticker spends them (fire pressed hurries it on, the press and not the
+// hold), the next level loaded as G_DoWorldDone loads it, the player carried over: in step to the end
+for (const [name, next] of [['e1m1-exit', 'E1M2'], ['map01-exit', 'MAP02']]) {
+  const w = results[name];
+  const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
+  assert(w && off.length === 0 && w.map === next && w.unplayed === 0,
+    `through the level's end: ${name} plays on to ${w?.map} and agrees with vanilla in every column for all ${w?.tics} tics, every line of vanilla's trace (${w?.unplayed} left over)${off.length ? ` (but ${off.join(', ')})` : ''}`);
 }
 
 // phase L2: the scripted walk (turns, runs, strafes, a wall) keeps the player in step all the way

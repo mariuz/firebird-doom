@@ -426,6 +426,14 @@ Besides the common doors, lifts, floors, crushers, stairs, teleporters and exits
 - **scrolling walls (48):** the front side's texture moves one unit a tic (`P_UpdateSpecials`).
   It's a function of the tic, like animated textures, so the renderer works it out.
 
+A switch shows its other texture when it does something (`P_ChangeSwitchTexture`, `SW1…` ↔
+`SW2…`), on the first part of the wall that has one: top, then middle, then bottom. Shootable
+switches flip too. One you can use again (SR, GR) gets a button (`P_StartButton`) that puts the
+texture back 35 tics later (`BUTTONTIME`, `P_UpdateSpecials`). Both moves click with
+`DSSWTCHN`, the exit switch's too: vanilla clears a one-shot switch's special before it checks
+for the exit, so its `DSSWTCHX` never plays. A door's own line never flips. Like vanilla, saves
+don't keep the buttons, so a switch saved down stays down after loading.
+
 Monsters set lines off too, as in `P_CrossSpecialLine` and `P_UseSpecialLine`. Walking over a
 line, a monster can only use teleporters (39, 97, and its own 125/126, which ignore the player),
 door 4 and lifts 10/88. Bumping into a closed door 1 (not one flagged secret), it opens it and
@@ -832,8 +840,12 @@ measured against vanilla itself:
   what it catches, crunches corpses to gibs and swallows dropped items. Things in a block are
   met in DOOM's order (the one that moved last, first), every thing has DOOM's own size, the
   damaging floors hurt as `P_PlayerInSpecialSector` decides, and the weapon keys pick as
-  `P_PlayerThink` does. What's left before the page can play a `.lmp`: a demo through a level's
-  end (the intermission and the next map), and then playing them (phase L7).
+  `P_PlayerThink` does. Demos go on through a level's end: the intermission takes as many tics
+  as vanilla's (`WI_Ticker`, hurried on by a fresh press of fire or use) and the next map
+  loads with the player and the random numbers carried over. Freedoom's exits all lie behind
+  keys or switches, so two fixtures play on a PWAD of E1M1 and of MAP01 with one line the walk
+  crosses made into an exit; they keep step through E1M2 and MAP02. What's left before the page
+  can play a `.lmp` is playing them (phase L7).
 
 ### Co-op and deathmatch over the network
 
@@ -1374,10 +1386,8 @@ What's still not vanilla, and why `.lmp` demos can't play yet (docs/ROADMAP.md):
   doubles and may draw `P_Random` in another order.
 - **Keys:** the page's own keys aren't quite `G_BuildTiccmd`'s: a strafe is 25 (50 running)
   rather than 24 (40), and the turn keys have no slow start.
-- **Demos through a level's end:** the `.lmp` harness stops at an exit; the intermission's
-  tics and the next map aren't followed yet (and the page doesn't play `.lmp` files: phase L7).
-- **Switches:** a repeatable switch stays pressed; DOOM's button timer (`BUTTONTIME`) puts its
-  texture back after a second with a click. Nothing the simulation sees.
+- **Playing them:** the page doesn't play `.lmp` files yet (phase L7); only the test harness
+  does, through deaths, restarts and level ends.
 Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods
 out from your sector through every open two-sided line. A closed door stops it, and a line flagged
 *sound block* lets it through once but never twice. Every sector it reaches remembers. Idle

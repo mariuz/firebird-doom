@@ -129,6 +129,8 @@ export async function restoreGame(db, save) {
   if (save?.version !== SAVE_VERSION) throw new Error(`unknown save version ${save?.version}`);
   save = withoutRetired(save);
   await checkTables(db, save);
+  // (no buttons counting down: vanilla doesn't save them, so a switch saved pressed stays so)
+  await db.exec('DELETE FROM buttons');
   for (const t of WHOLE) {
     await db.exec(`DELETE FROM ${t}`);
     const { cols, rows } = save.tables[t] ?? { cols: [], rows: [] };   // (older saves: no frags, no respawn queue)

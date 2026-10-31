@@ -104,6 +104,9 @@ Per tic, `DOOM_TIC` runs:
     P_TryMove's and P_ChangeSector's); `THINGS.LINK_SEQ` is DOOM's blocklinks' order (a trigger
     bumps it when x or y change), and every walk over a block's things goes newest-linked first.
 
+  After the thinkers, `BUTTONS_TICK` (P_UpdateSpecials): a repeatable switch's button
+  (`BUTTONS`, from `CHANGE_SWITCH_TEXTURE`'s P_StartButton) counts down and puts the texture back.
+
   What a thinker makes on its turn (a missile, blood, a door) runs this same tic, after the
   rest, as DOOM's new thinkers do at the end of its list. `THINK_KEY`, a context variable,
   says whose turn it is (-1 during `PLAYER_THINK`): a state set on a thing whose turn is still

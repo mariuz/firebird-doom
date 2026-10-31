@@ -504,7 +504,7 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   within a block: things met newest first, where DOOM's blocklinks put the one that last moved
   first.
 
-**Phase L6: the world.** *Done* (but for the level's end in a demo, below).
+**Phase L6: the world.** *Done.*
 - **The planes:** T_MovePlane (`MOVE_PLANE`): a step of the speed, past the destination it
   stops there, and P_ChangeSector after every step (`CHANGE_SECTOR`): every thing in the
   sector's block box (P_GroupLines' blockbox, MAXRADIUS wider: `SECTORS.BB_*`), in the blocks'
@@ -542,9 +542,22 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   each (`fromBot`).
 - **Where it stands:** every fixture – the scripted ones, the seven title demos', the ten bot
   walks (through doors, lifts, crushers, deaths and restarts) – agrees with vanilla in every
-  column to its end; `npm run test:lmp` asserts it. Left: a demo through the level's end (the
-  intermission's tics and the next map: the harness stops at the exit), the switches' button
-  timers (BUTTONTIME: the texture back and the click, nothing the simulation sees).
+  column to its end; `npm run test:lmp` asserts it.
+- **Through the level's end:** `playAgainst` goes on past an exit. The intermission runs a tic
+  for each of the demo's (`IntermissionState`, as G_Ticker's GS_INTERMISSION calls WI_Ticker;
+  the trace has no lines there). Fire or use pressed hurries it on (WI_checkForAccelerate, with
+  attackdown and usedown carried over from the level). Then G_DoWorldDone loads the next map
+  (`nextDemoMap`: the player kept, P_Random's index going on), its P_SetupLevel line set
+  against the trace's. DOOM I's E?M8 and DOOM II's finale maps end the demo there. Freedoom's
+  exits all lie behind keys and switches, so `e1m1-exit` and `map01-exit` play on a PWAD of
+  the map with one line the walk crosses made a W1 exit (`EXIT_PWADS`, `exitPwad`: only the
+  special changes, so the nodes hold; the oracle gets it with `-file`). Both keep step through
+  the screen into E1M2 and MAP02, every line of vanilla's trace (`unplayed`: none left over).
+- **The switches' buttons:** P_ChangeSwitchTexture (`CHANGE_SWITCH_TEXTURE`) flips one part,
+  top, then middle, then bottom, shot switches too. A repeatable one starts a button
+  (P_StartButton, `BUTTONS`) that P_UpdateSpecials (`BUTTONS_TICK`, after the thinkers) turns
+  back after BUTTONTIME, 35 tics. Always DSSWTCHN (vanilla's exit switch has lost its special
+  before the DSSWTCHX test). Not saved, as vanilla's aren't.
 
 **Phase L7: playing them.** The page plays a `.lmp` (a file, or an IWAD's DEMO1–4) and the
 title loop shows a WAD's own demos, once they keep step. Test: id's demos where a user has the

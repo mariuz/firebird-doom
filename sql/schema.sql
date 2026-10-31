@@ -560,6 +560,16 @@ CREATE TABLE rules (
   clip_rockets INTEGER DEFAULT 1 NOT NULL
 );
 
+-- P_StartButton's buttonlist: a switch that can be used again (SR, GR) comes back after BUTTONTIME
+-- (35 tics: P_UpdateSpecials, BUTTONS_TICK). Not saved, as vanilla's P_ArchiveSpecials doesn't.
+CREATE TABLE buttons (
+  line_id INTEGER NOT NULL PRIMARY KEY,
+  side_id INTEGER NOT NULL,
+  part    CHAR(1) NOT NULL,               -- bwhere: T top, M middle, B bottom
+  tex     INTEGER NOT NULL,               -- btexture: what it goes back to
+  btimer  INTEGER NOT NULL
+);
+
 CREATE TABLE movers (
   sector_id INTEGER NOT NULL PRIMARY KEY,
   kind      VARCHAR(8) NOT NULL,        -- door lift floor crush

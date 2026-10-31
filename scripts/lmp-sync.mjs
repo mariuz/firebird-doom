@@ -14,7 +14,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseLmp, lmpMapName, portCmd } from '../src/lmp.js';
+import { parseLmp, lmpMapName, portCmd, BT_ATTACK, BT_USE } from '../src/lmp.js';
+import { IntermissionState, parTime } from '../src/intermission.js';
+import { nextMap } from '../src/progress.js';
 import { MOBJINFO } from '../src/states.js';
 import { MOBJ_TYPE } from '../src/thinginfo.js';
 
@@ -58,15 +60,20 @@ export async function portRow(db) {
 /**
  * Play DEMO (parsed) in the port, a tic at a time, against TRACE (parsed). The map must be the
  * demo's (loadMap with its skill and options first). → { tics, first: { field: { tic, port, vanilla } | null },
- * synced: tics the player stayed in step (every PLAYER_FIELDS agreeing) }. RESTART: how to load the
+ * synced: tics the player stayed in step (every PLAYER_FIELDS agreeing), unplayed: the trace's lines
+ * left over (vanilla went on where the port stopped) }. RESTART: how to load the
  * level again when the player, dead, presses USE (G_DoReborn; RESTARTDEMO) – without it the
- * port stops there. The trace has a leveltime 0 line for each restart.
+ * port stops there. The trace has a leveltime 0 line for each restart. WORLDDONE: how to load the
+ * next level after an exit (NEXTDEMOMAP) – the intermission runs in between, a tic for each of
+ * the demo's (G_Ticker's GS_INTERMISSION: WI_Ticker, no trace lines), and fire or use pressed
+ * hurries it on (WI_checkForAccelerate). Without it, or where DOOM goes to a finale instead,
+ * the port stops at the exit.
  */
-export async function playAgainst(db, demo, trace, { limit = Infinity, restart = null } = {}) {
+export async function playAgainst(db, demo, trace, { limit = Infinity, restart = null, worldDone = null } = {}) {
   const first = Object.fromEntries(FIELDS.map((f) => [f, null]));
   // the trace's first line is the level as P_SetupLevel left it (leveltime 0), before any tic
   const setup = trace[0]?.leveltime === 0 ? 1 : 0;
-  const n = Math.min(demo.tics.length, trace.length - setup, limit);
+  const n = Math.min(demo.tics.length, limit);
   let synced = null;
   const compare = async (tic, theirs) => {
     const mine = await portRow(db);
@@ -80,10 +87,53 @@ export async function playAgainst(db, demo, trace, { limit = Infinity, restart =
   if (setup) await compare(0, trace[0]);
   let off = setup;
   let t = 0;
+  let wi = null;          // the intermission: { state, attackdown, usedown, secret }
+  let done = false;       // G_WorldDone: the next level loads at the start of the next tic
   for (; t < n && t + off < trace.length; t++) {
-    const [fwd, side, turn, fire, use, weapon, run] = portCmd(demo.tics[t][demo.consoleplayer] ?? demo.tics[t][0]);
+    const raw = demo.tics[t][demo.consoleplayer] ?? demo.tics[t][0];
+    if (wi) {
+      // WI_Ticker: WI_checkForAccelerate on the press, not the hold (player->attackdown and
+      // usedown, carried on from the level), then the screen's tic
+      const atk = (raw[3] & BT_ATTACK) !== 0;
+      const usd = (raw[3] & BT_USE) !== 0;
+      wi.state.tick((atk && !wi.attackdown) || (usd && !wi.usedown));
+      wi.attackdown = atk;
+      wi.usedown = usd;
+      off--;
+      if (wi.state.done) {
+        done = wi;
+        wi = null;
+      }
+      continue;
+    }
+    if (done) {
+      // G_DoWorldDone → G_DoLoadLevel (its P_SetupLevel line in the trace), then this tic's P_Ticker
+      const { attackdown, usedown, secret } = done;
+      done = false;
+      if (!(await worldDone(secret))) break;
+      await db.query('UPDATE player p SET attack_down = ?, use_down = ? WHERE p.id = 1', [attackdown ? 1 : 0, usedown ? 1 : 0]);
+      await compare(t, trace[t + off]);
+      off++;
+      if (t + off >= trace.length) break;
+    }
+    const [fwd, side, turn, fire, use, weapon, run] = portCmd(raw);
     const hud = (await db.query('SELECT * FROM doom_tic(1, ?, ?, ?, ?, ?, ?, ?)', [fwd, side, turn, fire, use, weapon, run])).rows[0];
     await compare(t + 1, trace[t + off]);
+    // G_ExitLevel → G_DoCompleted next tic → WI_Start: the stats as the level left them
+    if ((hud?.EXIT_KIND === 1 || hud?.EXIT_KIND === 2) && worldDone) {
+      const p = (await db.query('SELECT p.attack_down, p.use_down FROM player p WHERE p.id = 1')).rows[0];
+      const map = (await db.query('SELECT g.map_name FROM game g WHERE g.id = 1')).rows[0].MAP_NAME.trim();
+      const doom2 = map.startsWith('MAP');
+      // (DOOM I's E?M8 goes to the victory finale; DOOM II's 6, 11, 20, 30 and the secret
+      // levels' exits to their text after the screen – the demo's end here)
+      if (!doom2 && map.endsWith('M8')) break;
+      wi = {
+        state: new IntermissionState({ kills: hud.KILLS, totalKills: hud.TOTAL_KILLS, items: hud.ITEMS, totalItems: hud.TOTAL_ITEMS,
+          secrets: hud.SECRETS, totalSecrets: hud.TOTAL_SECRETS, time: hud.TIC, par: parTime(map) }, doom2),
+        attackdown: p.ATTACK_DOWN === 1, usedown: p.USE_DOWN === 1, secret: hud.EXIT_KIND === 2,
+      };
+      continue;
+    }
     // G_DoReborn: the level again, before the next tic (its P_SetupLevel line in the trace)
     if (hud?.EXIT_KIND === 3 && restart) {
       await restart();
@@ -91,7 +141,7 @@ export async function playAgainst(db, demo, trace, { limit = Infinity, restart =
       if (t + off < trace.length) await compare(t + 1, trace[t + off]);
     }
   }
-  return { tics: t, first, synced: synced ?? t };
+  return { tics: t, first, synced: synced ?? t, unplayed: Math.max(0, trace.length - t - off) };
 }
 
 // ── every thinker, one by one (dump.c's ORACLE_MOBJS: NAME.mobjs) ──
@@ -168,6 +218,56 @@ export async function restartDemo(db, wad, res, demo, loadMap) {
     respawn: demo.respawn, fast: demo.fast, nomonsters: demo.nomonsters,
   });
 }
+
+/** The next level after an exit, as G_DoWorldDone loads it (the player carried over, P_Random's
+ * index carrying on); null where DOOM II goes to a finale's text (G_WorldDone) – the end here */
+export async function nextDemoMap(db, wad, res, demo, loadMap, secret) {
+  const map = (await db.query('SELECT g.map_name FROM game g WHERE g.id = 1')).rows[0].MAP_NAME.trim();
+  const doom2 = map.startsWith('MAP');
+  if (doom2 && (secret ? [15, 31] : [6, 11, 20, 30]).includes(Number(map.slice(3)))) return null;
+  const name = nextMap(map, secret, wad.mapNames());
+  await db.exec('UPDATE game SET exit_kind = 0 WHERE id = 1');
+  await loadMap(db, wad, res, name, {
+    skill: demo.skill, newGame: false, players: demo.players.filter(Boolean).length, deathmatch: demo.deathmatch,
+    respawn: demo.respawn, fast: demo.fast, nomonsters: demo.nomonsters,
+  });
+  return name;
+}
+
+/**
+ * A PWAD of MAP from the IWAD with one line's special changed – an exit where a demo walks
+ * (52, W1 exit) – the rest as it was, so the BSP and the blockmap still hold. For demos through a
+ * level's end where Freedoom's exits lie behind keys and switches. → the PWAD's bytes.
+ */
+export function exitPwad(iwad, map, line, special) {
+  const LUMPS = ['THINGS', 'LINEDEFS', 'SIDEDEFS', 'VERTEXES', 'SEGS', 'SSECTORS', 'NODES', 'SECTORS', 'REJECT', 'BLOCKMAP'];
+  const at = iwad.lump(map).index;
+  const lumps = [[map, new Uint8Array(0)], ...LUMPS.map((n, k) => [n, Uint8Array.from(iwad.data(iwad.lumps[at + 1 + k]))])];
+  const ld = lumps[2][1];
+  new DataView(ld.buffer).setUint16(line * 14 + 6, special, true);
+  const size = lumps.reduce((a, [, b]) => a + b.length, 0);
+  const out = new Uint8Array(12 + size + 16 * lumps.length);
+  const dv = new DataView(out.buffer);
+  out.set(new TextEncoder().encode('PWAD'), 0);
+  dv.setInt32(4, lumps.length, true);
+  dv.setInt32(8, 12 + size, true);
+  let pos = 12;
+  lumps.forEach(([name, bytes], i) => {
+    out.set(bytes, pos);
+    const d = 12 + size + 16 * i;
+    dv.setInt32(d, pos, true);
+    dv.setInt32(d + 4, bytes.length, true);
+    out.set(new TextEncoder().encode(name.padEnd(8, '\0')), d + 8);
+    pos += bytes.length;
+  });
+  return out;
+}
+
+// the fixtures played on a PWAD: NAME → [the IWAD, the map, the line, its new special]
+export const EXIT_PWADS = {
+  'e1m1-exit': ['freedoom1.wad', 'E1M1', 834, 52],
+  'map01-exit': ['freedoom2.wad', 'MAP01', 88, 52],
+};
 
 /** Load the demo's map in the port as the demo starts it (G_InitNew: skill, options; M_ClearRandom) */
 export async function startDemo(db, wad, res, demo, loadMap) {

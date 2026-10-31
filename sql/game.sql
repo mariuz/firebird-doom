@@ -1224,6 +1224,74 @@ END^
 
 -- EV_DoDoor / EV_DoPlat / EV_DoFloor / G_ExitLevel, dispatched on line special.
 -- WHO is the monster that set it off (NULL: the player).
+-- P_ChangeSwitchTexture: the line's front side shows the other of its switch pair (SW1xxxx ↔
+-- SW2xxxx) – the first part that holds one, top, then middle, then bottom (vanilla walks its
+-- switch list and tries the three at each entry: the same unless two parts hold different
+-- switches) – with DSSWTCHN. (DSSWTCHX never: a switch used once loses its special before
+-- P_ChangeSwitchTexture asks whether it's 11, the exit.) USE_AGAIN (SR, GR): P_StartButton, back
+-- in BUTTONTIME, unless the line's button is already counting down.
+CREATE OR ALTER PROCEDURE change_switch_texture (line_id INTEGER, use_again SMALLINT)
+AS
+DECLARE fside INTEGER;
+DECLARE part CHAR(1);
+DECLARE old_tex INTEGER;
+DECLARE new_tex INTEGER;
+DECLARE t INTEGER;
+BEGIN
+  SELECT l.front_side FROM linedefs l WHERE l.id = :line_id INTO fside;
+  FOR SELECT p.part, p.tex FROM (
+        SELECT 1 k, 'T' part, sd.upper_tex tex FROM sidedefs sd WHERE sd.id = :fside
+        UNION ALL SELECT 2, 'M', sd.mid_tex FROM sidedefs sd WHERE sd.id = :fside
+        UNION ALL SELECT 3, 'B', sd.lower_tex FROM sidedefs sd WHERE sd.id = :fside) p
+      ORDER BY p.k
+      INTO part, t
+  DO
+  BEGIN
+    new_tex = (SELECT FIRST 1 t2.id FROM textures t1
+                 JOIN textures t2 ON t2.name = IIF(t1.name STARTING WITH 'SW1', 'SW2', 'SW1') || SUBSTRING(t1.name FROM 4)
+                WHERE t1.id = :t AND t1.name SIMILAR TO 'SW[12]%');
+    IF (new_tex IS NOT NULL) THEN
+    BEGIN
+      old_tex = t;
+      LEAVE;
+    END
+  END
+  IF (new_tex IS NULL) THEN EXIT;
+  UPDATE sidedefs sd SET upper_tex = IIF(:part = 'T', :new_tex, sd.upper_tex), mid_tex = IIF(:part = 'M', :new_tex, sd.mid_tex),
+         lower_tex = IIF(:part = 'B', :new_tex, sd.lower_tex)
+   WHERE sd.id = :fside;
+  UPDATE game g SET sides_rev = g.sides_rev + 1 WHERE g.id = 1;
+  EXECUTE PROCEDURE play_sound('DSSWTCHN', -1000000 - line_id,
+    (SELECT (l.x1 + l.x2) / 2 FROM linedefs l WHERE l.id = :line_id),
+    (SELECT (l.y1 + l.y2) / 2 FROM linedefs l WHERE l.id = :line_id));
+  IF (use_again = 1 AND NOT EXISTS (SELECT 1 FROM buttons b WHERE b.line_id = :line_id)) THEN
+    INSERT INTO buttons (line_id, side_id, part, tex, btimer) VALUES (:line_id, :fside, :part, :old_tex, 35);
+END^
+
+-- P_UpdateSpecials' buttons (after the thinkers, each tic): a button's count down, and at 0 its
+-- texture back, with DSSWTCHN from the line
+CREATE OR ALTER PROCEDURE buttons_tick
+AS
+DECLARE lid INTEGER;
+DECLARE sid INTEGER;
+DECLARE part CHAR(1);
+DECLARE tex INTEGER;
+BEGIN
+  IF (NOT EXISTS (SELECT 1 FROM buttons)) THEN EXIT;
+  UPDATE buttons b SET btimer = b.btimer - 1;
+  FOR SELECT b.line_id, b.side_id, b.part, b.tex FROM buttons b WHERE b.btimer <= 0 ORDER BY b.line_id INTO lid, sid, part, tex DO
+  BEGIN
+    UPDATE sidedefs sd SET upper_tex = IIF(:part = 'T', :tex, sd.upper_tex), mid_tex = IIF(:part = 'M', :tex, sd.mid_tex),
+           lower_tex = IIF(:part = 'B', :tex, sd.lower_tex)
+     WHERE sd.id = :sid;
+    UPDATE game g SET sides_rev = g.sides_rev + 1 WHERE g.id = 1;
+    EXECUTE PROCEDURE play_sound('DSSWTCHN', -1000000 - lid,
+      (SELECT (l.x1 + l.x2) / 2 FROM linedefs l WHERE l.id = :lid),
+      (SELECT (l.y1 + l.y2) / 2 FROM linedefs l WHERE l.id = :lid));
+    DELETE FROM buttons b WHERE b.line_id = :lid;
+  END
+END^
+
 CREATE OR ALTER PROCEDURE activate_line (line_id INTEGER, how VARCHAR(5), who INTEGER = NULL, pid SMALLINT = 1)
 AS
 DECLARE sp INTEGER;
@@ -1623,26 +1691,11 @@ BEGIN
     END
   END
 
-  IF (did = 1 AND how = 'use' AND who IS NULL) THEN
-    -- flip SW1xxxx <-> SW2xxxx on the switch the player pressed
-    UPDATE sidedefs sd
-       SET mid_tex = COALESCE((SELECT FIRST 1 t2.id FROM textures t1
-                                 JOIN textures t2 ON t2.name = IIF(t1.name STARTING WITH 'SW1', 'SW2', 'SW1') || SUBSTRING(t1.name FROM 4)
-                                WHERE t1.id = sd.mid_tex AND t1.name SIMILAR TO 'SW[12]%'), mid_tex),
-           upper_tex = COALESCE((SELECT FIRST 1 t2.id FROM textures t1
-                                 JOIN textures t2 ON t2.name = IIF(t1.name STARTING WITH 'SW1', 'SW2', 'SW1') || SUBSTRING(t1.name FROM 4)
-                                WHERE t1.id = sd.upper_tex AND t1.name SIMILAR TO 'SW[12]%'), upper_tex),
-           lower_tex = COALESCE((SELECT FIRST 1 t2.id FROM textures t1
-                                 JOIN textures t2 ON t2.name = IIF(t1.name STARTING WITH 'SW1', 'SW2', 'SW1') || SUBSTRING(t1.name FROM 4)
-                                WHERE t1.id = sd.lower_tex AND t1.name SIMILAR TO 'SW[12]%'), lower_tex)
-     WHERE sd.id = :fside;
-  IF (did = 1 AND how = 'use') THEN
-    UPDATE game g SET sides_rev = g.sides_rev + 1 WHERE g.id = 1;
-  IF (did = 1 AND how = 'use' AND act NOT IN ('door_man', 'door_man1')) THEN
-    EXECUTE PROCEDURE play_sound(IIF(act IN ('exit', 'secret'), 'DSSWTCHX', 'DSSWTCHN'), -1000000 - line_id,
-      (SELECT (l.x1 + l.x2) / 2 FROM linedefs l WHERE l.id = :line_id),
-      (SELECT (l.y1 + l.y2) / 2 FROM linedefs l WHERE l.id = :line_id));
-  IF (did = 1 AND repeatable = 0) THEN
+  -- P_ChangeSwitchTexture: a switch pressed (not a door's own line) or shot (G1, GR: whatever it
+  -- did) shows its other texture, and one that can be used again comes back (P_StartButton)
+  IF (who IS NULL AND (how = 'shoot' OR (did = 1 AND how = 'use' AND act NOT IN ('door_man', 'door_man1')))) THEN
+    EXECUTE PROCEDURE change_switch_texture(line_id, repeatable);
+  IF ((did = 1 OR (how = 'shoot' AND who IS NULL)) AND repeatable = 0) THEN
     UPDATE linedefs SET special = 0 WHERE id = :line_id;
 END^
 
@@ -7330,6 +7383,8 @@ BEGIN
   -- the doors, lifts and floors moving (THINK_ALL)
   EXECUTE PROCEDURE lights_count(tic);
   EXECUTE PROCEDURE think_all(tic, 'TLM');
+  -- P_UpdateSpecials: the switches' buttons
+  EXECUTE PROCEDURE buttons_tick;
   IF ((SELECT g.deathmatch FROM game g WHERE g.id = 1) = 2) THEN EXECUTE PROCEDURE respawn_specials(tic);
   -- -timer: the level ends after that many minutes
   UPDATE game g SET exit_kind = 1

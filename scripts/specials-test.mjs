@@ -360,6 +360,60 @@ if (wad.lump('FATTA1') || wad.lump('FATTA1D1') || wad.spriteFrames().some((f) =>
   }
 }
 
+// ── switches (P_ChangeSwitchTexture, P_StartButton, P_UpdateSpecials) ──
+// a switch shows its other texture when used; one that can be used again (SR) comes back after
+// BUTTONTIME, 35 tics, with DSSWTCHN; one used once (S1) stays down and loses its special
+{
+  const SR = [42, 43, 45, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 99, 114, 115, 116, 123, 132, 134, 136, 138, 139];
+  const S1 = [7, 9, 14, 15, 18, 20, 21, 23, 29, 41, 49, 50, 55, 71, 101, 102, 103, 111, 112, 113, 122, 127, 131, 140];   // (no keyed doors)
+  const isSw = (t) => /^SW1/.test(t);
+  const find = (kinds) => {
+    for (const map of maps) {
+      const m = wad.map(map);
+      const l = m.linedefs.find((d) => kinds.includes(d.special) && d.tag > 0 && [m.sidedefs[d.right].upper, m.sidedefs[d.right].middle, m.sidedefs[d.right].lower].some(isSw));
+      if (l) return { map, line: l.id };
+    }
+    return null;
+  };
+  const tex = async (line) => one(`SELECT t1.name u, t2.name m, t3.name b FROM linedefs l JOIN sidedefs sd ON sd.id = l.front_side
+      LEFT JOIN textures t1 ON t1.id = sd.upper_tex LEFT JOIN textures t2 ON t2.id = sd.mid_tex LEFT JOIN textures t3 ON t3.id = sd.lower_tex
+      WHERE l.id = ${line}`);
+  const parts = (r) => [r.U, r.M, r.B].map((n) => n?.trim() ?? '-').join(' ');
+  const sr = find(SR);
+  if (sr) {
+    await loadMap(db, wad, res, sr.map);
+    await godMode();
+    const before = parts(await tex(sr.line));
+    await db.exec(`DELETE FROM sound_events; EXECUTE PROCEDURE activate_line(${sr.line}, 'use')`);
+    const down = parts(await tex(sr.line));
+    const b = await one(`SELECT b.btimer, b.part, (SELECT COUNT(*) FROM sound_events WHERE sound = 'DSSWTCHN') snd FROM buttons b WHERE b.line_id = ${sr.line}`);
+    const changed = before.split(' ').filter((t, i) => t !== down.split(' ')[i]);
+    assert(changed.length === 1 && /^SW1/.test(changed[0]) && b?.BTIMER === 35 && b.SND === 1,
+      `${sr.map} line ${sr.line} (SR): used, one part flips (${before} → ${down}), a button counts 35 tics, DSSWTCHN`);
+    for (let i = 0; i < 34; i++) await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
+    const still = parts(await tex(sr.line));
+    await db.exec('DELETE FROM sound_events');
+    await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
+    const back = parts(await tex(sr.line));
+    const after = await one(`SELECT (SELECT COUNT(*) FROM buttons) n, (SELECT COUNT(*) FROM sound_events WHERE sound = 'DSSWTCHN') snd,
+                                    (SELECT special FROM linedefs WHERE id = ${sr.line}) sp FROM rdb$database`);
+    assert(still === down && back === before && after.N === 0 && after.SND === 1 && after.SP > 0,
+      `…34 tics on it's still down (${still}); the 35th puts it back (${back}) with DSSWTCHN, and it can be used again`);
+  } else console.log('(no SR switch with a tag in this WAD)');
+  const s1 = find(S1);
+  if (s1) {
+    await loadMap(db, wad, res, s1.map);
+    await godMode();
+    const before = parts(await tex(s1.line));
+    await db.exec(`EXECUTE PROCEDURE activate_line(${s1.line}, 'use')`);
+    for (let i = 0; i < 40; i++) await db.query('SELECT * FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 0)');
+    const r = await one(`SELECT (SELECT COUNT(*) FROM buttons) n, special sp FROM linedefs WHERE id = ${s1.line}`);
+    const now = parts(await tex(s1.line));
+    assert(now !== before && /SW2/.test(now) && r.N === 0 && r.SP === 0,
+      `${s1.map} line ${s1.line} (S1): used, it stays down 40 tics on (${before} → ${now}), no button, its special gone`);
+  }
+}
+
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'specials ok');
 process.exit(failures ? 1 : 0);
