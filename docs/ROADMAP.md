@@ -10,7 +10,8 @@ The vanilla features are all done, including those a second pass through `g_game
 `d_main.c` and `m_misc.c` found missing. What's left is engineering, two steps toward exact
 fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players around the game:
 
-- **Performance** of `FRAME_WALLS` (Rendering): ~21 ms a frame now (from ~26), nothing at all
+- **Performance** of `FRAME_WALLS` (Rendering): ~21 ms a frame under Node (from ~26), ~23 in the
+  page with `firebird-wasm` 0.14's binary results (from ~26 on 0.7.0), nothing at all
   while standing still. The plan's three steps are done or measured out; what's left is the
   engine's own work (~17 ms: the BSP walk, the projection, the clip), with the ideas tried
   written there.
@@ -656,8 +657,13 @@ simulation over, and a yardstick measures how far into each demo the port stays 
     parameters and `execBatch` (0.4) for loads and saves. Two later options measured within the
     noise here and are left off: 0.5.0's prepared-statement cache, and 0.6.0's `sharedReads`
     (autocommit reads in one shared read-only transaction; it played a 300-tic game to the same
-    checksum, and a frame's cost is executing, not starting transactions). Results are still
-    JSON.
+    checksum, and a frame's cost is executing, not starting transactions). The page is on
+    0.14.0 now, whose results come back binary (0.13's `FBR\x01` buffer, and 0.14 hands it
+    from the Worker to the page without a copy). In the page that did more than the estimate
+    above: turning on the spot in E1M1, alternately against 0.7.0, `FRAME_WALLS` 22.6 against
+    26.4 ms, `DOOM_TIC` 16.2 against 17.2, 22.1 frames a second against 20.3 (the Worker's
+    `postMessage` of a JSON string and its parse were the bigger part). Under Node, with no
+    Worker, it saves ~0.6 ms on 1,100 rows and the frame bench can't see it.
   What's left is the work itself: the BSP walk and column projection ~10–11 ms, and
   `RENDER_WALLS`' sort and clip ~3 ms. `DOOM_TIC` was halved by keying the BLOCKMAP by cell (10 ms
   on average over E1M1–E1M3 and E2M2, from 22). Tried and measured no better: shaving statements

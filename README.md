@@ -130,6 +130,15 @@ own. So while you stand still and no door or lift moves, the page draws its last
 instead of asking. It fetches the sector heights first, and compares them, the view and its
 size with what the last answer was for.
 
+The answers come back from the engine's Worker as one binary buffer (`firebird-wasm` 0.14:
+values packed by type, the buffer handed over to the page rather than copied, no JSON to build
+or parse). In the page, turning on the spot in E1M1 with every wall worked out each frame,
+three rounds each in turn against 0.7.0's JSON: `FRAME_WALLS` 22.6 ms against 26.4, `DOOM_TIC`
+16.2 against 17.2, `FRAME_SPRITES` 3.5 against 4.0, 22.1 frames a second against 20.3. Under
+Node, where nothing crosses to another thread, the same change saves about 0.6 ms on 1,100 rows
+of five values and is lost in the noise of a whole frame. The engine is 365 KB bigger to
+download (3.36 MB gzipped, its ICU collation data among the additions).
+
 Two Firebird-specific performance lessons:
 
 * **Derived tables are inlined.** Each reference to a computed CTE column re-evaluates its whole
