@@ -156,6 +156,12 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 - **Finding where the port parts from vanilla:** `npm run test:lmp` names the first tic; then
   `test-logs`-style probes: vanilla's thinkers at a tic (`ORACLE_MOBJS`), its sectors per tic
   (`ORACLE_SECTORS`), and `npm run lmp-rnglog` for who drew each random number.
+- **`leveltime` is `TIC - 1` inside a tic:** `GAME.TIC` is counted up at the start of
+  `DOOM_TIC`/`NET_TIC`, vanilla's `leveltime` at the end of `P_Ticker`. So a vanilla test of
+  `leveltime & n` is `BIN_AND(tic - 1, n)` here (the floors' damage, the crushers, the
+  respawn roll); a demo off by one tic there shows it.
+- **Netgame demos:** `playAgainst` and `lmp-rnglog` run a demo with more than one player through
+  `NET_TIC` (`TICCMD` rows); a respawn waits for the next tic (`PLAYER.DEAD` 2 until then).
 - **Demos through a level's end:** Freedoom's exits all lie behind keys or switches, so the
   level-end fixtures play on a PWAD of the map with one line the walk crosses made an exit
   (`EXIT_PWADS` and `exitPwad` in `scripts/lmp-sync.mjs`; the oracle gets it with `-file`).

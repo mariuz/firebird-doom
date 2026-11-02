@@ -170,6 +170,18 @@ for (const [name, next] of [['e1m1-exit', 'E1M2'], ['map01-exit', 'MAP02']]) {
     `through the level's end: ${name} plays on to ${w?.map} and agrees with vanilla in every column for all ${w?.tics} tics, every line of vanilla's trace (${w?.unplayed} left over)${off.length ? ` (but ${off.join(', ')})` : ''}`);
 }
 
+// phase L8: netgames – two or three players' ticcmds each tic through NET_TIC: co-op on E1M1 and
+// MAP01 (the multiplayer things, weapons that stay), a deathmatch (the random starts, every thing
+// but the keys), and three players in -altdeath for half a minute (deaths, G_DoReborn at the next
+// tic's start through G_CheckSpot, the teleport fog where vanilla's DOS build put it): in step
+// with vanilla in every column to the end
+for (const name of ['e1m1-coop', 'map01-coop', 'e1m1-dm', 'e1m1-altdeath']) {
+  const w = results[name];
+  const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
+  assert(w && off.length === 0 && w.unplayed === 0,
+    `a netgame in step: ${name} agrees with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
+}
+
 // phase L2: the scripted walk (turns, runs, strafes, a wall) keeps the player in step all the way
 assert(results['e1m1-walk']?.synced === results['e1m1-walk']?.tics,
   `the player in fixed point: the scripted walk on E1M1 stays in step with vanilla for all ${results['e1m1-walk']?.tics} tics (${results['e1m1-walk']?.synced})`);
@@ -222,9 +234,15 @@ if (update) {
   assert(pl.map === 'E1M1' && tic.length === 8 && tic[0] === 1 && tic[1] === 1 && JSON.stringify(pl.take('map')) === 'null' && last && pl.done
     && presses === 2 && wi[46][3] === 1 && wi[47][3] === 0 && wi[67][3] === 1 && pl.take('tic') === null,
     `LmpPlayer: DOOM_TIC's arguments a tic (${JSON.stringify(tic)}), the intermission's presses as WI_checkForAccelerate sees them (${presses} in its first 70 tics), null at the demo's end`);
-  const two = { ...demo, players: [true, true, false, false] };
-  assert(/2-player/.test(lmpProblem(two) ?? '') && /deathmatch/.test(lmpProblem({ ...demo, deathmatch: 1 }) ?? '') && lmpProblem(demo) === null,
-    `the page plays one player's demos: a netgame's is refused ("${lmpProblem(two)}")`);
+  // (a netgame's plays too, phase L8: every player's ticcmds as NET_TIC's rows, its level end not followed yet)
+  const net = parseLmp(fs.readFileSync(path.join(dir, 'e1m1-altdeath.lmp')));
+  const np = new LmpPlayer(net, false);
+  const nt = np.take('tic');
+  const away = { ...demo, consoleplayer: 2 };
+  assert(lmpProblem(net) === null && np.net?.players === 3 && np.net.deathmatch === 2 && np.net.me === 1
+    && nt[0] === 'net' && nt[1].length === 3 && nt[1].map((c) => c[0]).join() === '1,2,3' && np.take('wi') === null
+    && /consoleplayer/.test(lmpProblem(away) ?? '') && lmpProblem(demo) === null,
+    `a netgame's demo plays: three players' ticcmds a tic for NET_TIC (${JSON.stringify(nt[1][0])}…), its level end stops it; a demo whose consoleplayer isn't in it is refused ("${lmpProblem(away)}")`);
 }
 
 // ── phase L7: a WAD's own demos. WAD=/path/to/doom.wad (id's, never in the repo; PWAD= adds files

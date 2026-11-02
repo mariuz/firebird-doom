@@ -40,10 +40,10 @@ const bam = (rad) => {
 };
 
 /** The port's state now, in the trace's terms (prndindex: GAME.RNG) */
-export async function portRow(db) {
+export async function portRow(db, pid = 1) {
   const one = async (q) => (await db.query(q)).rows[0];
   const p = await one(`SELECT g.tic, g.rng, t.x, t.y, t.z, t.angle, t.momx, t.momy, p.health
-      FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g WHERE p.id = 1 AND g.id = 1`);
+      FROM player p JOIN things t ON t.id = p.thing_id CROSS JOIN game g WHERE p.id = ${pid} AND g.id = 1`);
   const all = (await db.query('SELECT t.x, t.y, t.z, t.hp, t.state FROM things t', [], { rowMode: 'array' })).rows;
   let sx = 0n; let sy = 0n; let sz = 0n; let shp = 0n; let sst = 0n;
   for (const [x, y, z, hp, st] of all) {
@@ -75,8 +75,13 @@ export async function playAgainst(db, demo, trace, { limit = Infinity, restart =
   const setup = trace[0]?.leveltime === 0 ? 1 : 0;
   const n = Math.min(demo.tics.length, limit);
   let synced = null;
+  // (a netgame's demo: every player's ticcmd each tic, through NET_TIC; the trace follows consoleplayer)
+  const inGame = demo.players.map((x, i) => (x ? i + 1 : 0)).filter(Boolean);
+  const net = inGame.length > 1;
+  const me = demo.consoleplayer + 1;
+  if (net) await db.exec(`UPDATE viewcfg SET player_id = ${me} WHERE id = 1`);
   const compare = async (tic, theirs) => {
-    const mine = await portRow(db);
+    const mine = await portRow(db, net ? me : 1);
     for (const f of FIELDS) {
       if (first[f] || mine[f] === null) continue;
       // (the demo's tic: the trace's leveltime starts over if vanilla's player dies and the level restarts)
@@ -116,8 +121,16 @@ export async function playAgainst(db, demo, trace, { limit = Infinity, restart =
       off++;
       if (t + off >= trace.length) break;
     }
-    const [fwd, side, turn, fire, use, weapon, run] = portCmd(raw);
-    const hud = (await db.query('SELECT * FROM doom_tic(1, ?, ?, ?, ?, ?, ?, ?)', [fwd, side, turn, fire, use, weapon, run])).rows[0];
+    let hud;
+    if (net) {
+      await db.execBatch('INSERT INTO ticcmd (player_id, fwd, side, turn, fire, use_key, weapon_sel, run) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        demo.tics[t].map((c, k) => [inGame[k], ...portCmd(c)]));
+      hud = (await db.query('SELECT * FROM net_tic')).rows[0];
+      await db.exec('DELETE FROM ticcmd');
+    } else {
+      const [fwd, side, turn, fire, use, weapon, run] = portCmd(raw);
+      hud = (await db.query('SELECT * FROM doom_tic(1, ?, ?, ?, ?, ?, ?, ?)', [fwd, side, turn, fire, use, weapon, run])).rows[0];
+    }
     await compare(t + 1, trace[t + off]);
     // G_ExitLevel → G_DoCompleted next tic → WI_Start: the stats as the level left them
     if ((hud?.EXIT_KIND === 1 || hud?.EXIT_KIND === 2) && worldDone) {

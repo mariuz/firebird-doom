@@ -72,6 +72,35 @@ function scripted(episode, map, steps) {
   return { skill: 3, episode, map, players: [true, false, false, false], tics };
 }
 
+/** a netgame's demo: each player's steps as scripted()'s, the shorter padded idle; DEATHMATCH 0, 1, or 2 (altdeath) */
+function scriptedNet(episode, map, stepsByPlayer, deathmatch = 0) {
+  const each = stepsByPlayer.map((steps) => scripted(episode, map, steps).tics.map((t) => t[0]));
+  const n = Math.max(...each.map((t) => t.length));
+  const tics = Array.from({ length: n }, (_, i) => each.map((t) => t[i] ?? [0, 0, 0, 0]));
+  return { skill: 3, episode, map, deathmatch, players: stepsByPlayer.map(() => true).concat([false, false, false]).slice(0, 4), tics };
+}
+/** a long wander of N tics from SEED: runs, turns, strafes, fire and use, each for a while (a
+ * fixed LCG, so the fixture is the same every time it's made) */
+function wander(seed, n) {
+  let x = seed >>> 0;
+  const r = (k) => { x = (Math.imul(x, 1103515245) + 12345) >>> 0; return (x >>> 16) % k; };
+  const steps = [];
+  for (let t = 0; t < n;) {
+    const len = 5 + r(30);
+    const turn = [0, 0, 640, -640, 1280, -1280][r(6)];
+    const fwd = [50, 50, 25, 0, -25][r(5)];
+    const side = [0, 0, 0, 24, -24][r(5)];
+    const buttons = [0, 0, BT_ATTACK, BT_ATTACK, BT_USE][r(5)];
+    steps.push([len, fwd, side, turn, buttons]);
+    t += len;
+  }
+  return steps;
+}
+const WALK = [[35, 25, 0, 0, 0], [10, 25, 0, -640, 0], [35, 50, 10, 0, 0], [20, 0, 0, 1280, 0],
+  [15, 0, -25, 0, BT_ATTACK], [30, -25, 0, -320, 0], [10, 0, 0, 0, BT_USE], [60, 50, 0, 0, BT_ATTACK]];
+const OTHER = [[20, 0, 0, 0, 0], [30, 50, 0, 0, 0], [12, 0, 0, 1024, BT_ATTACK], [40, 25, -20, 0, 0], [25, 0, 0, -1280, 0],
+  [50, 50, 0, 0, BT_ATTACK], [10, 0, 0, 0, BT_USE], [40, -25, 25, 512, 0]];
+
 // through a level's end (EXIT_PWADS: the line a demo walks over made an exit): the intermission
 // hurried on by fire pressed now and then – the stats all there, the map (DOOM I), "entering" –
 // and then the next level, the player and P_Random's index carried over
@@ -111,6 +140,14 @@ const DEMOS = [
   // MAP01's title demo to line 88 (an exit here, tic 39), the screen, and MAP02's start
   ['map01-exit', 'freedoom2.wad', then(fromAttract('freedoom2-demo1.json', 40), [...WI_PRESSES,
     [35, 50, 0, 0, 0], [20, 0, 0, 640, BT_ATTACK], [60, 50, 10, -320, 0], [40, 0, 0, 0, BT_ATTACK]])],
+  // netgames (phase L8): two players' ticcmds each tic – co-op (the multiplayer things, weapons
+  // that stay), and deathmatch (G_DeathMatchSpawnPlayer's random starts, every key, frags)
+  ['e1m1-coop', 'freedoom1.wad', scriptedNet(1, 1, [WALK, OTHER])],
+  ['map01-coop', 'freedoom2.wad', scriptedNet(1, 1, [WALK, OTHER])],
+  ['e1m1-dm', 'freedoom1.wad', scriptedNet(1, 1, [OTHER, WALK], 1)],
+  // three players in -altdeath for half a minute: wandering, firing, using – monsters fight
+  // them, they die and come back at the deathmatch starts, weapons and items respawn
+  ['e1m1-altdeath', 'freedoom1.wad', scriptedNet(1, 1, [wander(11, 1050), wander(22, 1050), wander(33, 1050)], 2)],
   ['e1m2-attract', 'freedoom1.wad', fromAttract('freedoom1-demo2.json', 700)],
   ['e1m3-attract', 'freedoom1.wad', fromAttract('freedoom1-demo3.json', 700)],
   ['map02-attract', 'freedoom2.wad', fromAttract('freedoom2-demo2.json', 700)],

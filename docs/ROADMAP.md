@@ -42,8 +42,9 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   (under **Simulation** below: *Original `.lmp` demos, in phases*): phases L0, the yardstick,
   L1, DOOM's random numbers, L2, the player in fixed point, L3, the map as DOOM spawns it
   and its thinkers' order, L4, the monsters' sight and walk, L5, the attacks, and L6, the world,
-  and L7, playing them on the page, are done. Left: netgame demos (more than one player), and
-  someone with id's WADs running `WAD=/path/to/doom.wad npm run test:lmp` against their demos.
+  L7, playing them on the page, and L8, netgames, are done. Left: a netgame demo through its
+  level's end (the netgame intermission's timing), and someone with id's WADs running
+  `WAD=/path/to/doom.wad npm run test:lmp` against their demos.
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
@@ -581,8 +582,37 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   LmpPlayer's turns, and with `WAD=` (and `PWAD=`) plays each of the WAD's `DEMOn` against the
   oracle's trace of it, made there. Checked here on Freedoom with a PWAD of three fixtures as
   `DEMO1`–`DEMO3`; id's own demos wait for someone with the WADs.
-- **Left:** netgame demos (NET_TIC with every player's ticcmds; the consistency of a 2–4 player
-  game is there from co-op).
+
+**Phase L8: netgames.** *Done.*
+- **The fixtures:** `scriptedNet` writes two or three players' ticcmds a tic: `e1m1-coop` and
+  `map01-coop`, `e1m1-dm` (deathmatch), and `e1m1-altdeath`, three players' seeded wanders
+  (`wander`) in `-altdeath` for 1,070 tics, through deaths and respawns. Chocolate Doom plays a
+  demo with a second player as a netgame; its trace follows consoleplayer.
+- **The harness:** `playAgainst` writes every player's ticcmd (`TICCMD`) and runs `NET_TIC`;
+  `portRow` reads consoleplayer. `lmp-rnglog` does netgames too.
+- **What it found:**
+  - `INIT_MAP` dropped everything but items in deathmatch: `NOT (dm > 0 AND pickup = 'key')` is
+    NULL for a thing with no pickup. Monsters, barrels and decorations are back.
+  - P_GiveWeapon's staying weapon: an owned one does nothing at all (it gave its ammo every
+    touch); a new one five clips in deathmatch, two in co-op, BONUSADD.
+  - G_DoReborn: P_DeathThink only makes the player PST_REBORN (`DEAD` 2); NET_TIC brings them
+    back first thing the next tic, the corpse detached, each spot tried with G_CheckSpot's
+    P_CheckPosition of the corpse (`CHECK_SPOT`), co-op through every player's start in turn;
+    the teleport fog before the player, where the DOS build put it (Chocolate Doom's
+    finetangent[] emulation for starts facing west to south-east, with the 32-bit wrap).
+  - A sector's soundtarget and a monster's target are the player's old body after a respawn (a
+    corpse: not shootable); the port named the player, so A_Look and A_Chase found the new
+    body at once. They're given the old body now.
+  - `leveltime` in a tic is one less than the port's `TIC` (P_Ticker counts it up after the
+    thinkers): the damaging floors (`leveltime & 31`), P_ChangeSector's crush (`& 3`), the
+    planes' sounds (`& 7`), Nightmare's respawn roll and A_Tracer (`gametic & 3`) were all a
+    tic early.
+- **On the page:** `LmpPlayer` gives a netgame's tics as `NET_TIC` rows; the page loads the map
+  for its players and mode and looks through its consoleplayer (`demoNet`). The browser test
+  plays `e1m1-altdeath.lmp` through Load… to where vanilla's trace ends.
+- **Left:** a netgame demo through a level's end – the netgame and deathmatch intermissions
+  (WI_updateNetgameStats, WI_updateDeathmatchStats, every player's presses) against vanilla's.
+
 
 - ~~**Armour types.**~~ Done: green armour (type 1) absorbs ⅓, and blue armour, the megasphere
   and IDKFA (type 2) absorb ½. Bonuses keep the type, and used-up armour loses it.

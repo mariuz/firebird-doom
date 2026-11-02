@@ -113,7 +113,8 @@ await db.exec(`UPDATE player SET kills = 3, bullets = 120, has_shotgun = 1, keyc
 await db.exec(`EXECUTE PROCEDURE damage_player(1000, NULL, 2)`);
 for (let i = 0; i < 4; i++) await tic([IDLE, IDLE]);
 const dead = await one('SELECT dead, thing_id FROM player WHERE id = 2');
-await tic([IDLE, [0, 0, 0, 0, 1, 0, 0]]);
+await tic([IDLE, [0, 0, 0, 0, 1, 0, 0]]);   // (PST_REBORN…)
+await tic([IDLE, IDLE]);                    // (…and G_DoReborn at the start of the next tic)
 const back = await one('SELECT p.dead, p.thing_id, p.health, p.bullets, p.has_shotgun, p.keycards, p.kills, t.x, t.y FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2');
 const body = await one(`SELECT kind, st FROM things WHERE id = ${dead.THING_ID}`);
 const exitKind = (await one('SELECT exit_kind FROM game')).EXIT_KIND;
@@ -164,12 +165,15 @@ assert(dead.DEAD === 1 && back.DEAD === 0 && back.THING_ID !== dead.THING_ID && 
   const dying = (await look()).FRAME;
   for (let i = 0; i < 80; i++) await tic([IDLE, IDLE]);
   const dead2 = (await look()).FRAME;
+  // (P_DeathThink sees use: PST_REBORN; G_DoReborn brings them back at the start of the next tic)
   await tic([IDLE, [0, 0, 0, 0, 1, 0, 0]]);
+  const waiting = (await one('SELECT dead FROM player WHERE id = 2')).DEAD;
+  await tic([IDLE, IDLE]);
   const body = await one(`SELECT kind, TRIM((SELECT s.frame FROM states s WHERE s.id = things.state)) frame, translation FROM things WHERE id = ${other}`);
   const reborn = await one('SELECT TRIM((SELECT s.frame FROM states s WHERE s.id = t.state)) frame, t.translation FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2');
-  assert(dying === 'H' && dead2 === 'N' && body.KIND === 'decor' && body.FRAME === 'N' && body.TRANSLATION === 1
+  assert(dying === 'H' && dead2 === 'N' && waiting === 2 && body.KIND === 'decor' && body.FRAME === 'N' && body.TRANSLATION === 1
     && reborn.FRAME === 'A' && reborn.TRANSLATION === 1,
-    `killed: ${dying}…${dead2} (S_PLAY_DIE1–7); the body stays, indigo, and player 2 comes back indigo`);
+    `killed: ${dying}…${dead2} (S_PLAY_DIE1–7); use, and the next tic (G_DoReborn) player 2 comes back indigo, the body staying behind, indigo`);
   await db.exec(`UPDATE things SET x = ${me.X + Math.cos(me.ANGLE) * 160}, y = ${me.Y + Math.sin(me.ANGLE) * 160} WHERE id = ${(await thing(2)).ID}`);
   await db.exec('UPDATE player SET armor = 0, health = 100 WHERE id = 2');
   await db.exec('EXECUTE PROCEDURE damage_player(250, NULL, 2)');
@@ -177,6 +181,7 @@ assert(dead.DEAD === 1 && back.DEAD === 0 && back.THING_ID !== dead.THING_ID && 
   for (let i = 0; i < 60; i++) await tic([IDLE, IDLE]);
   const gibbed = (await one(`SELECT TRIM((SELECT s.frame FROM states s WHERE s.id = t.state)) frame FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2`)).FRAME;
   await tic([IDLE, [0, 0, 0, 0, 1, 0, 0]]);
+  await tic([IDLE, IDLE]);
   assert(gib === 'O' && gibbed === 'W', `below -100 health: ${gib}…${gibbed} (S_PLAY_XDIE1–9)`);
 }
 // R_InitTranslationTables: the green ramp, and only it, becomes indigo, brown or red
@@ -306,7 +311,7 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   assert(keys === 0 && at.every((p) => p.KEYCARDS === 7),
     `no keys on the map (MF_NOTDMATCH, ${keysOnMap} left out), every card in each player's pocket (P_SpawnPlayer)`);
   const d2 = await thing(2);
-  // P_GiveWeapon in a netgame: a placed weapon stays, and gives five clips
+  // P_GiveWeapon in a netgame: a placed weapon stays, and gives five clips in deathmatch
   // (nothing else to pick up there: a deathmatch start may sit on a box of shells)
   await db.exec(`DELETE FROM things t WHERE ABS(t.x - ${d2.X}) < 64 AND ABS(t.y - ${d2.Y}) < 64
     AND t.thing_type IN (SELECT tt.thing_type FROM thing_types tt WHERE tt.pickup IS NOT NULL)`);
@@ -335,8 +340,11 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
     `player 2 kills player 1: frags[2][1] = 1; the status bar says 1 for player 2, 0 for player 1`);
   for (let i = 0; i < 4; i++) await tic([IDLE, IDLE]);
   await tic([[0, 0, 0, 0, 1, 0, 0], IDLE]);
+  await tic([IDLE, IDLE]);
   const back = await one('SELECT p.keycards, p.dead, t.x, t.y, t.id FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1');
-  assert(back.DEAD === 0 && back.ID !== t1.ID && onStart(back) && back.KEYCARDS === 7, 'reborn: at a deathmatch start, with every card again');
+  const fogs = (await one("SELECT COUNT(*) n FROM things WHERE thing_type = 9016")).N;
+  assert(back.DEAD === 0 && back.ID !== t1.ID && onStart(back) && back.KEYCARDS === 7 && fogs >= 1,
+    'reborn the tic after use: at a deathmatch start (G_CheckSpot: clear of the corpse and everything solid), teleport fog beside it, every card again');
   await db.exec(`EXECUTE PROCEDURE damage_player(1000, ${back.ID}, 1)`);
   const h1b = await tic([IDLE, IDLE], 1);
   assert((await one('SELECT n FROM frags WHERE killer = 1 AND victim = 1')).N === 1 && h1b.FRAGS === -1, 'player 1 blows themself up: frags[1][1] = 1, and the status bar says -1');
@@ -397,9 +405,13 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   await db.exec('UPDATE player SET shells = 0, has_shotgun = 0, keycards = 0');
   await tic([IDLE, IDLE]);
   const coop = await one('SELECT has_shotgun, shells, keycards FROM player WHERE id = 2');
-  assert(coopKeys === keysOnMap && c2.X === starts[1].X && coop.HAS_SHOTGUN === 1 && coop.SHELLS === 20 && coop.KEYCARDS === 0
+  // (P_GiveWeapon: a weapon already had does nothing at all – no ammo again, however often it's touched)
+  await db.exec('UPDATE things SET momx = momx + 1 / 65536e0 WHERE id = (SELECT thing_id FROM player WHERE id = 2)');
+  await tic([IDLE, IDLE]);
+  const twice = (await one('SELECT shells FROM player WHERE id = 2')).SHELLS;
+  assert(coopKeys === keysOnMap && c2.X === starts[1].X && coop.HAS_SHOTGUN === 1 && coop.SHELLS === 8 && twice === 8 && coop.KEYCARDS === 0
     && (await one(`SELECT COUNT(*) n FROM things WHERE id = ${sg3}`)).N === 1,
-    'co-op: keys on the map, no cards given, players at their own starts; a placed shotgun stays and gives five clips here too');
+    `co-op: keys on the map, no cards given, players at their own starts; a placed shotgun stays and gives two clips here (${coop.SHELLS} shells), and nothing the second time (${twice})`);
 }
 
 // ── the launch options: -nomonsters, -respawn, -fast ──
@@ -463,7 +475,7 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   // lights, whose thinkers come before the corpse's and draw too, are put out), at a tic that's a multiple of 32
   await db.exec('UPDATE sectors SET lfx = NULL');
   const rise = async (respawn) => {
-    await db.exec(`UPDATE game SET tic = 1023, rng = 255, respawn = ${respawn} WHERE id = 1`);
+    await db.exec(`UPDATE game SET tic = 1024, rng = 255, respawn = ${respawn} WHERE id = 1`);
     await tic([IDLE, IDLE]);
     return (await one(`SELECT st, hp, solid, dead_tic FROM things WHERE id = ${corpse}`));
   };
@@ -471,7 +483,7 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   const up = await rise(1);
   const tele = (await one("SELECT COUNT(*) n FROM sound_events WHERE sound = 'DSTELEPT'")).N;
   assert(stays.ST === 'dead' && up.ST === 'idle' && up.HP === 60 && up.SOLID === 1 && up.DEAD_TIC === null && tele === 1,
-    `-respawn at skill 3: the imp's corpse stays down without it, and rises with it at tic 1024, in teleport fog (P_NightmareRespawn)`);
+    `-respawn at skill 3: the imp's corpse stays down without it, and rises with it when leveltime is 1024 (the port's tic 1025), in teleport fog (P_NightmareRespawn)`);
 }
 
 // ── chat (hu_stuff.c): a character a tic in the ticcmd, put together on the other side ──

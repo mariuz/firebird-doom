@@ -108,14 +108,14 @@ export function portCmd([fwd, side, turn, buttons]) {
 }
 
 /**
- * Why a parsed .lmp can't be played on the page, or null. The page plays one player's demos:
- * a netgame's (more than one player in it) or a deathmatch's would need every player's
- * ticcmds through NET_TIC.
+ * Why a parsed .lmp can't be played on the page, or null. A netgame's (two to four players,
+ * co-op or deathmatch) plays through NET_TIC, every player's ticcmd each tic, seen as
+ * consoleplayer saw it.
  */
 export function lmpProblem(demo) {
   const n = demo.players.filter(Boolean).length;
-  if (n !== 1 || !demo.players[demo.consoleplayer]) return `a demo of a ${n}-player game; the page plays one player's demos`;
-  if (demo.deathmatch) return 'a deathmatch demo; the page plays one player\'s demos';
+  if (n < 1) return 'a demo with no players';
+  if (!demo.players[demo.consoleplayer]) return `a demo whose consoleplayer (${demo.consoleplayer + 1}) isn't in the game`;
   if (!demo.tics.length) return 'an empty demo';
   return null;
 }
@@ -128,6 +128,8 @@ export function lmpProblem(demo) {
  *                WI_checkForAccelerate's new press of fire or use (player->attackdown, usedown,
  *                carried over from the level: carry())
  *   take('fin')  a text screen's tic: ['fin', 1, held, 0]
+ *   (a netgame's level tic: ['net', [[player, fwd, side, turn, fire, use, weapon, run] …]], every
+ *   player's for NET_TIC; its level end stops it, the netgame intermission not yet followed)
  *   take('map')  the next level, or the restart after a death: ['map', '*', null, 0] – which
  *                one is the game's to say (G_DoWorldDone, G_DoReborn), and no seed: P_Random's
  *                index carries on
@@ -143,6 +145,9 @@ export class LmpPlayer {
     this.index = 0;
     this.attackdown = false;
     this.usedown = false;
+    // a netgame's: the players in it (1–4, as their tics list them), and whose view
+    this.inGame = demo.players.map((x, i) => (x ? i + 1 : 0)).filter(Boolean);
+    this.net = this.inGame.length > 1 ? { players: this.inGame.length, deathmatch: demo.deathmatch, me: demo.consoleplayer + 1 } : null;
   }
 
   get done() { return this.index >= this.demo.tics.length; }
@@ -156,7 +161,12 @@ export class LmpPlayer {
   take(kind) {
     if (this.done) return null;
     if (kind === 'map') return ['map', '*', null, 0];
+    // (a netgame's level end isn't followed yet: its intermission is WI_updateNetgameStats', not
+    // checked against vanilla – the demo stops there)
+    if (this.net && kind !== 'tic') return null;
     const tic = this.demo.tics[this.index++];
+    // (a netgame's tic: every player's, as NET_TIC's TICCMD rows)
+    if (this.net) return ['net', tic.map((c, k) => [this.inGame[k], ...portCmd(c)])];
     const cmd = tic[this.demo.consoleplayer] ?? tic[0];
     if (kind === 'tic') return [1, ...portCmd(cmd)];
     const atk = (cmd[3] & BT_ATTACK) !== 0;

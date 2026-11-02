@@ -937,7 +937,7 @@ BEGIN
     FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = :pid
     INTO arm, arm_type, is_dead, invuln, god, ptid, hp, sspec, thr;
   IF (ptid IS NULL) THEN EXIT;
-  IF (is_dead = 1 OR hp <= 0 OR COALESCE(dmg, 0) <= 0) THEN EXIT;
+  IF (is_dead > 0 OR hp <= 0 OR COALESCE(dmg, 0) <= 0) THEN EXIT;
   -- on the easiest skill you take half (damage >>= 1)
   IF ((SELECT g.skill FROM game g WHERE g.id = 1) = 1) THEN dmg = BIN_SHR(dmg, 1);
   -- thrown back – god mode or not
@@ -2355,11 +2355,6 @@ BEGIN
 END^
 
 -- ── the player ────────────────────────────────────────────────────────────
--- G_DoReborn in a netgame (P_SpawnPlayer, G_PlayerReborn): a dead player
--- G_DeathMatchSpawnPlayer: one of the deathmatch starts (type 11) at random,
--- up to twenty tries for one nobody stands on (G_CheckSpot); failing that, the
--- player's own start. DOOM refuses a map with fewer than four deathmatch
--- starts; here one without any falls back to the player starts instead.
 -- ── the weapons on DOOM's frame tables (docs/ROADMAP.md, phase 4) ──────────
 -- p_pspr.c: each player's two psprites, the weapon (POS 0, ps_weapon) and its muzzle flash
 -- (POS 1, ps_flash), go through info.c's weapon states as a thing goes through its own: a
@@ -2722,7 +2717,7 @@ DECLARE health INTEGER;
 BEGIN
   UPDATE player p SET psp_sy = p.psp_sy + 6 WHERE p.id = :pid RETURNING p.psp_sy, p.dead, p.health INTO sy, dead, health;
   IF (sy < 128) THEN EXIT;
-  IF (dead = 1) THEN
+  IF (dead > 0) THEN
   BEGIN
     UPDATE player p SET psp_sy = 128 WHERE p.id = :pid;
     EXIT;
@@ -2850,83 +2845,6 @@ BEGIN
   END
 END^
 
-CREATE OR ALTER PROCEDURE deathmatch_spot (pid SMALLINT, old INTEGER)
-RETURNS (sx DOUBLE PRECISION, sy DOUBLE PRECISION, sa DOUBLE PRECISION)
-AS
-DECLARE n INTEGER;
-DECLARE k INTEGER;
-DECLARE tries INTEGER;
-BEGIN
-  SELECT COUNT(*) FROM map_things m WHERE m.ttype = 11 INTO n;
-  tries = 0;
-  WHILE (n > 0 AND tries < 20) DO
-  BEGIN
-    k = FLOOR(p_random() * 256);
-    k = MOD(k, n);
-    SELECT FIRST 1 SKIP (:k) m.x, m.y, TRUNC(m.angle / 45) * PI() / 4 FROM map_things m WHERE m.ttype = 11 ORDER BY m.id
-      INTO sx, sy, sa;
-    IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.solid = 1 AND t.id <> COALESCE(:old, -1)
-                     AND ABS(t.x - :sx) < t.radius + 16 AND ABS(t.y - :sy) < t.radius + 16)) THEN
-    BEGIN
-      SUSPEND;
-      EXIT;
-    END
-    tries = tries + 1;
-  END
-  sx = NULL;
-  SELECT FIRST 1 m.x, m.y, TRUNC(m.angle / 45) * PI() / 4 FROM map_things m WHERE m.ttype BETWEEN 1 AND 4
-   ORDER BY IIF(m.ttype = :pid, 0, 1), m.ttype INTO sx, sy, sa;
-  SUSPEND;
-END^
-
--- comes back at their own start (another player's if theirs is taken, as
--- G_CheckSpot has it), in a flash of teleport fog, with the pistol, 50 bullets
--- and nothing else; kills, items and secrets stay. The body stays behind.
-CREATE OR ALTER PROCEDURE reborn_player (pid SMALLINT)
-AS
-DECLARE old INTEGER;
-DECLARE sx DOUBLE PRECISION;
-DECLARE sy DOUBLE PRECISION;
-DECLARE sa DOUBLE PRECISION;
-DECLARE nid INTEGER;
-DECLARE fog INTEGER;
-BEGIN
-  SELECT p.thing_id FROM player p WHERE p.id = :pid INTO old;
-  IF ((SELECT g.deathmatch FROM game g WHERE g.id = 1) > 0) THEN
-    SELECT d.sx, d.sy, d.sa FROM deathmatch_spot(:pid, :old) d INTO sx, sy, sa;
-  ELSE
-  FOR SELECT m.x, m.y, TRUNC(m.angle / 45) * PI() / 4 FROM map_things m
-       WHERE m.ttype BETWEEN 1 AND 4
-       ORDER BY IIF(m.ttype = :pid, 0, 1), m.ttype
-        INTO sx, sy, sa
-  DO
-  BEGIN
-    IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.solid = 1 AND t.id <> :old
-                     AND ABS(t.x - :sx) < t.radius + 16 AND ABS(t.y - :sy) < t.radius + 16)) THEN LEAVE;
-  END
-  IF (sx IS NULL) THEN EXIT;
-  -- the old body: a corpse like any other
-  -- (its death states play on to the last: ST follows them, 'dying' then 'dead')
-  UPDATE things t SET kind = 'decor', solid = 0 WHERE t.id = :old;
-  EXECUTE PROCEDURE spawn_thing(1, sx, sy, NULL, sa) RETURNING_VALUES nid;
-  UPDATE things t SET flags = 0, translation = :pid - 1, hp = (SELECT r.init_health FROM rules r WHERE r.id = 1) WHERE t.id = :nid;
-  EXECUTE PROCEDURE spawn_thing(9016, sx + 20 * COS(sa), sy + 20 * SIN(sa), NULL, 0) RETURNING_VALUES fog;
-  EXECUTE PROCEDURE play_sound('DSTELEPT', fog, sx + 20 * COS(sa), sy + 20 * SIN(sa));
-  UPDATE player p
-     SET thing_id = :nid, health = (SELECT r.init_health FROM rules r WHERE r.id = 1), armor = 0, armor_type = 0,
-         dead = 0, weapon = 2, pending_weapon = 0, refire = 0, attack_down = 1, attacker_id = NULL,
-         bullets = (SELECT r.init_bullets FROM rules r WHERE r.id = 1), shells = 0, rockets = 0, cells = 0,
-         has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0, has_chainsaw = 0, has_ssg = 0,
-         max_bullets = (SELECT r.max_bullets FROM rules r WHERE r.id = 1), max_shells = (SELECT r.max_shells FROM rules r WHERE r.id = 1),
-         max_rockets = (SELECT r.max_rockets FROM rules r WHERE r.id = 1), max_cells = (SELECT r.max_cells FROM rules r WHERE r.id = 1),
-         keycards = IIF((SELECT g.deathmatch FROM game g WHERE g.id = 1) > 0, 7, 0),   -- (P_SpawnPlayer: every card in deathmatch)
-         damage_count = 0, bonus_count = 0, msg = NULL, msg_tics = 0, view_h = 41, delta_vh = 0,
-         view_z = (SELECT t.z FROM things t WHERE t.id = :nid) + 41, use_down = 1,
-         invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0, strength_tics = 0, allmap = 0
-   WHERE p.id = :pid;
-  -- (G_PlayerReborn: attackdown, so the trigger held from before doesn't fire; P_SetupPsprites)
-  EXECUTE PROCEDURE setup_psprites(pid, (SELECT g.tic FROM game g WHERE g.id = 1));
-END^
 
 -- ── the player's movement, as DOOM's ─────────────────────────────────────
 -- P_MovePlayer's thrust and P_MobjThinker's P_XYMovement / P_ZMovement for a player, in 16.16
@@ -3069,6 +2987,150 @@ BEGIN
   END
 END^
 
+-- G_DoReborn in a netgame (CHECK_SPOT, DEATHMATCH_SPOT, REBORN_PLAYER, after P_CheckPosition,
+-- which they use). G_DeathMatchSpawnPlayer: one of the deathmatch starts (type 11) at random,
+-- up to twenty tries for one that's clear (G_CheckSpot); failing that, the player's own start.
+-- DOOM refuses a map with fewer than four deathmatch starts; here one without any falls back to
+-- the player starts instead.
+--
+-- G_CheckSpot with a corpse there: P_CheckPosition of the old body at the start – a solid thing
+-- in the way, or a line, and it's not clear (the body is no longer the player's: nothing is
+-- picked up)
+CREATE OR ALTER PROCEDURE check_spot (old INTEGER, sx DOUBLE PRECISION, sy DOUBLE PRECISION)
+RETURNS (ok SMALLINT)
+AS
+BEGIN
+  ok = 1;
+  SELECT c.ok FROM check_position_fx(:old, fx_of(:sx), fx_of(:sy), fx_of((SELECT t.radius FROM things t WHERE t.id = :old)), 0) c INTO ok;
+  SUSPEND;
+END^
+
+CREATE OR ALTER PROCEDURE deathmatch_spot (pid SMALLINT, old INTEGER)
+RETURNS (sx DOUBLE PRECISION, sy DOUBLE PRECISION, sa DOUBLE PRECISION, checked SMALLINT)
+AS
+DECLARE n INTEGER;
+DECLARE k INTEGER;
+DECLARE tries INTEGER;
+DECLARE fits SMALLINT;
+BEGIN
+  checked = 1;
+  SELECT COUNT(*) FROM map_things m WHERE m.ttype = 11 INTO n;
+  tries = 0;
+  WHILE (n > 0 AND tries < 20) DO
+  BEGIN
+    k = FLOOR(p_random() * 256);
+    k = MOD(k, n);
+    SELECT FIRST 1 SKIP (:k) m.x, m.y, TRUNC(m.angle / 45) * PI() / 4 FROM map_things m WHERE m.ttype = 11 ORDER BY m.id
+      INTO sx, sy, sa;
+    IF (old IS NULL) THEN
+      fits = IIF(EXISTS (SELECT 1 FROM things t WHERE t.solid = 1
+                          AND ABS(t.x - :sx) < t.radius + 16 AND ABS(t.y - :sy) < t.radius + 16), 0, 1);
+    ELSE
+      SELECT c.ok FROM check_spot(:old, :sx, :sy) c INTO fits;
+    IF (fits = 1) THEN
+    BEGIN
+      SUSPEND;
+      EXIT;
+    END
+    tries = tries + 1;
+  END
+  sx = NULL;
+  checked = 0;
+  SELECT FIRST 1 m.x, m.y, TRUNC(m.angle / 45) * PI() / 4 FROM map_things m WHERE m.ttype BETWEEN 1 AND 4
+   ORDER BY IIF(m.ttype = :pid, 0, 1), m.ttype INTO sx, sy, sa;
+  SUSPEND;
+END^
+
+-- G_DoReborn in a netgame, at the start of the tic after P_DeathThink saw use: a dead player
+-- comes back at their own start (another player's if theirs is taken, as G_CheckSpot has it),
+-- in a flash of teleport fog, with the pistol, 50 bullets and nothing else; kills, items and
+-- secrets stay. The body stays behind.
+CREATE OR ALTER PROCEDURE reborn_player (pid SMALLINT)
+AS
+DECLARE old INTEGER;
+DECLARE sx DOUBLE PRECISION;
+DECLARE sy DOUBLE PRECISION;
+DECLARE sa DOUBLE PRECISION;
+DECLARE nid INTEGER;
+DECLARE fog INTEGER;
+DECLARE checked SMALLINT;
+DECLARE fits SMALLINT;
+DECLARE k INTEGER;
+DECLARE fz DOUBLE PRECISION;
+DECLARE xa BIGINT;
+DECLARE ya BIGINT;
+BEGIN
+  SELECT p.thing_id FROM player p WHERE p.id = :pid INTO old;
+  -- G_DoReborn: the corpse is no longer the player's (mo->player = NULL), then a spot
+  UPDATE player p SET thing_id = NULL WHERE p.id = :pid;
+  -- (what heard or hunted the player's old body still has that body – a corpse, not shootable:
+  -- A_Look passes over a sector's soundtarget then, A_Chase looks for another target, a
+  -- tracer stops homing. Here they name the player, so they're given the old body itself, or
+  -- the new one would be found at once)
+  UPDATE sectors s SET sound_heard = 0 WHERE s.sound_heard = :pid;
+  UPDATE things t SET target_id = :old WHERE t.tplayer = :pid AND t.target_id IS NULL AND t.id <> :old;
+  UPDATE things t SET kind = 'decor', solid = 0 WHERE t.id = :old;
+  checked = 0;
+  IF ((SELECT g.deathmatch FROM game g WHERE g.id = 1) > 0) THEN
+    -- G_DeathMatchSpawnPlayer: a deathmatch start at random, twenty tries
+    SELECT d.sx, d.sy, d.sa, d.checked FROM deathmatch_spot(:pid, :old) d INTO sx, sy, sa, checked;
+  ELSE
+  BEGIN
+    -- co-op: the player's own start if it's clear, else the first of the others' that is
+    -- (players 1–4 in order), else their own all the same (G_CheckSpot each)
+    FOR SELECT m.x, m.y, TRUNC(m.angle / 45) * PI() / 4 FROM map_things m
+         WHERE m.ttype BETWEEN 1 AND 4 AND m.id = (SELECT MAX(o.id) FROM map_things o WHERE o.ttype = m.ttype)
+         ORDER BY IIF(m.ttype = :pid, 0, 1), m.ttype
+          INTO sx, sy, sa
+    DO
+    BEGIN
+      SELECT c.ok FROM check_spot(:old, :sx, :sy) c INTO fits;
+      IF (fits = 1) THEN
+      BEGIN
+        checked = 1;
+        LEAVE;
+      END
+    END
+    IF (checked = 0) THEN
+      SELECT FIRST 1 m.x, m.y, TRUNC(m.angle / 45) * PI() / 4 FROM map_things m WHERE m.ttype = :pid ORDER BY m.id DESC
+        INTO sx, sy, sa;
+  END
+  IF (sx IS NULL) THEN EXIT;
+  -- G_CheckSpot, the spot clear: teleport fog 20 units out the way the start faces (finecosine
+  -- and finesine of ANG45 × (angle / 45)), on the floor of the start's sector. In the DOS
+  -- build the angle came out negative for a start facing anywhere from west to south-east,
+  -- and the lookups landed in finetangent[] (Chocolate Doom's emulation, from PrBoom+): from
+  -- a start facing west the fog is 20 × finetangent[0] away (a 32-bit wrap), so far off it's
+  -- never seen
+  IF (checked = 1) THEN
+  BEGIN
+    k = MOD(CAST(ROUND(sa * 4 / PI()) AS INTEGER) + 8, 8);
+    xa = CASE k WHEN 4 THEN 25 WHEN 5 THEN 65586 WHEN 6 THEN fine_sine(0) WHEN 7 THEN fine_sine(1024) ELSE fine_cosine(k * 1024) END;
+    ya = CASE k WHEN 4 THEN -170910304 WHEN 5 THEN -65485 WHEN 6 THEN 25 WHEN 7 THEN 65586 ELSE fine_sine(k * 1024) END;
+    fz = (SELECT s.floor_h FROM sectors s WHERE s.id = sector_at_fx(fx_of(:sx), fx_of(:sy)));
+    EXECUTE PROCEDURE spawn_thing(9016, fx32(fx_of(sx) + fx32(20 * xa)) / 65536e0,
+      fx32(fx_of(sy) + fx32(20 * ya)) / 65536e0, fz, 0) RETURNING_VALUES fog;
+    EXECUTE PROCEDURE play_sound('DSTELEPT', fog, sx, sy);
+  END
+  -- P_SpawnPlayer (G_PlayerReborn first: what's kept and what isn't, below)
+  EXECUTE PROCEDURE spawn_thing(1, sx, sy, NULL, sa) RETURNING_VALUES nid;
+  UPDATE things t SET flags = 0, translation = :pid - 1, hp = (SELECT r.init_health FROM rules r WHERE r.id = 1) WHERE t.id = :nid;
+  UPDATE player p
+     SET thing_id = :nid, health = (SELECT r.init_health FROM rules r WHERE r.id = 1), armor = 0, armor_type = 0,
+         dead = 0, weapon = 2, pending_weapon = 0, refire = 0, attack_down = 1, attacker_id = NULL,
+         bullets = (SELECT r.init_bullets FROM rules r WHERE r.id = 1), shells = 0, rockets = 0, cells = 0,
+         has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0, has_chainsaw = 0, has_ssg = 0,
+         max_bullets = (SELECT r.max_bullets FROM rules r WHERE r.id = 1), max_shells = (SELECT r.max_shells FROM rules r WHERE r.id = 1),
+         max_rockets = (SELECT r.max_rockets FROM rules r WHERE r.id = 1), max_cells = (SELECT r.max_cells FROM rules r WHERE r.id = 1),
+         keycards = IIF((SELECT g.deathmatch FROM game g WHERE g.id = 1) > 0, 7, 0),   -- (P_SpawnPlayer: every card in deathmatch)
+         damage_count = 0, bonus_count = 0, msg = NULL, msg_tics = 0, view_h = 41, delta_vh = 0,
+         view_z = (SELECT t.z FROM things t WHERE t.id = :nid) + 41, use_down = 1,
+         invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0, strength_tics = 0, allmap = 0
+   WHERE p.id = :pid;
+  -- (G_PlayerReborn: attackdown, so the trigger held from before doesn't fire; P_SetupPsprites)
+  EXECUTE PROCEDURE setup_psprites(pid, (SELECT g.tic FROM game g WHERE g.id = 1));
+END^
+
 -- P_ThingHeightClip: TID's floor and ceiling found again where it stands (P_CheckPosition: the
 -- lines its box touches, as far as they go – a solid thing in the way leaves them its
 -- subsector's; a player touches the pickups there), kept as its own; on its floor before, it
@@ -3170,7 +3232,8 @@ BEGIN
     END
     IF (shoot = 0) THEN CONTINUE;
     nofit = 1;
-    IF (crunch = 1 AND MOD(tic, 4) = 0) THEN
+    -- (PIT_ChangeSector's leveltime & 3: LEVELTIME is TIC - 1 while the thinkers run)
+    IF (crunch = 1 AND MOD(tic - 1, 4) = 0) THEN
     BEGIN
       pid = NULL;
       SELECT p.id FROM player p WHERE p.thing_id = :tid INTO pid;
@@ -3368,7 +3431,7 @@ BEGIN
     IF (dir = 1) THEN
     BEGIN
       EXECUTE PROCEDURE move_plane(sid, spd, top_h, crush, 0, 1) RETURNING_VALUES res;
-      IF (mt IN ('raiseAndChange', 'raiseToNearestAndChange') AND BIN_AND(tic, 7) = 0) THEN
+      IF (mt IN ('raiseAndChange', 'raiseToNearestAndChange') AND BIN_AND(tic - 1, 7) = 0) THEN
         EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
       IF (res = 1 AND crush = 0) THEN
       BEGIN
@@ -3411,7 +3474,7 @@ BEGIN
     IF (dir = 1) THEN
     BEGIN
       EXECUTE PROCEDURE move_plane(sid, spd, top_h, 0, 1, 1) RETURNING_VALUES res;
-      IF (BIN_AND(tic, 7) = 0 AND mt <> 'silentCrushAndRaise') THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
+      IF (BIN_AND(tic - 1, 7) = 0 AND mt <> 'silentCrushAndRaise') THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
       IF (res = 2) THEN
       BEGIN
         IF (mt = 'raiseToHighest') THEN del = 1;
@@ -3425,7 +3488,7 @@ BEGIN
     ELSE IF (dir = -1) THEN
     BEGIN
       EXECUTE PROCEDURE move_plane(sid, spd, bottom_h, crush, 1, -1) RETURNING_VALUES res;
-      IF (BIN_AND(tic, 7) = 0 AND mt <> 'silentCrushAndRaise') THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
+      IF (BIN_AND(tic - 1, 7) = 0 AND mt <> 'silentCrushAndRaise') THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
       IF (res = 2) THEN
       BEGIN
         IF (mt = 'silentCrushAndRaise') THEN EXECUTE PROCEDURE sector_sound('DSPSTOP', sid);
@@ -3442,7 +3505,7 @@ BEGIN
     -- T_MoveFloor: TOP_H is floordestheight; it grinds every 8 tics and stops with DSPSTOP,
     -- where a lowerAndChange or a donut's ring takes its new flat and special
     EXECUTE PROCEDURE move_plane(sid, spd, top_h, crush, 0, dir) RETURNING_VALUES res;
-    IF (BIN_AND(tic, 7) = 0) THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
+    IF (BIN_AND(tic - 1, 7) = 0) THEN EXECUTE PROCEDURE sector_sound('DSSTNMOV', sid);
     IF (res = 2) THEN
     BEGIN
       IF ((dir = 1 AND mt = 'donutRaise') OR (dir = -1 AND mt = 'lowerAndChange')) THEN
@@ -3878,7 +3941,7 @@ BEGIN
   IF (z > fz) THEN EXIT;                         -- (no friction in the air)
   -- (a dead player's body is a corpse (MF_CORPSE): with some speed left, it doesn't stop while
   -- it's halfway off a step)
-  IF (dead = 1 AND (momx > 16384 OR momx < -16384 OR momy > 16384 OR momy < -16384) AND fz <> sfz) THEN EXIT;
+  IF (dead > 0 AND (momx > 16384 OR momx < -16384 OR momy > 16384 OR momy < -16384) AND fz <> sfz) THEN EXIT;
   IF (momx > -4096 AND momx < 4096 AND momy > -4096 AND momy < 4096 AND cmd_fwd = 0 AND cmd_side = 0) THEN
   BEGIN
     IF (EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
@@ -4099,7 +4162,7 @@ BEGIN
   -- (P_XYMovement, in the body's own thinker, looks at the ticcmd's moves)
   UPDATE player p SET cmd_fwd = :cmd_fwd, cmd_side = :cmd_side WHERE p.id = :pid;
 
-  IF (is_dead = 1) THEN
+  IF (is_dead > 0) THEN
   BEGIN
     -- P_DeathThink: the weapon goes on going down (P_MovePsprites); sink to the floor, wait for
     -- USE – and turn to face your killer, 5° a tic; until you do, the red of the damage stays
@@ -4123,16 +4186,15 @@ BEGIN
         UPDATE player SET damage_count = damage_count + 1 WHERE id = :pid AND damage_count > 0;   -- (DOOM_TIC's countdown waits)
       END
     END
-    -- G_DoReborn: alone, the level starts over; in a netgame you come back at your start (P_DeathThink:
-    -- BT_USE in the ticcmd, held from before or not)
+    -- P_DeathThink: BT_USE in the ticcmd (held from before or not) makes it PST_REBORN. Alone,
+    -- G_DoReborn starts the level over (EXIT_KIND 3); in a netgame the player comes back at the
+    -- start of the next tic, before anything thinks (DEAD 2 until then: NET_TIC's REBORN_PLAYER)
     IF (use_key = 1) THEN
     BEGIN
       IF ((SELECT g.players FROM game g WHERE g.id = 1) > 1) THEN
-      BEGIN
-        EXECUTE PROCEDURE reborn_player(pid);
-        EXIT;
-      END
-      UPDATE game SET exit_kind = 3 WHERE id = 1;
+        UPDATE player p SET dead = 2 WHERE p.id = :pid;
+      ELSE
+        UPDATE game SET exit_kind = 3 WHERE id = 1;
     END
     UPDATE player SET view_h = :view_h, view_z = :z + :view_h, use_down = :use_key WHERE id = :pid;
     EXIT;
@@ -4214,14 +4276,15 @@ BEGIN
   SELECT floor_h, ceil_h, special FROM sectors WHERE id = :sec INTO fz, cz, sspec;
 
   -- P_PlayerInSpecialSector: only standing on the floor (z == its sector's floorheight; falling,
-  -- not yet), every tic: the damage every 32nd (leveltime & 0x1f), from nothing
+  -- not yet), every tic: the damage every 32nd (leveltime & 0x1f), from nothing. (LEVELTIME is
+  -- TIC - 1 here: P_Ticker counts it up after the thinkers, and TIC is the count after)
   IF (sspec > 0 AND z = fz) THEN
   BEGIN
     SELECT p.iron_tics FROM player p WHERE p.id = :pid INTO iron;
     -- hellslime (10) and nukage (5): none in the radiation suit (pw_ironfeet)
     IF (sspec IN (5, 7)) THEN
     BEGIN
-      IF (iron = 0 AND BIN_AND(tic, 31) = 0) THEN
+      IF (iron = 0 AND BIN_AND(tic - 1, 31) = 0) THEN
         EXECUTE PROCEDURE damage_player(IIF(sspec = 5, 10, 5), NULL, pid);
     END
     -- super hellslime and the strobe hurt (20): through the suit when P_Random() < 5 – drawn every
@@ -4230,7 +4293,7 @@ BEGIN
     BEGIN
       hurt = 1;
       IF (iron > 0) THEN hurt = IIF(p_rand256() < 5, 1, 0);
-      IF (hurt = 1 AND BIN_AND(tic, 31) = 0) THEN EXECUTE PROCEDURE damage_player(20, NULL, pid);
+      IF (hurt = 1 AND BIN_AND(tic - 1, 31) = 0) THEN EXECUTE PROCEDURE damage_player(20, NULL, pid);
     END
     ELSE IF (sspec = 9) THEN
     BEGIN
@@ -4242,7 +4305,7 @@ BEGIN
     ELSE IF (sspec = 11) THEN
     BEGIN
       UPDATE player SET god = 0 WHERE id = :pid;
-      IF (BIN_AND(tic, 31) = 0) THEN EXECUTE PROCEDURE damage_player(20, NULL, pid);
+      IF (BIN_AND(tic - 1, 31) = 0) THEN EXECUTE PROCEDURE damage_player(20, NULL, pid);
       IF ((SELECT p.health FROM player p WHERE p.id = :pid) <= 10) THEN
         UPDATE game SET exit_kind = 1 WHERE id = 1 AND exit_kind = 0;
     END
@@ -4378,6 +4441,7 @@ DECLARE mult INTEGER;
 DECLARE np SMALLINT;
 DECLARE dm SMALLINT;
 DECLARE gave SMALLINT;
+DECLARE nclips INTEGER;
 DECLARE qn INTEGER;
 DECLARE tries INTEGER;
 DECLARE noclip SMALLINT;
@@ -4402,7 +4466,7 @@ BEGIN
     FROM player p JOIN things t ON t.id = p.thing_id
    WHERE p.id = :pid
     INTO tid, x, y, z, weapon, pending, is_dead;
-  IF (tid IS NULL OR is_dead = 1) THEN EXIT;     -- (the dead pick nothing up)
+  IF (tid IS NULL OR is_dead > 0) THEN EXIT;     -- (the dead pick nothing up)
   IF (at_x IS NOT NULL) THEN
   BEGIN
     x = at_x;
@@ -4427,10 +4491,11 @@ BEGIN
            rockets, cells, maxr, maxc, has_rl, has_pl, has_bfg;
     SELECT p.has_chainsaw, p.has_ssg FROM player p WHERE p.id = :pid INTO has_saw, has_ssg;
     took = 1;
-    -- P_GiveWeapon: "leave placed weapons forever on net games" (not in
-    -- -altdeath, where they respawn instead): the first time you get the
-    -- weapon, and every time five clips of its ammo, with the sound for you
-    -- alone and no message; a weapon you have with full ammo does nothing
+    -- P_GiveWeapon: "leave placed weapons forever on net games" (not in -altdeath, where they
+    -- respawn instead): a weapon you have does nothing at all; one you haven't is yours, with
+    -- five clips of its ammo in deathmatch and two in co-op (P_GiveAmmo's, doubled on skills 1
+    -- and 5), BONUSADD, and it comes up (pendingweapon) – the sound for you alone, no message,
+    -- and the weapon stays where it lies
     IF (np > 1 AND dm <> 2 AND dropped = 0 AND pk IN ('shotgun', 'chaingun', 'launcher', 'plasma', 'bfg', 'chainsaw', 'ssg')) THEN
     BEGIN
       gave = 0;
@@ -4441,32 +4506,18 @@ BEGIN
       IF (pk = 'bfg' AND has_bfg = 0) THEN BEGIN has_bfg = 1; pending = 7; gave = 1; END
       IF (pk = 'chainsaw' AND has_saw = 0) THEN BEGIN has_saw = 1; pending = 8; gave = 1; END
       IF (pk = 'ssg' AND has_ssg = 0) THEN BEGIN has_ssg = 1; pending = 9; gave = 1; END
-      IF (pk IN ('shotgun', 'ssg') AND shells < maxs) THEN
-      BEGIN
-        shells = MINVALUE(maxs, shells + 5 * (SELECT r.clip_shells FROM rules r WHERE r.id = 1) * mult);
-        gave = 1;
-      END
-      IF (pk = 'chaingun' AND bullets < maxb) THEN
-      BEGIN
-        bullets = MINVALUE(maxb, bullets + 5 * (SELECT r.clip_bullets FROM rules r WHERE r.id = 1) * mult);
-        gave = 1;
-      END
-      IF (pk = 'launcher' AND rockets < maxr) THEN
-      BEGIN
-        rockets = MINVALUE(maxr, rockets + 5 * (SELECT r.clip_rockets FROM rules r WHERE r.id = 1) * mult);
-        gave = 1;
-      END
-      IF (pk IN ('plasma', 'bfg') AND cells < maxc) THEN
-      BEGIN
-        cells = MINVALUE(maxc, cells + 5 * (SELECT r.clip_cells FROM rules r WHERE r.id = 1) * mult);
-        gave = 1;
-      END
       IF (gave = 1) THEN
       BEGIN
+        nclips = IIF(dm > 0, 5, 2) * mult;
+        IF (pk IN ('shotgun', 'ssg')) THEN shells = MINVALUE(maxs, shells + nclips * (SELECT r.clip_shells FROM rules r WHERE r.id = 1));
+        IF (pk = 'chaingun') THEN bullets = MINVALUE(maxb, bullets + nclips * (SELECT r.clip_bullets FROM rules r WHERE r.id = 1));
+        IF (pk = 'launcher') THEN rockets = MINVALUE(maxr, rockets + nclips * (SELECT r.clip_rockets FROM rules r WHERE r.id = 1));
+        IF (pk IN ('plasma', 'bfg')) THEN cells = MINVALUE(maxc, cells + nclips * (SELECT r.clip_cells FROM rules r WHERE r.id = 1));
         UPDATE player
            SET bullets = :bullets, shells = :shells, rockets = :rockets, cells = :cells,
                has_shotgun = :has_sg, has_chaingun = :has_cg, has_launcher = :has_rl, has_plasma = :has_pl,
-               has_bfg = :has_bfg, has_chainsaw = :has_saw, has_ssg = :has_ssg, pending_weapon = :pending
+               has_bfg = :has_bfg, has_chainsaw = :has_saw, has_ssg = :has_ssg, pending_weapon = :pending,
+               bonus_count = bonus_count + 6
          WHERE id = :pid;
         EXECUTE PROCEDURE play_sound('DSWPNUP', NULL, NULL, NULL, pid);
       END
@@ -4786,7 +4837,7 @@ BEGIN
   BEGIN
     n = n + 1;
     pthing = NULL;
-    SELECT p.thing_id, IIF(p.dead = 1, 0, p.health) FROM player p WHERE p.id = :ll + 1 INTO pthing, hp;
+    SELECT p.thing_id, IIF(p.dead > 0, 0, p.health) FROM player p WHERE p.id = :ll + 1 INTO pthing, hp;
     IF (pthing IS NOT NULL) THEN                -- (playeringame)
     BEGIN
       IF (c = 2 OR ll = stp) THEN LEAVE;        -- (c++ == 2 || lastlook == stop: done looking)
@@ -6414,7 +6465,8 @@ DECLARE ady DOUBLE PRECISION;
 DECLARE n DOUBLE PRECISION;
 DECLARE mid INTEGER;
 BEGIN
-  IF (MOD(tic, 4) <> 0) THEN EXIT;
+  -- (gametic & 3: within a demo's first level, TIC - 1 while the thinkers run, as leveltime)
+  IF (MOD(tic - 1, 4) <> 0) THEN EXIT;
   SELECT t.x, t.y, t.z, t.momx, t.momy, t.momz, t.angle, tt.speed FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
    WHERE t.id = :tid INTO x, y, z, momx, momy, momz, ang, spd;
   EXECUTE PROCEDURE spawn_puff(x, y, z) RETURNING_VALUES mid;
@@ -7245,7 +7297,8 @@ DECLARE id INTEGER;
 DECLARE nightmare SMALLINT;
 BEGIN
   n = 0;
-  nightmare = IIF(MOD(tic, 32) = 0 AND EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND (g.skill = 5 OR g.respawn = 1)), 1, 0);
+  -- (P_MobjThinker's leveltime & 31: LEVELTIME is TIC - 1 while the thinkers run)
+  nightmare = IIF(MOD(tic - 1, 32) = 0 AND EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND (g.skill = 5 OR g.respawn = 1)), 1, 0);
   FOR SELECT q.kind, q.k, q.id
         FROM (SELECT 'T' kind, COALESCE(t.think_key, 2 * t.id) k, t.id FROM things t WHERE t.state_tic BETWEEN :tic - 1 AND :tic
               UNION
@@ -7484,6 +7537,10 @@ DECLARE c_run SMALLINT;
 BEGIN
   DELETE FROM sound_events e
    WHERE e.tic < (SELECT g.tic FROM game g WHERE g.id = 1) - 70;
+  -- G_Ticker: the players whose P_DeathThink saw use (PST_REBORN) come back first, in player
+  -- order, before the tic's thinkers (G_DoReborn)
+  FOR SELECT p.id FROM player p WHERE p.dead = 2 ORDER BY p.id INTO pid DO
+    EXECUTE PROCEDURE reborn_player(pid);
   UPDATE game g SET tic = g.tic + 1 WHERE g.id = 1;
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
   RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', -1);   -- (P_PlayerThink, before the list)
@@ -7667,7 +7724,8 @@ BEGIN
          m.x, m.y, TRUNC(m.angle / 45) * PI() / 4, m.id
     FROM map_things m JOIN thing_types tt ON tt.thing_type = m.ttype
    WHERE (BIN_AND(m.flags, 16) = 0 OR :np > 1) AND BIN_AND(m.flags, :skill_bit) <> 0 AND tt.kind <> 'player'
-     AND NOT (:dm > 0 AND tt.pickup = 'key')            -- (MF_NOTDMATCH: no keys in deathmatch)
+     AND NOT (:dm > 0 AND COALESCE(tt.pickup, '') = 'key')   -- (MF_NOTDMATCH: no keys in deathmatch; the rest all
+                                                         -- there, monsters too – a NULL pickup must not drop them)
      AND NOT (:nomon = 1 AND (tt.count_kill = 1 OR m.ttype = 3006))   -- (-nomonsters: P_SpawnMapThing skips MF_COUNTKILL and the lost soul)
    ORDER BY m.id;                                       -- (the same ids on every load)
   -- P_LoadThings, in the map's order: each thing's P_SpawnMobj draws (lastlook), then

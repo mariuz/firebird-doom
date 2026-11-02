@@ -796,9 +796,12 @@ tic, whatever the game shows (`G_Ticker` reads one every tic, `LmpPlayer` in
 [src/lmp.js](src/lmp.js)): a level's tic, an intermission's (a fresh press of fire or use hurries
 it on, `WI_checkForAccelerate`, the buttons held at the exit carried over), a text screen's, then
 the next level, or the same one after a death. At the demo's end the page goes back to the title
-loop, as `G_CheckDemoStatus` does. Demos of netgames (more than one player) aren't played yet:
-they'd need every player's ticcmds through `NET_TIC`. Running the demo through the port's own
-game is the point: it keeps step with vanilla because the simulation is DOOM's, bit for bit.
+loop, as `G_CheckDemoStatus` does. A netgame's demo (two to four players, co-op or deathmatch)
+plays too: every player's ticcmds go through `NET_TIC` each tic, and you see the game as its
+`consoleplayer` saw it, status bar, automap and all. For now it stops at the level's end, because
+the netgame intermission (`WI_updateNetgameStats`, hurried on by anyone's press) hasn't been
+checked against vanilla yet. Running the demo through the port's own game is the point: it keeps
+step with vanilla because the simulation is DOOM's, bit for bit.
 
 Getting there was the roadmap's stretch goal, in phases (docs/ROADMAP.md, *Original `.lmp` demos*),
 measured against vanilla itself:
@@ -872,6 +875,18 @@ measured against vanilla itself:
   `.lmp` through **Load…**. With id's WADs, `WAD=/path/to/doom.wad npm run test:lmp` makes vanilla's
   trace of each of the WAD's `DEMOn` with the oracle and plays it against it (`PWAD=` adds files
   over the WAD).
+- **Netgames (phase L8, done):** two or three players' ticcmds each tic through `NET_TIC`: co-op on
+  E1M1 and MAP01, a deathmatch, and three players in `-altdeath` for half a minute, through deaths
+  and respawns. All keep step with vanilla in every column, in the harness and on the page. Getting
+  there fixed what any netgame of the port had wrong: a deathmatch had no monsters, barrels or
+  decorations (a test against a NULL dropped them with the keys), a weapon that stays gave its
+  ammo every time it was touched (vanilla: once, five clips in deathmatch and two in co-op), and
+  a dead player came back the same tic they pressed use, where `G_DoReborn` waits for the start
+  of the next and checks the spot with `P_CheckPosition`. The respawn's teleport fog lands where
+  the DOS build put it (from a start facing west to south-east, its offset came from
+  `finetangent[]`). Monsters that heard or hunted a player's old body don't find the new one at
+  once. And `leveltime` inside a tic is one less than the tic the port counts, which put the
+  damaging floors' bite, the crushers', and Nightmare's respawn roll a tic early.
 
 ### Co-op and deathmatch over the network
 
@@ -947,9 +962,10 @@ the test: a guest's reason for stopping reached only the host, so the other gues
 starts, picked at random (`G_DeathMatchSpawnPlayer`: up to twenty tries for a free one, then your own
 player start), and comes back on another after each death. Keys aren't placed (`MF_NOTDMATCH`) and
 everyone carries all of them (`P_SpawnPlayer`). A placed weapon stays where it lies in any netgame
-(`P_GiveWeapon`: "leave placed weapons forever on net games"), giving the weapon the first time and
-five clips of its ammo every time, with the pickup sound for you alone and no message; co-op has that
-too. Killing a player is a frag (`P_KillMobj`), and killing yourself counts against you: the status
+(`P_GiveWeapon`: "leave placed weapons forever on net games"): the first time, the weapon and
+five clips of its ammo (two in co-op), with the pickup sound for you alone and no message; after
+that, nothing. Co-op has that too. A dead player comes back at the start of the tic after they
+press use (`G_DoReborn`), on a spot `G_CheckSpot` finds clear, in a puff of teleport fog. Killing a player is a frag (`P_KillMobj`), and killing yourself counts against you: the status
 bar's arms give way to your frag count (`st_fragson`), the others you killed less the times you
 killed yourself (`ST_updateWidgets`). In any netgame your face sits on your colour (`STFB0`–`3`).
 The frags of the level end on the deathmatch intermission: the frag matrix, killers down the side
@@ -1412,9 +1428,9 @@ What's still not vanilla (docs/ROADMAP.md):
   doubles and may draw `P_Random` in another order.
 - **Keys:** the page's own keys aren't quite `G_BuildTiccmd`'s: a strafe is 25 (50 running)
   rather than 24 (40), and the turn keys have no slow start.
-- **DOOM's demos of netgames:** the page plays one player's `.lmp` demos; a co-op or deathmatch
-  demo would need every player's ticcmds through `NET_TIC`. Nobody has played id's own demos
-  against vanilla here yet: the repo can't hold id's WADs (`WAD=` above).
+- **Netgame demos through a level's end:** a co-op or deathmatch `.lmp` stops at the exit; the
+  netgame intermission's timing isn't checked against vanilla yet. Nobody has played id's own
+  demos against vanilla here: the repo can't hold id's WADs (`WAD=` above).
 Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods
 out from your sector through every open two-sided line. A closed door stops it, and a line flagged
 *sound block* lets it through once but never twice. Every sector it reaches remembers. Idle

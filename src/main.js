@@ -93,6 +93,9 @@ let wadKey = '';                    // which WAD the saves belong to
 let saveSlots = Array(SLOTS).fill(null);   // the slots' descriptions, for the menu
 let recorder = null;                // a demo being recorded (demo.js)
 let demoPlayer = null;              // …or played back
+let demoNet = null;                 // a netgame's .lmp playing: { players, deathmatch, me } (no network: its ticcmds are all there)
+/** whose eyes: the netgame's consoleplayer, a netgame demo's, or player 1 */
+const viewer = () => net?.me ?? demoNet?.me ?? 1;
 let lastDemo = null;                // the last one recorded or loaded, for Play and Download
 let gameSkill = 0;                  // gameskill: the game's, kept from level to level (0: none yet)
 let attract = 0;                    // the title loop's demo playing now (D_DoAdvanceDemo's DEMOn), 0 outside it
@@ -217,7 +220,7 @@ window.addEventListener('keydown', (e) => {
     if (['KeyF', 'KeyG', 'KeyM', 'KeyC', 'Digit0', 'Minus', 'Equal', 'NumpadAdd', 'NumpadSubtract'].includes(e.code)) e.preventDefault();
   }
   // AM_Responder: the automap listens for IDDT while it's open (not in deathmatch)
-  if (showMap && cheats.iddt(e.key) && !net?.deathmatch) amCheating = (amCheating + 1) % 3;
+  if (showMap && cheats.iddt(e.key) && !(net ?? demoNet)?.deathmatch) amCheating = (amCheating + 1) % 3;
   for (const [code, read] of cheats.fixed) {
     if (recorder || demoPlayer || net) break;   // (a cheat isn't an input: it would desync the demo, or the netgame)
     if (read(e.key)) db.query(`EXECUTE PROCEDURE cheat('${code}')`).catch((err) => console.error(err));
@@ -287,7 +290,7 @@ function goTitle() {
   if (net) leaveNet('you left the game');
   finale = null;
   intermission = null;
-  if (attract) { demoPlayer = null; attract = 0; }
+  if (attract) { demoPlayer = null; demoNet = null; attract = 0; }
   menu?.close(true);
   const maps = wad.mapNames();
   title = new TitleLoop(maps.some((m) => m.startsWith('MAP')), !!wad.lump('E4M1'), (m) => audio.playMusic(m));
@@ -348,11 +351,18 @@ async function playLmp(bytes, name = 'the demo', { forTitle = 0 } = {}) {
     return false;
   }
   if (!forTitle) $('map').value = player.map;
+  if (player.net && net) {
+    if (!forTitle) setStatus(`Can't play ${name} during a netgame`, true);
+    return false;
+  }
   await startMap(player.map, true, { skill: d.skill, seed: 0, keepDemo: !!forTitle, attract: !!forTitle, fromFrame: !!forTitle,
-    options: demoOptions(d) });
+    options: demoOptions(d), netDemo: player.net });
   if (forTitle && (attract !== forTitle || !title)) return true;   // (a game started meanwhile)
   demoPlayer = player;
-  if (!forTitle) setStatus(`▶ Playing ${name}: ${player.map}, skill ${d.skill}, ${d.tics.length} tics (Esc stops it)`);
+  if (!forTitle) {
+    const who = player.net ? `, ${player.net.deathmatch ? (player.net.deathmatch === 2 ? 'altdeath' : 'deathmatch') : 'co-op'} for ${player.net.players}, seen as player ${player.net.me}` : '';
+    setStatus(`▶ Playing ${name}: ${player.map}, skill ${d.skill}${who}, ${d.tics.length} tics (Esc stops it)`);
+  }
   updateDemoButtons();
   return true;
 }
@@ -362,7 +372,7 @@ let lmpEnd = null;
 function noteLmpEnd(player, why) {
   lmpEnd = null;
   db.query(`SELECT g.tic, g.rng, t.x, t.y, t.z, t.angle, p.health, g.map_name FROM player p JOIN things t ON t.id = p.thing_id
-      CROSS JOIN game g WHERE p.id = 1 AND g.id = 1`)
+      CROSS JOIN game g WHERE p.id = ${player.net?.me ?? 1} AND g.id = 1`)
     .then((r) => { lmpEnd = { ...r.rows[0], MAP_NAME: r.rows[0].MAP_NAME?.trim(), played: player.index, tics: player.demo.tics.length, why }; })
     .catch(() => {});
 }
@@ -372,6 +382,7 @@ const demoOptions = (demo) => Object.fromEntries(LAUNCH_OPTIONS.map((o) => [o, d
 
 function endPlayback(why) {
   if (demoPlayer?.lmp) noteLmpEnd(demoPlayer, why);
+  demoNet = null;
   if (attract) { endAttract(); return; }
   if (demoPlayer?.lmp && !timedemo) {
     // G_CheckDemoStatus: DOOM's demo over, D_AdvanceDemo – back to the title loop
@@ -471,6 +482,7 @@ async function startAttract(n) {
 /** the demo is over (or out of step): the title loop's next page, melting in over the level */
 function endAttract() {
   demoPlayer = null;
+  demoNet = null;
   attract = 0;
   title?.advance();
   updateDemoButtons();
@@ -736,7 +748,7 @@ function startMap(name, newGame, opts) {
   return run;
 }
 
-async function startMapNow(name, newGame, { skill = null, seed = null, reborn = false, keepDemo = false, netgame = false, attract: forTitle = false, fromFrame = false, restore = null, options = null } = {}) {
+async function startMapNow(name, newGame, { netDemo = undefined, skill = null, seed = null, reborn = false, keepDemo = false, netgame = false, attract: forTitle = false, fromFrame = false, restore = null, options = null } = {}) {
   if (net && !netgame) leaveNet('you started another game');
   running = false;
   // (a start from outside the loop – the menu, the panel, a message – waits for
@@ -758,6 +770,9 @@ async function startMapNow(name, newGame, { skill = null, seed = null, reborn = 
     if (recorder) finishRecording();
     demoPlayer = null;
   }
+  // a netgame demo's players and view: set by its start, kept through its levels, gone with it
+  if (netDemo !== undefined) demoNet = netDemo;
+  else if (!keepDemo) demoNet = null;
   if (newGame) didSecret.clear();
   // the skill: the one asked for, or within a game (the next level, a restart) the game's own
   // (gameskill, as G_DoLoadLevel keeps it), else the setting's
@@ -773,9 +788,10 @@ async function startMapNow(name, newGame, { skill = null, seed = null, reborn = 
   gameOptions = options ?? (net ? { nomonsters: net.nomonsters, respawn: net.respawn, fast: net.fast }
     : keepDemo ? gameOptions : { ...launchOptions });   // (keepDemo: nextLevel, the next map or this one after a death)
   await loadMap(db, wad, res, name, {
-    skill, newGame, players: net?.players ?? 1, deathmatch: net?.deathmatch ?? 0, timer: net?.timer ?? 0, ...gameOptions, seed: s,
+    skill, newGame, players: net?.players ?? demoNet?.players ?? 1, deathmatch: net?.deathmatch ?? demoNet?.deathmatch ?? 0,
+    timer: net?.timer ?? 0, ...gameOptions, seed: s,
   });
-  await db.exec(`UPDATE viewcfg SET player_id = ${net?.me ?? 1} WHERE id = 1`);   // (consoleplayer)
+  await db.exec(`UPDATE viewcfg SET player_id = ${viewer()} WHERE id = 1`);   // (consoleplayer)
   lastSeed = s;
   map = { name, skyTex: skyFor(name) };
   const { rows } = await db.query(
@@ -835,7 +851,8 @@ async function nextLevel(name, newGame, reborn = false) {
 function demoTake(kind) {
   if (!demoPlayer) return null;
   const c = demoPlayer.take(kind);
-  if (!c) endPlayback(demoPlayer.done ? 'the demo is over' : 'it is out of step with the game');
+  if (!c) endPlayback(demoPlayer.done ? 'the demo is over'
+    : demoPlayer.net ? "a netgame's demo stops at the level's end here" : 'it is out of step with the game');
   return c;
 }
 
@@ -1365,7 +1382,13 @@ async function frameNow() {
         while (owed > 0) {
           args = demoTake('tic');
           if (!args) break;
-          hud = (await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', args, { rowMode: 'object' })).rows[0];
+          if (args[0] === 'net') {
+            // a netgame's .lmp: every player's ticcmd, one NET_TIC (TryRunTics with them all in hand)
+            await db.execBatch('INSERT INTO ticcmd (player_id, fwd, side, turn, fire, use_key, weapon_sel, run) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', args[1]);
+            hud = (await db.query('SELECT * FROM net_tic', [], { rowMode: 'object' })).rows[0];
+            await db.exec('DELETE FROM ticcmd');
+            args = [1, ...args[1].find((c) => c[0] === demoNet?.me).slice(1)];
+          } else hud = (await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', args, { rowMode: 'object' })).rows[0];
           owed -= timing ? owed : args[0];
           if (timing) { timedemo.frames++; timedemo.tics += args[0]; }
           ran++;
@@ -1433,14 +1456,14 @@ async function frameNow() {
     // reads is the map's own. While none of that changes (standing still, no
     // door or lift moving) its answer is the same, so the last one is kept.
     const [sectors] = await q('SELECT * FROM frame_sectors');
-    const wallKey = [levelSerial, settings.renderer, renderer.w, renderer.h, net?.me ?? 1, hud.PX, hud.PY, hud.PANGLE, hud.VIEW_Z,
+    const wallKey = [levelSerial, settings.renderer, renderer.w, renderer.h, viewer(), hud.PX, hud.PY, hud.PANGLE, hud.VIEW_Z,
       sectors.map((r) => `${r[1]},${r[2]},${r[6]}`).join(';')].join('|');
     const reuse = wallCache?.key === wallKey;
     if (reuse) wallsReused++;
     t = performance.now();
     const [[walls, wallMs], [sprites, spriteMs], [sounds]] = await Promise.all([
       reuse ? [wallCache.walls, 0] : q('SELECT * FROM frame_walls'), q('SELECT * FROM frame_sprites'),
-      q(`SELECT id, sound, origin, x, y FROM sound_events WHERE id > ${lastSoundId} AND COALESCE(listener, ${net?.me ?? 1}) = ${net?.me ?? 1} ORDER BY id`),
+      q(`SELECT id, sound, origin, x, y FROM sound_events WHERE id > ${lastSoundId} AND COALESCE(listener, ${viewer()}) = ${viewer()} ORDER BY id`),
     ]);
     // the listener; on map 8 (E?M8, MAP08) S_AdjustSoundParams never quite fades a sound out
     const listener = { x: hud.PX, y: hud.PY, angle: hud.PANGLE, bossMap: /^(E\dM8|MAP08)$/.test(map.name) };
@@ -1460,7 +1483,7 @@ async function frameNow() {
       ? (await db.query("SELECT x, y, angle FROM things WHERE kind NOT IN ('player', 'marker')", [], arr)).rows
       : null;
     // AM_drawPlayers in a netgame: where everyone is
-    map.amPlayers = showMap && net
+    map.amPlayers = showMap && (net || demoNet)
       ? (await db.query('SELECT p.id, t.x, t.y, t.angle, p.invis_tics invis FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id',
         [], { rowMode: 'object' })).rows.map((r) => ({ id: r.ID, x: r.X, y: r.Y, angle: r.ANGLE, invis: r.INVIS }))
       : null;
@@ -1492,7 +1515,7 @@ async function frameNow() {
     // (the face still keeps its time with the bar off: ST_Ticker runs regardless)
     const faceNow = face.update(hud, tics, lastFire);
     // ST_Drawer: full screen (11) has no status bar, except over the automap
-    if (settings.screenSize < 11 || showMap) drawStatusBar(renderer, hud, faceNow, net?.me ?? 0);
+    if (settings.screenSize < 11 || showMap) drawStatusBar(renderer, hud, faceNow, net?.me ?? demoNet?.me ?? 0);
     if (amMsg) amMsg.tics -= tics;
     if (amMsg && amMsg.tics <= 0) amMsg = null;
     const msg = amMsg?.text ?? hud.MSG;
@@ -1611,9 +1634,10 @@ function drawAutomap(tics = 1) {
     }
   }
   // AM_drawPlayers: your arrow in white; in a netgame everyone's in their colour (deathmatch: only yours)
-  const me = net?.me ?? 1;
-  const arrows = automapPlayers(net && map.amPlayers ? map.amPlayers : [{ id: me, x: hud.PX, y: hud.PY, angle: hud.PANGLE }],
-    { me, netgame: !!net, deathmatch: net?.deathmatch ?? 0 });
+  const me = viewer();
+  const ng = net ?? demoNet;
+  const arrows = automapPlayers(ng && map.amPlayers ? map.amPlayers : [{ id: me, x: hud.PX, y: hud.PY, angle: hud.PANGLE }],
+    { me, netgame: !!ng, deathmatch: ng?.deathmatch ?? 0 });
   for (const a of arrows) tri(tx(a.x), ty(a.y), a.angle, 6 * z, 5 * z, a.color);
   amArrows = arrows.map((a) => ({ id: a.id, color: a.color }));
   // AM_drawMarks: the numbers, AMMNUM0–9

@@ -1,4 +1,27 @@
 {
+  "e1m1-altdeath": {
+    "tics": 1070,
+    "synced": 1070,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "E1M1"
+  },
   "e1m1-attract": {
     "tics": 700,
     "synced": 700,
@@ -25,6 +48,52 @@
   "e1m1-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "E1M1"
+  },
+  "e1m1-coop": {
+    "tics": 227,
+    "synced": 227,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "E1M1"
+  },
+  "e1m1-dm": {
+    "tics": 227,
+    "synced": 227,
     "unplayed": 0,
     "first": {
       "leveltime": null,
@@ -347,6 +416,29 @@
   "map01-bot": {
     "tics": 2100,
     "synced": 2100,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP01"
+  },
+  "map01-coop": {
+    "tics": 227,
+    "synced": 227,
     "unplayed": 0,
     "first": {
       "leveltime": null,

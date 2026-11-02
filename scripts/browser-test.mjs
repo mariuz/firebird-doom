@@ -630,6 +630,14 @@ try {
     const a2 = agree(end2, 'e1m2-barrel');
     assert(end2.played === end2.tics && a2.off.length === 0 && end2.screen === 'title',
       `Load… plays a .lmp file: e1m2-barrel.lmp's ${end2.played} tics, the barrel shot and burst as in vanilla (${a2.off.length ? `but ${a2.off.map((k) => `${k} ${a2.mine?.[k]} ≠ ${a2.v[k]}`).join(', ')}` : 'every value of its last line'}), then back to the title loop ("${end2.status}")`);
+    // a netgame's .lmp (phase L8): three players in -altdeath, every one's ticcmds through NET_TIC,
+    // seen as player 1 – deaths, respawns at the deathmatch starts – to where vanilla's trace ends
+    await p5.setInputFiles('#demo-file', fixture('e1m1-altdeath.lmp'));
+    await p5.waitForFunction(() => window.doom.demo.lmpEnd && window.doom.demo.lmpEnd.tics === 1070, null, { timeout: 600000, polling: 200 });
+    const end3 = await p5.evaluate(() => ({ ...window.doom.demo.lmpEnd, screen: window.doom.screen }));
+    const a3 = agree(end3, 'e1m1-altdeath');
+    assert(end3.played === end3.tics && a3.off.length === 0 && end3.screen === 'title',
+      `a netgame's .lmp: e1m1-altdeath's three players for ${end3.played} tics through NET_TIC, ending where vanilla's ends (${a3.off.length ? `but ${a3.off.map((k) => `${k} ${a3.mine?.[k]} ≠ ${a3.v[k]}`).join(', ')}` : `tic ${a3.v.leveltime}, P_Random at ${a3.v.prndindex}, player 1 with ${a3.v.health} health`})`);
     await ctx.close();
   }
 
