@@ -1185,6 +1185,16 @@ dev server) shows at once; the caches are only what's left when the network isn'
 was never downloaded says so. `doom.offline()` in the console lists what's kept. `npm run test:browser` ends
 by loading the page once, stopping the server, reloading and playing a level.
 
+The page installs as an app too: a web manifest ([public/manifest.webmanifest](public/manifest.webmanifest))
+asks for a window of its own (`standalone`), with the page's dark colours. Chrome and Edge offer **Install**
+in the address bar, Android in its menu, and Safari's **Add to Home Screen** or **Add to Dock** takes the
+`apple-touch-icon`. The icons are Freedoom's status bar face looking ahead (`STFST01`), scaled up without
+smoothing on the page's background, made at build time from the WAD (`scripts/icons.mjs`), so no picture
+is kept in the repo and none of id's art is used. There is a maskable one with the face inside the safe
+zone, for platforms that cut icons to a circle. The manifest and icons are stored with the page's files,
+so the installed app starts offline as well. `npm run test:browser` checks the manifest, that every icon
+it names loads at its size, and that all of it is kept for offline.
+
 ## Running locally
 
 ```bash

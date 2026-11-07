@@ -45,8 +45,6 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   L7, playing them on the page, L8, netgames, and L9, netgames through a level's end, are done.
   Left: someone with id's WADs running `WAD=/path/to/doom.wad npm run test:lmp` against their
   demos.
-- **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
-  would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
   phones and tablets, reading into `readInput` like the gamepad does. Pairs with the iPhone pass.
 - **Rejoining a netgame** (Multiplayer): a dropped player ends the game for everyone now. The
@@ -782,6 +780,9 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   while all fire, a chat to one player reaches only them, and a guest leaving stops the rest.
   It found the host keeping a guest's desync to itself (the others froze); `Lockstep.receive`
   now passes it on, and `netgame-test` checks that with four peers in a star.
+- ~~**An installable app.**~~ Done: `public/manifest.webmanifest` (standalone, the page's colours)
+  and icons made at build time from Freedoom's status bar face (`scripts/icons.mjs`: 192, 512, a
+  maskable 512, the apple-touch-icon and a favicon), all in the offline shell.
 - ~~**Offline play.**~~ Done ([public/sw.js](../public/sw.js)): the page's files are stored whole
   at install under a version the build stamps in, the WADs as the page downloads them
   (`keepWad`); network first, the caches when there's none. `openDatabase` now unregisters only

@@ -665,6 +665,21 @@ try {
     }
     assert(ready.controlled && ready.page.length === 1 && ready.wads.join() === 'freedoom1.wad',
       `a first visit leaves it ready to play offline (the page's files as version ${ready.page[0]}, and ${ready.wads.join(', ')})`);
+    // installable: the manifest the page names, every icon it lists at its size, and all of it kept
+    // with the page's files (so the installed app starts offline too)
+    const app = await p4.evaluate(async () => {
+      const href = document.querySelector('link[rel="manifest"]')?.href;
+      const m = await (await fetch(href)).json();
+      const size = (src) => new Promise((ok) => { const i = new Image(); i.onload = () => ok(`${i.naturalWidth}x${i.naturalHeight}`); i.onerror = () => ok('none'); i.src = new URL(src, href).href; });
+      const icons = await Promise.all(m.icons.map(async (ic) => ({ ...ic, got: await size(ic.src) })));
+      const cache = await caches.open((await caches.keys()).find((k) => k.startsWith('firebird-doom-page-')));
+      const kept = await Promise.all([href, ...m.icons.map((ic) => new URL(ic.src, href).href)].map(async (u) => !!(await cache.match(u))));
+      return { name: m.name, display: m.display, start: m.start_url, icons, kept, touch: document.querySelector('link[rel="apple-touch-icon"]')?.href };
+    });
+    assert(app.name === 'Firebird DOOM' && app.display === 'standalone' && app.start === './'
+      && app.icons.length >= 3 && app.icons.every((ic) => ic.got === ic.sizes) && app.icons.some((ic) => ic.purpose === 'maskable')
+      && app.kept.every(Boolean) && /apple-touch-icon\.png$/.test(app.touch ?? ''),
+      `installable: a manifest (${app.name}, ${app.display}) with ${app.icons.map((ic) => `${ic.sizes} ${ic.purpose}`).join(', ')}, every icon its size, all kept for offline`);
     server.kill();
     await new Promise((r) => (server.exitCode !== null ? r() : server.once('exit', r)));
     await load(p4, null, () => window.doom?.title);

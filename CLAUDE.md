@@ -73,8 +73,9 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 - **The browser test** (`scripts/browser-test.mjs`) drives the real page. Waiting for a new level:
   `doom.screen` reads `level` while the next map is still loading, and melts queue up (a level
   loaded behind another screen's melt gets its own after), so wait for `doom.settled` (the screen
-  shown is the current one and no melt is running) before pressing keys – a melt drops them. Playwright is pinned to the version whose
-  Chromium is installed here (`/opt/pw-browsers`); CI installs its own.
+  shown is the current one and no melt is running) before pressing keys – a melt drops them. Playwright is pinned (1.56); CI installs
+  its own Chromium. If the container's Chromium in `/opt/pw-browsers` is another revision (Playwright
+  says "Executable doesn't exist"), run the page tests with `CHROMIUM=/opt/pw-browsers/chromium`.
 - **Check live when you can.** The desktop app's browser pane runs the dev server. The game loop
   pauses while the page is hidden (`document.hidden`), so if the pane is hidden, say so and verify
   headless: drive the state machines, render PNGs with `renderer.toRGBA`, use stub renderers. Never

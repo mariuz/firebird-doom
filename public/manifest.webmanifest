@@ -1,0 +1,15 @@
+{
+  "name": "Firebird DOOM",
+  "short_name": "Firebird DOOM",
+  "description": "DOOM simulated and rendered inside the Firebird SQL database, running in your browser via Firebird WASM.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#120d0b",
+  "theme_color": "#120d0b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

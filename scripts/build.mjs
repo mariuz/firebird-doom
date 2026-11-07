@@ -96,11 +96,24 @@ fs.cpSync(path.join(root, 'public'), OUT, { recursive: true });
     fs.writeFileSync(path.join(OUT, 'wads/freedoom-strings.json'), JSON.stringify(strings, null, 1));
   }
 }
+// The installed app's icons (public/manifest.webmanifest names them): Freedoom's status bar face,
+// drawn from the WAD the build has (scripts/icons.mjs)
+{
+  const iwad = ['freedoom1.wad', 'freedoom2.wad'].map((f) => path.join(root, 'public/wads', f)).find((f) => fs.existsSync(f));
+  if (iwad) {
+    const { Wad } = await import('../src/wad.js');
+    const { makeIcons } = await import('./icons.mjs');
+    fs.mkdirSync(path.join(OUT, 'icons'), { recursive: true });
+    for (const [file, png] of makeIcons(new Wad(fs.readFileSync(iwad)))) fs.writeFileSync(path.join(OUT, file), png);
+  }
+}
 // The service worker (offline play): the page's files it stores whole at install,
 // and a version from their contents, so each build's set replaces the last one's.
 {
   const { createHash } = await import('node:crypto');
+  const { ICONS } = await import('./icons.mjs');
   const shell = ['index.html', 'style.css', 'main.js', 'opl-worklet.js', 'firebird-engine-worker.js',
+    'manifest.webmanifest', ...ICONS.map(([f]) => f),
     'firebird-embedded-st.js', 'firebird-embedded-st.wasm', 'wads/freedoom-strings.json', 'wads/FREEDOOM-COPYING.txt',
     ...(fs.existsSync(path.join(OUT, 'demos')) ? fs.readdirSync(path.join(OUT, 'demos')).sort().map((f) => `demos/${f}`) : [])]
     .filter((f) => fs.existsSync(path.join(OUT, f)));
