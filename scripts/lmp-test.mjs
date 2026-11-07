@@ -182,6 +182,16 @@ for (const name of ['e1m1-coop', 'map01-coop', 'e1m1-dm', 'e1m1-altdeath']) {
     `a netgame in step: ${name} agrees with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
 }
 
+// phase L9: netgames through a level's end – the netgame and deathmatch screens' tics as
+// WI_updateNetgameStats and WI_updateDeathmatchStats spend them, hurried on by any player's new
+// press; the next map for everyone, a dead player reborn there, the wounded keeping their health
+for (const [name, next] of [['e1m1-coop-exit', 'E1M2'], ['e1m1-dm-exit', 'E1M2'], ['map01-coop-exit', 'MAP02'], ['e1m1-altdeath-exit', 'E1M2']]) {
+  const w = results[name];
+  const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
+  assert(w && off.length === 0 && w.map === next && w.unplayed === 0,
+    `a netgame through the level's end: ${name} plays on to ${w?.map} and agrees with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
+}
+
 // phase L2: the scripted walk (turns, runs, strafes, a wall) keeps the player in step all the way
 assert(results['e1m1-walk']?.synced === results['e1m1-walk']?.tics,
   `the player in fixed point: the scripted walk on E1M1 stays in step with vanilla for all ${results['e1m1-walk']?.tics} tics (${results['e1m1-walk']?.synced})`);
@@ -223,7 +233,7 @@ if (update) {
   const pl = new LmpPlayer(demo, false);
   const tic = pl.take('tic');
   pl.index = 29;
-  pl.carry(false, false);
+  pl.carry([[false, false]]);
   // (WI_checkForAccelerate: the fixture's fire pressed a tic at a time, 46 and 67 tics into the
   // screen – a press each, the tic after none)
   const wi = [];
@@ -240,9 +250,9 @@ if (update) {
   const nt = np.take('tic');
   const away = { ...demo, consoleplayer: 2 };
   assert(lmpProblem(net) === null && np.net?.players === 3 && np.net.deathmatch === 2 && np.net.me === 1
-    && nt[0] === 'net' && nt[1].length === 3 && nt[1].map((c) => c[0]).join() === '1,2,3' && np.take('wi') === null
+    && nt[0] === 'net' && nt[1].length === 3 && nt[1].map((c) => c[0]).join() === '1,2,3' && np.take('wi')?.[0] === 'wi'
     && /consoleplayer/.test(lmpProblem(away) ?? '') && lmpProblem(demo) === null,
-    `a netgame's demo plays: three players' ticcmds a tic for NET_TIC (${JSON.stringify(nt[1][0])}…), its level end stops it; a demo whose consoleplayer isn't in it is refused ("${lmpProblem(away)}")`);
+    `a netgame's demo plays: three players' ticcmds a tic for NET_TIC (${JSON.stringify(nt[1][0])}…), its intermission's tics too; a demo whose consoleplayer isn't in it is refused ("${lmpProblem(away)}")`);
 }
 
 // ── phase L7: a WAD's own demos. WAD=/path/to/doom.wad (id's, never in the repo; PWAD= adds files

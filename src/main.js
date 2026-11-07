@@ -842,7 +842,7 @@ async function nextLevel(name, newGame, reborn = false) {
   } finally { frameStarting = false; }
   // (G_DoWorldDone: player->attackdown and usedown as the intermission left them)
   if (lmp && demoPlayer === lmp) {
-    await db.query('UPDATE player p SET attack_down = ?, use_down = ? WHERE p.id = 1', [lmp.attackdown ? 1 : 0, lmp.usedown ? 1 : 0]);
+    for (const [id, atk, use] of lmp.carried) await db.query('UPDATE player p SET attack_down = ?, use_down = ? WHERE p.id = ?', [atk ? 1 : 0, use ? 1 : 0, id]);
   }
   rec?.push(['map', name, lastSeed, newGame ? 1 : 0]);
 }
@@ -851,8 +851,7 @@ async function nextLevel(name, newGame, reborn = false) {
 function demoTake(kind) {
   if (!demoPlayer) return null;
   const c = demoPlayer.take(kind);
-  if (!c) endPlayback(demoPlayer.done ? 'the demo is over'
-    : demoPlayer.net ? "a netgame's demo stops at the level's end here" : 'it is out of step with the game');
+  if (!c) endPlayback(demoPlayer.done ? 'the demo is over' : 'it is out of step with the game');
   return c;
 }
 
@@ -939,7 +938,8 @@ async function netStats() {
   const frags = (await db.query('SELECT killer, victim, n FROM frags', [], arr)).rows;
   const players = rows.map((r) => ({ kills: r[1], items: r[2], secrets: r[3], frags: rows.map(() => 0) }));
   for (const [k, v, n] of frags) if (players[k - 1] && v <= players.length) players[k - 1].frags[v - 1] = n;
-  return { players, me: net.me, deathmatch: net.deathmatch };
+  const ng = net ?? demoNet;
+  return { players, me: ng.me, deathmatch: ng.deathmatch };
 }
 
 /**
@@ -1425,13 +1425,15 @@ async function frameNow() {
           intermission = new Intermission(renderer, audio, wad, map.name, nextMap(map.name, secret, wad.mapNames()), {
             kills: hud.KILLS, totalKills: hud.TOTAL_KILLS, items: hud.ITEMS, totalItems: hud.TOTAL_ITEMS,
             secrets: hud.SECRETS, totalSecrets: hud.TOTAL_SECRETS, time: hud.TIC,
-            ...(net ? await netStats() : {}),
+            ...(net || demoNet ? await netStats() : {}),
           }, didSecret.has(level.episode));
           intermission.secret = secret;
           wiButtons = true;   // (the button that pulled the switch doesn't count)
           if (demoPlayer?.lmp) {
-            const p = (await db.query('SELECT p.attack_down, p.use_down FROM player p WHERE p.id = 1')).rows[0];
-            demoPlayer.carry(p.ATTACK_DOWN === 1, p.USE_DOWN === 1);
+            const rows = (await db.query('SELECT p.id, p.attack_down, p.use_down FROM player p ORDER BY p.id')).rows;
+            const downs = [];
+            for (const r of rows) downs[r.ID - 1] = [r.ATTACK_DOWN === 1, r.USE_DOWN === 1];
+            demoPlayer.carry(downs);
           }
         }
       }

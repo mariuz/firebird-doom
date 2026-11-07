@@ -798,10 +798,10 @@ it on, `WI_checkForAccelerate`, the buttons held at the exit carried over), a te
 the next level, or the same one after a death. At the demo's end the page goes back to the title
 loop, as `G_CheckDemoStatus` does. A netgame's demo (two to four players, co-op or deathmatch)
 plays too: every player's ticcmds go through `NET_TIC` each tic, and you see the game as its
-`consoleplayer` saw it, status bar, automap and all. For now it stops at the level's end, because
-the netgame intermission (`WI_updateNetgameStats`, hurried on by anyone's press) hasn't been
-checked against vanilla yet. Running the demo through the port's own game is the point: it keeps
-step with vanilla because the simulation is DOOM's, bit for bit.
+`consoleplayer` saw it, status bar, automap and all, through the level's end too: the netgame
+screen or the deathmatch frag matrix, hurried on by any player's new press, and the next map for
+everyone. Running the demo through the port's own game is the point: it keeps step with vanilla
+because the simulation is DOOM's, bit for bit.
 
 Getting there was the roadmap's stretch goal, in phases (docs/ROADMAP.md, *Original `.lmp` demos*),
 measured against vanilla itself:
@@ -887,6 +887,13 @@ measured against vanilla itself:
   `finetangent[]`). Monsters that heard or hunted a player's old body don't find the new one at
   once. And `leveltime` inside a tic is one less than the tic the port counts, which put the
   damaging floors' bite, the crushers', and Nightmare's respawn roll a tic early.
+- **Netgames through a level's end (phase L9, done):** co-op on E1M1 and MAP01 and a deathmatch
+  over an exit line, and the three-player altdeath half a minute longer with an exit late on. The
+  netgame and deathmatch screens take as many tics as vanilla's (`WI_updateNetgameStats`,
+  `WI_updateDeathmatchStats`, anyone's press), and the next map is everyone's. All keep step to
+  the end. On the way: a player's body at a new level now starts with the player's health, a
+  wounded player's or a DeHackEd patch's (it was always 100), and one dead at the exit is reborn
+  there with the pistol (`G_PlayerReborn`), as vanilla has it.
 
 ### Co-op and deathmatch over the network
 
@@ -1428,9 +1435,8 @@ What's still not vanilla (docs/ROADMAP.md):
   doubles and may draw `P_Random` in another order.
 - **Keys:** the page's own keys aren't quite `G_BuildTiccmd`'s: a strafe is 25 (50 running)
   rather than 24 (40), and the turn keys have no slow start.
-- **Netgame demos through a level's end:** a co-op or deathmatch `.lmp` stops at the exit; the
-  netgame intermission's timing isn't checked against vanilla yet. Nobody has played id's own
-  demos against vanilla here: the repo can't hold id's WADs (`WAD=` above).
+- **id's own demos:** nobody has played them against vanilla here: the repo can't hold id's WADs
+  (`WAD=` above).
 Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods
 out from your sector through every open two-sided line. A closed door stops it, and a line flagged
 *sound block* lets it through once but never twice. Every sector it reaches remembers. Idle

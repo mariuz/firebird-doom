@@ -148,6 +148,20 @@ const DEMOS = [
   // three players in -altdeath for half a minute: wandering, firing, using – monsters fight
   // them, they die and come back at the deathmatch starts, weapons and items respawn
   ['e1m1-altdeath', 'freedoom1.wad', scriptedNet(1, 1, [wander(11, 1050), wander(22, 1050), wander(33, 1050)], 2)],
+  // the same three, longer, line 582 an exit (player 2 crosses it at tic 873, player 1 down to 12
+  // health): the deathmatch screen hurried on by their presses, and E1M2 with the wounded body
+  ['e1m1-altdeath-exit', 'freedoom1.wad', scriptedNet(1, 1, [wander(11, 1400), wander(22, 1400), wander(33, 1400)], 2)],
+  // netgames through a level's end: the netgame and deathmatch screens (any player's press
+  // hurries them on), then the next map for everyone (a dead player reborn there)
+  ['e1m1-coop-exit', 'freedoom1.wad', scriptedNet(1, 1, [
+    [[35, 25, 0, 0, 0], [153, 0, 0, 0, 0], [1, 0, 0, 10122, 0], [10, 0, 0, 0, 0], [60, 0, 0, 0, BT_ATTACK], [90, 50, 0, 320, 0]],
+    [[20, 0, 0, 0, 0], [15, 50, 0, 0, 0], ...WI_PRESSES, [120, 25, 10, -320, BT_ATTACK], [40, 0, 0, 640, 0]]])],
+  ['e1m1-dm-exit', 'freedoom1.wad', scriptedNet(1, 1, [
+    [[15, 0, 0, 0, 0], ...WI_PRESSES, [80, 50, 0, 640, BT_ATTACK], [60, 25, -24, 0, 0]],
+    [[15, 25, 0, 0, 0], [153, 0, 0, 0, 0], [100, 50, 0, -640, BT_ATTACK], [40, 0, 24, 0, BT_USE]]], 1)],
+  ['map01-coop-exit', 'freedoom2.wad', scriptedNet(1, 1, [
+    [[35, 25, 0, 0, 0], ...WI_PRESSES, [60, 50, 0, 640, 0], [60, 25, 10, 0, BT_ATTACK]],
+    [[19, 0, 0, 0, 0], [16, 50, 0, 0, 0], [153, 0, 0, 0, 0], [120, 25, 0, -320, BT_ATTACK]]])],
   ['e1m2-attract', 'freedoom1.wad', fromAttract('freedoom1-demo2.json', 700)],
   ['e1m3-attract', 'freedoom1.wad', fromAttract('freedoom1-demo3.json', 700)],
   ['map02-attract', 'freedoom2.wad', fromAttract('freedoom2-demo2.json', 700)],

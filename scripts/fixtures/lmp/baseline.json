@@ -1,4 +1,27 @@
 {
+  "e1m1-altdeath-exit": {
+    "tics": 1416,
+    "synced": 1416,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "E1M2"
+  },
   "e1m1-altdeath": {
     "tics": 1070,
     "synced": 1070,
@@ -68,6 +91,29 @@
     },
     "map": "E1M1"
   },
+  "e1m1-coop-exit": {
+    "tics": 349,
+    "synced": 349,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "E1M2"
+  },
   "e1m1-coop": {
     "tics": 227,
     "synced": 227,
@@ -90,6 +136,29 @@
       "sumstate": null
     },
     "map": "E1M1"
+  },
+  "e1m1-dm-exit": {
+    "tics": 308,
+    "synced": 308,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "E1M2"
   },
   "e1m1-dm": {
     "tics": 227,
@@ -435,6 +504,29 @@
       "sumstate": null
     },
     "map": "MAP01"
+  },
+  "map01-coop-exit": {
+    "tics": 308,
+    "synced": 308,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP02"
   },
   "map01-coop": {
     "tics": 227,

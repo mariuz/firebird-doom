@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseLmp, lmpMapName, portCmd, BT_ATTACK, BT_USE } from '../src/lmp.js';
-import { IntermissionState, parTime } from '../src/intermission.js';
+import { IntermissionState, NetgameState, DeathmatchState, parTime } from '../src/intermission.js';
 import { nextMap } from '../src/progress.js';
 import { MOBJINFO } from '../src/states.js';
 import { MOBJ_TYPE } from '../src/thinginfo.js';
@@ -98,12 +98,15 @@ export async function playAgainst(db, demo, trace, { limit = Infinity, restart =
     const raw = demo.tics[t][demo.consoleplayer] ?? demo.tics[t][0];
     if (wi) {
       // WI_Ticker: WI_checkForAccelerate on the press, not the hold (player->attackdown and
-      // usedown, carried on from the level), then the screen's tic
-      const atk = (raw[3] & BT_ATTACK) !== 0;
-      const usd = (raw[3] & BT_USE) !== 0;
-      wi.state.tick((atk && !wi.attackdown) || (usd && !wi.usedown));
-      wi.attackdown = atk;
-      wi.usedown = usd;
+      // usedown, carried on from the level), any player's in a netgame, then the screen's tic
+      let pressed = false;
+      (net ? demo.tics[t] : [raw]).forEach((c, k) => {
+        const atk = (c[3] & BT_ATTACK) !== 0;
+        const usd = (c[3] & BT_USE) !== 0;
+        if ((atk && !wi.down[k][0]) || (usd && !wi.down[k][1])) pressed = true;
+        wi.down[k] = [atk, usd];
+      });
+      wi.state.tick(pressed);
       off--;
       if (wi.state.done) {
         done = wi;
@@ -113,10 +116,12 @@ export async function playAgainst(db, demo, trace, { limit = Infinity, restart =
     }
     if (done) {
       // G_DoWorldDone → G_DoLoadLevel (its P_SetupLevel line in the trace), then this tic's P_Ticker
-      const { attackdown, usedown, secret } = done;
+      const { down, ids, secret } = done;
       done = false;
       if (!(await worldDone(secret))) break;
-      await db.query('UPDATE player p SET attack_down = ?, use_down = ? WHERE p.id = 1', [attackdown ? 1 : 0, usedown ? 1 : 0]);
+      for (let k = 0; k < ids.length; k++) {
+        await db.query('UPDATE player p SET attack_down = ?, use_down = ? WHERE p.id = ?', [down[k][0] ? 1 : 0, down[k][1] ? 1 : 0, ids[k]]);
+      }
       await compare(t, trace[t + off]);
       off++;
       if (t + off >= trace.length) break;
@@ -134,17 +139,27 @@ export async function playAgainst(db, demo, trace, { limit = Infinity, restart =
     await compare(t + 1, trace[t + off]);
     // G_ExitLevel → G_DoCompleted next tic → WI_Start: the stats as the level left them
     if ((hud?.EXIT_KIND === 1 || hud?.EXIT_KIND === 2) && worldDone) {
-      const p = (await db.query('SELECT p.attack_down, p.use_down FROM player p WHERE p.id = 1')).rows[0];
+      const ps = (await db.query(`SELECT p.id, p.attack_down, p.use_down, p.kills, p.items, p.secrets FROM player p
+          ${net ? '' : 'WHERE p.id = 1'} ORDER BY p.id`)).rows;
       const map = (await db.query('SELECT g.map_name FROM game g WHERE g.id = 1')).rows[0].MAP_NAME.trim();
       const doom2 = map.startsWith('MAP');
       // (DOOM I's E?M8 goes to the victory finale; DOOM II's 6, 11, 20, 30 and the secret
       // levels' exits to their text after the screen – the demo's end here)
       if (!doom2 && map.endsWith('M8')) break;
-      wi = {
-        state: new IntermissionState({ kills: hud.KILLS, totalKills: hud.TOTAL_KILLS, items: hud.ITEMS, totalItems: hud.TOTAL_ITEMS,
-          secrets: hud.SECRETS, totalSecrets: hud.TOTAL_SECRETS, time: hud.TIC, par: parTime(map) }, doom2),
-        attackdown: p.ATTACK_DOWN === 1, usedown: p.USE_DOWN === 1, secret: hud.EXIT_KIND === 2,
-      };
+      let state;
+      if (!net) {
+        state = new IntermissionState({ kills: hud.KILLS, totalKills: hud.TOTAL_KILLS, items: hud.ITEMS, totalItems: hud.TOTAL_ITEMS,
+          secrets: hud.SECRETS, totalSecrets: hud.TOTAL_SECRETS, time: hud.TIC, par: parTime(map) }, doom2);
+      } else {
+        // a netgame's screen: everyone's kills, items, secrets and frags (WI_updateNetgameStats),
+        // or deathmatch's frag matrix (WI_updateDeathmatchStats)
+        const fr = (await db.query('SELECT f.killer, f.victim, f.n FROM frags f')).rows;
+        const players = ps.map((p) => ({ kills: p.KILLS, items: p.ITEMS, secrets: p.SECRETS,
+          frags: ps.map((q) => fr.find((f) => f.KILLER === p.ID && f.VICTIM === q.ID)?.N ?? 0) }));
+        state = demo.deathmatch ? new DeathmatchState({ players }, doom2)
+          : new NetgameState({ totalKills: hud.TOTAL_KILLS, totalItems: hud.TOTAL_ITEMS, totalSecrets: hud.TOTAL_SECRETS, players }, doom2);
+      }
+      wi = { state, down: ps.map((p) => [p.ATTACK_DOWN === 1, p.USE_DOWN === 1]), ids: ps.map((p) => p.ID), secret: hud.EXIT_KIND === 2 };
       continue;
     }
     // G_DoReborn: the level again, before the next tic (its P_SetupLevel line in the trace)
@@ -281,6 +296,10 @@ export function exitPwad(iwad, map, line, special, extra = []) {
 export const EXIT_PWADS = {
   'e1m1-exit': ['freedoom1.wad', 'E1M1', 834, 52],
   'map01-exit': ['freedoom2.wad', 'MAP01', 88, 52],
+  'e1m1-coop-exit': ['freedoom1.wad', 'E1M1', 834, 52],
+  'e1m1-dm-exit': ['freedoom1.wad', 'E1M1', 722, 52],
+  'map01-coop-exit': ['freedoom2.wad', 'MAP01', 82, 52],
+  'e1m1-altdeath-exit': ['freedoom1.wad', 'E1M1', 582, 52],
 };
 
 /** Load the demo's map in the port as the demo starts it (G_InitNew: skill, options; M_ClearRandom) */

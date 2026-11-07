@@ -42,9 +42,9 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   (under **Simulation** below: *Original `.lmp` demos, in phases*): phases L0, the yardstick,
   L1, DOOM's random numbers, L2, the player in fixed point, L3, the map as DOOM spawns it
   and its thinkers' order, L4, the monsters' sight and walk, L5, the attacks, and L6, the world,
-  L7, playing them on the page, and L8, netgames, are done. Left: a netgame demo through its
-  level's end (the netgame intermission's timing), and someone with id's WADs running
-  `WAD=/path/to/doom.wad npm run test:lmp` against their demos.
+  L7, playing them on the page, L8, netgames, and L9, netgames through a level's end, are done.
+  Left: someone with id's WADs running `WAD=/path/to/doom.wad npm run test:lmp` against their
+  demos.
 - **An installable app** (Tooling): offline play is there (`sw.js`); a web manifest and icons
   would let the page install like an app, with its own window. Small.
 - **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
@@ -610,8 +610,27 @@ simulation over, and a yardstick measures how far into each demo the port stays 
 - **On the page:** `LmpPlayer` gives a netgame's tics as `NET_TIC` rows; the page loads the map
   for its players and mode and looks through its consoleplayer (`demoNet`). The browser test
   plays `e1m1-altdeath.lmp` through Load… to where vanilla's trace ends.
-- **Left:** a netgame demo through a level's end – the netgame and deathmatch intermissions
-  (WI_updateNetgameStats, WI_updateDeathmatchStats, every player's presses) against vanilla's.
+
+**Phase L9: netgames through a level's end.** *Done.*
+- **The fixtures:** `e1m1-coop-exit` (player 1 over E1M1's line 834, made an exit; player 2
+  presses the screen on), `e1m1-dm-exit` (player 2, the one not watched, over line 722),
+  `map01-coop-exit` (DOOM II: the stats, then "entering"), and `e1m1-altdeath-exit`, the three
+  wanderers 350 tics longer with line 582 an exit (crossed at tic 873, player 1 down to 12).
+- **The harness:** at a netgame's exit `playAgainst` builds `NetgameState` or `DeathmatchState`
+  from every player's kills, items, secrets and frags, each tic any player's new press hurries it
+  (WI_checkForAccelerate, every player's attackdown and usedown), and every player's are set at
+  the next map. The screens' code matched vanilla's already.
+- **What they found:** P_SpawnPlayer gives the body the player's health (`mobj->health =
+  p->health`); INIT_MAP gave every body 100 (wrong for the wounded, and for a DeHackEd Initial
+  Health). G_DoLoadLevel makes a player dead at the exit PST_REBORN: G_PlayerReborn's new start
+  there (INIT_MAP only cleared `DEAD`). `netgame-test` checks both.
+- **On the page:** `LmpPlayer` gives a netgame's intermission tics (anyone's press) and carries
+  every player's buttons into the next map; the page's netgame and deathmatch screens take
+  their stats from the demo's players. The browser test plays `e1m1-coop-exit.lmp` through the
+  netgame screen into E1M2 to where vanilla's trace ends.
+- **Left, noted:** vanilla's `dofrags` is a static never reset, so after a game with frags every
+  later netgame screen counts frags too; the port's starts over each screen. And its deathmatch
+  screen counts the totals up with the cells, where vanilla shows the final totals at once.
 
 
 - ~~**Armour types.**~~ Done: green armour (type 1) absorbs ⅓, and blue armour, the megasphere

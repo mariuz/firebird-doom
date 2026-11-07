@@ -129,7 +129,7 @@ export function lmpProblem(demo) {
  *                carried over from the level: carry())
  *   take('fin')  a text screen's tic: ['fin', 1, held, 0]
  *   (a netgame's level tic: ['net', [[player, fwd, side, turn, fire, use, weapon, run] …]], every
- *   player's for NET_TIC; its level end stops it, the netgame intermission not yet followed)
+ *   player's for NET_TIC; its intermission is pressed on by anyone's press)
  *   take('map')  the next level, or the restart after a death: ['map', '*', null, 0] – which
  *                one is the game's to say (G_DoWorldDone, G_DoReborn), and no seed: P_Random's
  *                index carries on
@@ -143,40 +143,44 @@ export class LmpPlayer {
     this.lmp = true;
     this.map = lmpMapName(demo, commercial);
     this.index = 0;
-    this.attackdown = false;
-    this.usedown = false;
     // a netgame's: the players in it (1–4, as their tics list them), and whose view
     this.inGame = demo.players.map((x, i) => (x ? i + 1 : 0)).filter(Boolean);
+    // each player's attackdown and usedown, [atk, use], as inGame lists them (the console player's alone, one player's demo)
+    this.downs = this.inGame.map(() => [false, false]);
     this.net = this.inGame.length > 1 ? { players: this.inGame.length, deathmatch: demo.deathmatch, me: demo.consoleplayer + 1 } : null;
   }
 
   get done() { return this.index >= this.demo.tics.length; }
 
-  /** the level's end: player->attackdown and usedown as the level left them, for WI_checkForAccelerate */
-  carry(attackdown, usedown) {
-    this.attackdown = !!attackdown;
-    this.usedown = !!usedown;
+  /** the level's end: each player's attackdown and usedown as the level left them ([[atk, use]] by
+   * player number, the players in the game), for WI_checkForAccelerate */
+  carry(downs) {
+    this.downs = this.net ? this.inGame.map((id) => (downs[id - 1] ?? [false, false]).map(Boolean)) : [(downs[0] ?? [false, false]).map(Boolean)];
   }
+
+  /** [player number, attackdown, usedown] for each player, to set at the next level (G_DoWorldDone) */
+  get carried() { return (this.net ? this.inGame : [1]).map((id, k) => [id, this.downs[k][0], this.downs[k][1]]); }
 
   take(kind) {
     if (this.done) return null;
     if (kind === 'map') return ['map', '*', null, 0];
-    // (a netgame's level end isn't followed yet: its intermission is WI_updateNetgameStats', not
-    // checked against vanilla – the demo stops there)
-    if (this.net && kind !== 'tic') return null;
     const tic = this.demo.tics[this.index++];
-    // (a netgame's tic: every player's, as NET_TIC's TICCMD rows)
-    if (this.net) return ['net', tic.map((c, k) => [this.inGame[k], ...portCmd(c)])];
-    const cmd = tic[this.demo.consoleplayer] ?? tic[0];
-    if (kind === 'tic') return [1, ...portCmd(cmd)];
-    const atk = (cmd[3] & BT_ATTACK) !== 0;
-    const use = (cmd[3] & BT_USE) !== 0;
+    // (a netgame's level tic: every player's, as NET_TIC's TICCMD rows)
+    if (this.net && kind === 'tic') return ['net', tic.map((c, k) => [this.inGame[k], ...portCmd(c)])];
+    const cmds = this.net ? tic : [tic[this.demo.consoleplayer] ?? tic[0]];
+    if (kind === 'tic') return [1, ...portCmd(cmds[0])];
+    const held = cmds.some((c) => (c[3] & (BT_ATTACK | BT_USE)) !== 0);
     if (kind === 'wi') {
-      const pressed = (atk && !this.attackdown) || (use && !this.usedown);
-      this.attackdown = atk;
-      this.usedown = use;
-      return ['wi', 1, atk || use ? 1 : 0, pressed ? 1 : 0];
+      // WI_checkForAccelerate: anyone's new press of fire or use
+      let pressed = false;
+      cmds.forEach((c, k) => {
+        const atk = (c[3] & BT_ATTACK) !== 0;
+        const use = (c[3] & BT_USE) !== 0;
+        if ((atk && !this.downs[k][0]) || (use && !this.downs[k][1])) pressed = true;
+        this.downs[k] = [atk, use];
+      });
+      return ['wi', 1, held ? 1 : 0, pressed ? 1 : 0];
     }
-    return ['fin', 1, atk || use ? 1 : 0, 0];
+    return ['fin', 1, held ? 1 : 0, 0];
   }
 }

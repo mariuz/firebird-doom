@@ -414,6 +414,22 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
     `co-op: keys on the map, no cards given, players at their own starts; a placed shotgun stays and gives two clips here (${coop.SHELLS} shells), and nothing the second time (${twice})`);
 }
 
+// ── the next level in a netgame (G_DoLoadLevel, P_SpawnPlayer) ──
+// the wounded keep their health, body and all (mobj->health = player->health); one dead at the
+// level's end is PST_REBORN there (G_PlayerReborn: the pistol, its bullets, full health)
+{
+  const nm = wad.mapNames()[1];
+  await loadMap(db, wad, res, map, { skill: 3, players: 2, deathmatch: 0 });
+  await db.exec('UPDATE player SET health = 37, bullets = 120, has_shotgun = 1, shells = 20 WHERE id = 1');
+  await db.exec('UPDATE player SET bullets = 120, has_shotgun = 1, shells = 20 WHERE id = 2');
+  await db.exec('EXECUTE PROCEDURE damage_player(1000, NULL, 2)');
+  await loadMap(db, wad, res, nm, { skill: 3, newGame: false });
+  const p = await all('SELECT p.id, p.health, p.dead, p.bullets, p.has_shotgun, p.shells, t.hp FROM player p JOIN things t ON t.id = p.thing_id ORDER BY p.id');
+  assert(p[0].HEALTH === 37 && p[0].HP === 37 && p[0].HAS_SHOTGUN === 1 && p[0].BULLETS === 120
+    && p[1].DEAD === 0 && p[1].HEALTH === 100 && p[1].HP === 100 && p[1].HAS_SHOTGUN === 0 && p[1].BULLETS === 50 && p[1].SHELLS === 0,
+    `${nm} after ${map}: player 1 comes in with their 37 health (the body too) and their shotgun; player 2, dead at the exit, reborn: ${p[1].HEALTH} health, the pistol and ${p[1].BULLETS} bullets`);
+}
+
 // ── the launch options: -nomonsters, -respawn, -fast ──
 {
   // -nomonsters: P_SpawnMapThing leaves out MF_COUNTKILL things and lost souls

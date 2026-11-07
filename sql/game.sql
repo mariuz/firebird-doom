@@ -7784,7 +7784,11 @@ BEGIN
     IF (dm > 0) THEN lastlook = p_rand256();
     tid = NEXT VALUE FOR thing_seq;
     INSERT INTO things (id, thing_type, kind, x, y, angle, hp, radius, height, solid, st, translation, state, reaction)
-    VALUES (:tid, 1, 'player', :px, :py, :pa, 100, 16, 56, 1, 'idle', :i - 1,
+    -- (P_SpawnPlayer: mobj->health = player->health – a new game's, or one reborn, starts with
+    -- DeHackEd's Initial Health; within a game the health the player had)
+    VALUES (:tid, 1, 'player', :px, :py, :pa,
+            (SELECT IIF(:new_game = 1 OR p.dead > 0, r.init_health, p.health) FROM player p CROSS JOIN rules r WHERE p.id = :i AND r.id = 1),
+            16, 56, 1, 'idle', :i - 1,
             (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1),
             (SELECT IIF(:skill = 5, 0, tt.reaction_time) FROM thing_types tt WHERE tt.thing_type = 1));
     UPDATE player SET thing_id = :tid WHERE id = :i;
@@ -7855,6 +7859,16 @@ BEGIN
            weapon = 2, has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0,
            has_chainsaw = 0, has_ssg = 0,
            rockets = 0, cells = 0, max_rockets = (SELECT r.max_rockets FROM rules r WHERE r.id = 1), max_cells = (SELECT r.max_cells FROM rules r WHERE r.id = 1), god = 0, noclip = 0;
+  ELSE
+    -- G_DoLoadLevel in a netgame: a player dead at the level's end is PST_REBORN, and P_SpawnPlayer's
+    -- G_PlayerReborn gives them a new start (the pistol, its bullets, nothing else)
+    UPDATE player
+       SET health = (SELECT r.init_health FROM rules r WHERE r.id = 1), armor = 0, armor_type = 0, bullets = (SELECT r.init_bullets FROM rules r WHERE r.id = 1), shells = 0,
+           max_bullets = (SELECT r.max_bullets FROM rules r WHERE r.id = 1), max_shells = (SELECT r.max_shells FROM rules r WHERE r.id = 1),
+           weapon = 2, has_shotgun = 0, has_chaingun = 0, has_launcher = 0, has_plasma = 0, has_bfg = 0,
+           has_chainsaw = 0, has_ssg = 0,
+           rockets = 0, cells = 0, max_rockets = (SELECT r.max_rockets FROM rules r WHERE r.id = 1), max_cells = (SELECT r.max_cells FROM rules r WHERE r.id = 1), god = 0, noclip = 0
+     WHERE dead > 0;
   UPDATE player
      SET keycards = IIF(:dm > 0, 7, 0), kills = 0, items = 0, secrets = 0, dead = 0,
          damage_count = 0, bonus_count = 0, view_h = 41, delta_vh = 0, use_down = 0, invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0, strength_tics = 0, allmap = 0,

@@ -638,6 +638,14 @@ try {
     const a3 = agree(end3, 'e1m1-altdeath');
     assert(end3.played === end3.tics && a3.off.length === 0 && end3.screen === 'title',
       `a netgame's .lmp: e1m1-altdeath's three players for ${end3.played} tics through NET_TIC, ending where vanilla's ends (${a3.off.length ? `but ${a3.off.map((k) => `${k} ${a3.mine?.[k]} ≠ ${a3.v[k]}`).join(', ')}` : `tic ${a3.v.leveltime}, P_Random at ${a3.v.prndindex}, player 1 with ${a3.v.health} health`})`);
+    // …and through a level's end (phase L9): two players over the PWAD's E1M1 exit, the netgame
+    // screen pressed on by player 2, and on into E1M2 together
+    await p5.setInputFiles('#demo-file', fixture('e1m1-coop-exit.lmp'));
+    await p5.waitForFunction(() => window.doom.demo.lmpEnd && window.doom.demo.lmpEnd.tics === 349 && window.doom.demo.lmpEnd.MAP_NAME === 'E1M2', null, { timeout: 600000, polling: 200 });
+    const end4 = await p5.evaluate(() => ({ ...window.doom.demo.lmpEnd }));
+    const a4 = agree(end4, 'e1m1-coop-exit');
+    assert(end4.played === end4.tics && a4.off.length === 0,
+      `a co-op .lmp through the level's end: E1M1's exit, the netgame intermission, E1M2 for both, ending where vanilla's ends (${a4.off.length ? `but ${a4.off.map((k) => `${k} ${a4.mine?.[k]} ≠ ${a4.v[k]}`).join(', ')}` : `tic ${a4.v.leveltime} of E1M2, P_Random at ${a4.v.prndindex}`})`);
     await ctx.close();
   }
 
