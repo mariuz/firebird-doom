@@ -953,12 +953,24 @@ stays out, as in DOOM: F3 and F9 say so. A netgame starts from a save instead, a
 rules come with it. The save goes gzipped in the start message, about 20 KB for E1M1. Each guest
 checks it like the rest of the message and restores it before the first tic. A save made in a
 netgame is for that many players, and the panel says so if the count doesn't match. Cheating, demos and warping are out too, as they aren't in the ticcmds.
+A guest who leaves, or whose link drops, is out of the game and the rest play on, as vanilla's
+`D_QuitNetGame` had it: "Player 2 left the game." From the next tic they send no commands and
+their body stays where it stood, a target for no one: a monster looking for players passes them by
+(`P_LookForPlayers` reads `playeringame`, here `PLAYER.IN_GAME`, set each tic from who sent a
+command), they don't come back if dead, and a boss's death counts only the players still in
+(`A_BossDeath`). Coming back is the port's own, not vanilla's (DOOM had no way in once a game
+had started). The host's panel offers **Invite player 2 back**: the host holds its tics, lets every
+one it has sent run, and sends that game as a save at that tic in the start message, the way a
+netgame starts from a save; the returning player restores it and the lockstep goes on from the next
+tic with them in it. The host can't leave this way, as every command goes through it: the host
+leaving ends the game for all. One difference from vanilla: at a new level a player who is out
+still gets a body on their start, where vanilla spawns only the players in the game.
 `npm run test:netgame` plays two players in one database, two peers through a
 pretend network that delivers late and out of order, and four peers through the host. `npm run test:coop` connects two real pages
 over WebRTC, with the codes swapped through the panel, and plays them in lockstep through a level
 exit and the intermission into the next map, then a deathmatch. On the way it pauses from the host
 and goes on from the guest, saves from the host into both browsers, and starts a netgame again
-from that save. Last, four pages play together, the host relaying for three guests. Each guest's keys
+from that save. The guest leaves, the host plays on, and the guest comes back by a new invite into the same game. Last, four pages play together, the host relaying for three guests. Each guest's keys
 move only their own player, and the four games agree while everyone fires. A chat to one player (G, I, B or
 R) reaches only them, and when one guest leaves, the other two are told. That last part was missing before
 the test: a guest's reason for stopping reached only the host, so the other guests froze without a word.

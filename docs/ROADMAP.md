@@ -45,9 +45,6 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   L7, playing them on the page, L8, netgames, and L9, netgames through a level's end, are done.
   Left: someone with id's WADs running `WAD=/path/to/doom.wad npm run test:lmp` against their
   demos.
-- **Rejoining a netgame** (Multiplayer): a dropped player ends the game for everyone now. The
-  host could send the current game to a player who comes back, the way a netgame starts from a
-  save, and the lockstep go on from that tic.
 - **Drawing off the main thread** (Rendering): the renderer and presenter in a Worker with an
   OffscreenCanvas, so input, sound and the page stay responsive when frames are slow (the browser
   test saw 3 frames a second with every test running beside it). The engine's ~17 ms of wall work
@@ -66,6 +63,10 @@ Everything else below is done.
 
 ## Game flow and menus
 
+- ~~**Rejoining a netgame.**~~ Done: a guest who leaves is out (`D_QuitNetGame`: their body stays,
+  `PLAYER.IN_GAME` 0, monsters and `A_BossDeath` pass them by) and the rest play on. Not vanilla:
+  the host can invite them back, sending the game at its last tic as a save, and the lockstep
+  goes on from there. An out player still gets a body at a new level (vanilla: none).
 - ~~**Pause and save in a netgame.**~~ Done: the ticcmd's ninth value is `BT_SPECIAL`
   (`SPECIAL_PAUSE`, or `SPECIAL_SAVE` + the slot, in `net.js`), with no fire, use or weapon change
   that tic; `netTics` acts on it as `G_Ticker` does. A pause stops the world on every peer while

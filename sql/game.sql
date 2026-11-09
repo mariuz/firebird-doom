@@ -4766,6 +4766,8 @@ DECLARE sec INTEGER;
 DECLARE fh DOUBLE PRECISION;
 DECLARE h DOUBLE PRECISION;
 BEGIN
+  -- (no one in the game left alive: nothing happens)
+  IF (NOT EXISTS (SELECT 1 FROM player p WHERE p.in_game = 1 AND p.health > 0)) THEN EXIT;
   IF (EXISTS (SELECT 1 FROM things t WHERE t.thing_type = :ttype AND t.st NOT IN ('dying', 'dead'))) THEN EXIT;
   SELECT g.map_name FROM game g WHERE g.id = 1 INTO mn;
   IF ((mn = 'E2M8' AND ttype = 16) OR (mn = 'E3M8' AND ttype = 7)) THEN
@@ -4837,7 +4839,7 @@ BEGIN
   BEGIN
     n = n + 1;
     pthing = NULL;
-    SELECT p.thing_id, IIF(p.dead > 0, 0, p.health) FROM player p WHERE p.id = :ll + 1 INTO pthing, hp;
+    SELECT p.thing_id, IIF(p.dead > 0, 0, p.health) FROM player p WHERE p.id = :ll + 1 AND p.in_game = 1 INTO pthing, hp;
     IF (pthing IS NOT NULL) THEN                -- (playeringame)
     BEGIN
       IF (c = 2 OR ll = stp) THEN LEAVE;        -- (c++ == 2 || lastlook == stop: done looking)
@@ -7537,16 +7539,20 @@ DECLARE c_run SMALLINT;
 BEGIN
   DELETE FROM sound_events e
    WHERE e.tic < (SELECT g.tic FROM game g WHERE g.id = 1) - 70;
+  -- playeringame: who is in the game this tic – a player with a command (one who has dropped
+  -- out of a netgame has none: their body stays where it is, as D_QuitNetGame leaves it, and
+  -- neither thinks nor is looked for until they rejoin)
+  UPDATE player p SET in_game = IIF(EXISTS (SELECT 1 FROM ticcmd c WHERE c.player_id = p.id), 1, 0);
   -- G_Ticker: the players whose P_DeathThink saw use (PST_REBORN) come back first, in player
   -- order, before the tic's thinkers (G_DoReborn)
-  FOR SELECT p.id FROM player p WHERE p.dead = 2 ORDER BY p.id INTO pid DO
+  FOR SELECT p.id FROM player p WHERE p.dead = 2 AND p.in_game = 1 ORDER BY p.id INTO pid DO
     EXECUTE PROCEDURE reborn_player(pid);
   UPDATE game g SET tic = g.tic + 1 WHERE g.id = 1;
   SELECT g.tic FROM game g WHERE g.id = 1 INTO tic;
   RDB$SET_CONTEXT('USER_TRANSACTION', 'THINK_KEY', -1);   -- (P_PlayerThink, before the list)
   FOR SELECT p.id, COALESCE(c.fwd, 0), COALESCE(c.side, 0), COALESCE(c.turn, 0), COALESCE(c.fire, 0),
              COALESCE(c.use_key, 0), COALESCE(c.weapon_sel, 0), COALESCE(c.run, 0)
-        FROM player p LEFT JOIN ticcmd c ON c.player_id = p.id
+        FROM player p JOIN ticcmd c ON c.player_id = p.id
        ORDER BY p.id
         INTO pid, c_fwd, c_side, c_turn, c_fire, c_use, c_weapon, c_run
   DO

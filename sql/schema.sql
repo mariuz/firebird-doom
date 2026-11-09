@@ -491,6 +491,7 @@ CREATE TABLE player (
   view_z       DOUBLE PRECISION DEFAULT 41 NOT NULL,
   use_down     SMALLINT DEFAULT 0 NOT NULL,
   dead         SMALLINT DEFAULT 0 NOT NULL,
+  in_game      SMALLINT DEFAULT 1 NOT NULL,     -- playeringame: 0 once a netgame's player has dropped (NET_TIC sets it from the TICCMD rows)
   invis_tics   INTEGER DEFAULT 0 NOT NULL,   -- pw_invisibility: tics of partial invisibility left
   invuln_tics  INTEGER DEFAULT 0 NOT NULL,   -- pw_invulnerability: tics of invulnerability left
   iron_tics    INTEGER DEFAULT 0 NOT NULL,   -- pw_ironfeet: the radiation suit

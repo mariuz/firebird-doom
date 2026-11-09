@@ -271,8 +271,8 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
 }
 
 // four peers through the host (a star): every guest's commands reach the others only by
-// the host's tics, so all four run the same tics with the same commands; and a guest's
-// reason for stopping (leaving, a save it couldn't read) goes on from the host to the rest
+// the host's tics, so all four run the same tics with the same commands; a guest who goes is
+// dropped and the rest play on, and they can come back
 {
   const wire4 = [];
   const peers4 = [1, 2, 3, 4].map((me) => ({ me, ran: [] }));
@@ -291,10 +291,73 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   const same = peers4.every((p) => p.ran.slice(0, n).join() === peers4[0].ran.slice(0, n).join());
   const everyone = peers4[0].ran.slice(3, n).every((t) => JSON.parse(t).cmds.map((c) => c[0]).join() === '1,2,3,4');
   assert(n >= 100 && same && everyone, `four peers through the host run the same ${n} tics, each with all four players' commands`);
-  peers4[3].ls.send(1, { t: 'desync', why: 'player 4 left' });   // (what leaveNet sends)
-  for (let k = 0; k < 2; k++) for (const w of wire4.splice(0)) peers4[w.to - 1].ls.receive(w.from, w.m);
-  assert(peers4.slice(0, 3).every((p) => p.ls.error === 'player 4 left'),
-    `player 4 leaves: the host stops, and passes it on to players 2 and 3 (${peers4.slice(0, 3).map((p) => p.ls.error).join('; ')})`);
+  // player 4 leaves (leaveNet's goodbye): the host drops them, and the other three play on, every
+  // tic from then on with player 4's command null – out of the game – the same on all three
+  const pump = (alive) => {
+    for (const w of wire4.splice(0)) if (alive.includes(w.to) && alive.includes(w.from)) peers4[w.to - 1].ls.receive(w.from, w.m);
+  };
+  const run = (alive, clocks, upto) => {
+    for (let clock = 0; clock < clocks; clock++) {
+      pump(alive);
+      for (const p of peers4.filter((q) => alive.includes(q.me))) {
+        if (p.ls.canSubmit() && p.ls.submitted < upto && (p.me + clock) % 3) p.ls.submit([p.me, clock % 2, 0, 0, 0, 0, 0]);
+        for (let t = p.ls.take(); t; t = p.ls.take()) p.ran.push(JSON.stringify(t));
+      }
+    }
+  };
+  peers4[3].ls.send(1, { t: 'bye' });
+  pump([1, 2, 3, 4]);   // (the goodbye arrives; from then on nothing to or from player 4)
+  run([1, 2, 3], 400, 240);
+  const after = (p) => p.ran.map((t) => JSON.parse(t)).filter((t) => t.tic > 125);
+  const m3 = Math.min(...peers4.slice(0, 3).map((p) => after(p).length));
+  const same3 = peers4.slice(0, 3).every((p) => JSON.stringify(after(p).slice(0, m3)) === JSON.stringify(after(peers4[0]).slice(0, m3)));
+  const out4 = after(peers4[0]).slice(0, m3).every((t) => t.cmds[3] === null && t.cmds.slice(0, 3).every(Array.isArray));
+  assert(m3 >= 60 && same3 && out4 && peers4.slice(0, 3).every((p) => !p.ls.error) && peers4[0].ls.out.has(4),
+    `player 4 leaves: the host drops them and the other three play on, ${m3} more tics alike on all three, player 4's command null (out of the game)`);
+  // …and comes back: the host holds its tics, runs every one it sent (the game it saves is of
+  // that tic), and player 4 starts again from there – from the next tic everyone runs the same,
+  // player 4's commands with the rest
+  const host4 = peers4[0];
+  host4.ls.hold = true;
+  run([1, 2, 3], 50, 300);
+  const T = host4.ls.broadcast;
+  const back = { me: 4, ran: [] };
+  back.ls = new Lockstep({ me: 4, players: 4, delay: 3, start: T,
+    send: (to, m) => { for (const t of to === 'all' ? [2, 3, 4] : [to]) wire4.push({ from: 4, to: t, m: JSON.parse(JSON.stringify(m)) }); } });
+  peers4[3] = back;
+  host4.ls.rejoin(4);
+  host4.ls.hold = false;
+  host4.ls.flush();
+  run([1, 2, 3, 4], 400, 400);
+  const since = (p) => p.ran.map((t) => JSON.parse(t)).filter((t) => t.tic > T);
+  const m4 = Math.min(...peers4.map((p) => since(p).length));
+  const same4 = peers4.every((p) => JSON.stringify(since(p).slice(0, m4)) === JSON.stringify(since(host4).slice(0, m4)));
+  const in4 = since(host4).slice(0, m4).every((t) => Array.isArray(t.cmds[3])) && since(back)[0]?.tic === T + 1;
+  assert(m4 >= 60 && same4 && in4 && !host4.ls.out.has(4) && peers4.every((p) => !p.ls.error),
+    `…and rejoins from tic ${T}: from the next tic on all four run the same ${m4} tics, player 4's commands among them`);
+}
+
+// a player out of the game (no command this tic): out of PLAYERINGAME, not looked for
+{
+  await loadMap(db, wad, res, map, { skill: 3, players: 2 });
+  await tic([IDLE, IDLE]);
+  const in1 = await all('SELECT id, in_game FROM player ORDER BY id');
+  await tic([IDLE]);   // (player 2 sends nothing: dropped)
+  const in2 = await all('SELECT id, in_game FROM player ORDER BY id');
+  // an imp beside player 2, facing them, looking at player 2 first; player 1 can't be seen (dead)
+  const q2 = await thing(2);
+  const imp = (await one(`EXECUTE BLOCK RETURNS (id INTEGER) AS BEGIN
+      EXECUTE PROCEDURE spawn_thing(3001, ${q2.X + 64}, ${q2.Y}, NULL, ${Math.PI}) RETURNING_VALUES id; SUSPEND; END`)).ID;
+  await db.exec(`UPDATE things SET lastlook = 1 WHERE id = ${imp}`);
+  await db.exec('UPDATE player SET health = 0 WHERE id = 1');
+  const look = async () => (await one(`EXECUTE BLOCK RETURNS (f SMALLINT) AS BEGIN EXECUTE PROCEDURE look_for_players(${imp}, 1) RETURNING_VALUES f; SUSPEND; END`)).F;
+  const lookOut = await look();
+  await db.exec('UPDATE player SET in_game = 1 WHERE id = 2');
+  await db.exec(`UPDATE things SET lastlook = 1 WHERE id = ${imp}`);
+  const lookIn = await look();
+  await db.exec('UPDATE player SET health = 100 WHERE id = 1');
+  assert(in1.every((r) => r.IN_GAME === 1) && in2[0].IN_GAME === 1 && in2[1].IN_GAME === 0 && lookOut === 0 && lookIn === 2,
+    `a player with no command this tic is out of the game (in_game ${in2.map((r) => r.IN_GAME)}): P_LookForPlayers passes them by (${lookOut}), and finds them again once back (${lookIn})`);
 }
 
 // ── deathmatch ──

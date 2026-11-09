@@ -12,6 +12,12 @@
 // them in time. Every 35 tics each peer reports a checksum of its game, and the
 // host compares them: any difference is a desync, and the game stops.
 //
+// A guest who goes (says 'bye', or whose link closes) drops out, as D_QuitNetGame drops a node:
+// from the next tic the host sends out, their command is null – out of the game – and the
+// others play on. The host can let them back in: it holds its tics, saves the game as it
+// stands after the last it sent, and the returning player starts from that save at that
+// tic; their commands are wanted again from the next (rejoin). The host going ends it.
+//
 // The connection: WebRTC data channels, peer to peer, a star through the
 // host. With no server to introduce the players, they swap codes themselves
 // (the host's invite, the guest's reply): an SDP offer and answer, sent once
@@ -21,7 +27,7 @@
 // way, and its TURN servers carry the game for players whose NATs won't let
 // them reach each other directly.
 
-export const NET_VERSION = 4;   // (2: the launch options and the chatchar; 3: the special; 4: a save in the start message)
+export const NET_VERSION = 5;   // (2: the launch options and the chatchar; 3: the special; 4: a save in the start message; 5: drops and rejoins)
 
 /**
  * The ticcmd's ninth value, G_BuildTiccmd's BT_SPECIAL: 0 none, SPECIAL_PAUSE
@@ -40,17 +46,22 @@ export class Lockstep {
    * @param send     (to: number | 'all', msg) → void
    * @param delay    tics of input delay
    * @param ahead    how far past the last tic run a peer may submit
+   * @param start    the tic play starts after (a player rejoining: the tic of the host's save)
    */
-  constructor({ me, players, send, delay = 3, ahead = 12 }) {
+  constructor({ me, players, send, delay = 3, ahead = 12, start = 0 }) {
     this.me = me;
     this.players = players;
     this.send = send;
     this.delay = delay;
     this.ahead = ahead;
     this.host = me === 1;
-    this.submitted = 0;          // the last tic this peer submitted a command for
-    this.executed = 0;           // the last tic taken by the game
-    this.broadcast = 0;          // (host) the last tic sent out complete
+    this.submitted = start;      // the last tic this peer submitted a command for
+    this.executed = start;       // the last tic taken by the game
+    this.broadcast = start;      // (host) the last tic sent out complete
+    this.out = new Set();        // (host) the players who have dropped out
+    this.inTic = new Map();      // (host) tic → how many were in it (whose checksums count)
+    this.hold = false;           // (host) no more tics out for now (a rejoin's save is being made)
+    this.onDrop = () => {};      // (host) told of a player who has gone
     this.pending = new Map();    // (host) tic → array of commands so far
     this.ready = [];             // complete tics, in order: { tic, cmds }
     this.early = new Map();      // (guest) tic → commands, however they arrived
@@ -75,6 +86,7 @@ export class Lockstep {
   receive(from, m) {
     if (this.error) return;
     if (m.t === 'cmd' && this.host) this.collect(from, m.tic, m.cmd);
+    else if (m.t === 'bye' && this.host) this.drop(from);
     else if (m.t === 'tic' && !this.host) { if (m.tic > this.executed) this.early.set(m.tic, m.cmds); }
     else if (m.t === 'sum' && this.host) this.checksum(from, m.tic, m.sum);
     else if (m.t === 'desync') {
@@ -89,18 +101,41 @@ export class Lockstep {
 
   /** (host) a command in; any tic now complete goes out, in order */
   collect(from, tic, cmd) {
-    if (tic <= this.broadcast) return;
+    if (tic <= this.broadcast || this.out.has(from)) return;
     let row = this.pending.get(tic);
-    if (!row) { row = Array(this.players).fill(null); this.pending.set(tic, row); }
+    // (undefined: still to come; null: that player is out of the game)
+    if (!row) { row = Array.from({ length: this.players }, (_, i) => (this.out.has(i + 1) ? null : undefined)); this.pending.set(tic, row); }
     row[from - 1] = cmd;
-    for (;;) {
+    this.flush();
+  }
+
+  /** (host) every complete tic out, in order – unless held */
+  flush() {
+    while (!this.hold) {
       const next = this.pending.get(this.broadcast + 1);
-      if (!next || next.some((c) => c === null)) break;
+      if (!next || next.some((c) => c === undefined)) break;
       this.broadcast++;
       this.pending.delete(this.broadcast);
+      this.inTic.set(this.broadcast, next.filter((c) => c !== null).length);
       this.send('all', { t: 'tic', tic: this.broadcast, cmds: next });
       this.ready.push({ tic: this.broadcast, cmds: next });
     }
+  }
+
+  /** (host) player P has gone: out of every tic not yet sent, and the game goes on without them */
+  drop(p) {
+    if (!this.host || p === 1 || this.out.has(p)) return;
+    this.out.add(p);
+    for (const row of this.pending.values()) if (row[p - 1] === undefined) row[p - 1] = null;
+    this.onDrop(p);
+    this.flush();
+  }
+
+  /** (host) player P is back, from the tic after the last sent (the one their save is of) */
+  rejoin(p) {
+    this.out.delete(p);
+    for (const [tic, row] of this.pending) if (tic > this.broadcast) row[p - 1] = undefined;
+    this.flush();
   }
 
   /** The next complete tic for the game to run, or null. */
@@ -128,8 +163,12 @@ export class Lockstep {
     let s = this.sums.get(tic);
     if (!s) { s = {}; this.sums.set(tic, s); }
     s[from] = sum;
-    if (Object.keys(s).length < this.players) return;
+    // (the players in that tic: one who has dropped out sends nothing, one who's back starts after)
+    if (Object.keys(s).length < (this.inTic.get(tic) ?? this.players)) return;
     this.sums.delete(tic);
+    this.inTic.delete(tic);
+    for (const t of this.inTic.keys()) if (t < tic) this.inTic.delete(t);
+    for (const t of this.sums.keys()) if (t < tic) this.sums.delete(t);
     const values = Object.values(s);
     if (values.some((v) => v !== values[0])) {
       const who = Object.entries(s).filter(([, v]) => v !== s[1]).map(([p]) => p).join(', ');

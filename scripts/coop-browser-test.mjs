@@ -2,8 +2,8 @@
 // headless Chromium: the host's invite and the guest's reply swapped through
 // the Co-op panel, Start, both browsers in the same game (each through its
 // own player's eyes), the guest's keys moving the guest on both screens, the
-// consistency checks agreeing for hundreds of tics, and the host told when
-// the guest leaves. Then a deathmatch: the mode, timer and launch options from
+// consistency checks agreeing for hundreds of tics; the guest leaving and the host
+// playing on, then letting them back in from a save of the game as it stands. Then a deathmatch: the mode, timer and launch options from
 // the panel, the players at deathmatch starts with every key, a frag in both games.
 // Then four players, the host relaying for all three guests.
 //
@@ -282,10 +282,39 @@ try {
   assert(next.every((n) => n.map === 'E1M2' && n.players === 2 && !n.net.error && n.net.tic > Math.max(...t1)) && moved2 > 8 && later.same,
     `…and both go on to ${next[0].map} together: two players, player 2 walks (${moved2.toFixed(0)} units), the games agree at tic ${later.tic}`);
 
-  // the guest leaves: the host's game stops and says why
+  // the guest leaves: the host's game goes on without them (D_QuitNetGame), player 2's body
+  // standing where it was, out of the game…
   await guest.evaluate(() => document.getElementById('net-leave').click());   // (the page reflows as it plays: no pointer)
-  await until(host, () => window.doom.net?.error, null, 30000);
-  assert(/player 2 left/.test((await host.evaluate(() => window.doom.net.error))), `the guest leaves: the host's game stops ("${await host.evaluate(() => window.doom.net.error)}")`);
+  await until(host, () => /Out of it: player 2/.test(document.getElementById('net-status').textContent), null, 30000);
+  const gone0 = await host.evaluate(() => window.doom.net.tic);
+  await host.waitForTimeout(1500);
+  const gone = await host.evaluate(async () => ({ tic: window.doom.net.tic, error: window.doom.net.error,
+    in2: (await window.doom.sql('SELECT in_game FROM player WHERE id = 2'))[0].IN_GAME,
+    invite: document.getElementById('net-host').textContent, can: !document.getElementById('net-host').disabled }));
+  assert(!gone.error && gone.tic > gone0 + 10 && gone.in2 === 0 && /player 2 back/.test(gone.invite) && gone.can,
+    `the guest leaves: the host plays on without them (tic ${gone0} → ${gone.tic}), player 2 out of the game, and "${gone.invite}"`);
+  // …and lets them back in: a new invite, the guest joins, and starts from the host's save at the
+  // tic it was made; the two games agree, and player 2 walks again
+  await host.evaluate(() => document.getElementById('net-host').click());
+  await until(host, () => document.getElementById('net-out').value.length > 50);
+  await guest.evaluate(() => document.getElementById('net-join').click());
+  await guest.fill('#net-in', await value(host, 'net-out'));
+  await guest.evaluate(() => document.getElementById('net-connect').click());
+  await until(guest, () => document.getElementById('net-out').value.length > 50);
+  await host.fill('#net-in', await value(guest, 'net-out'));
+  await host.evaluate(() => document.getElementById('net-connect').click());
+  await until(guest, () => window.doom.net && !window.doom.net.error && window.doom.screen === 'level' && window.doom.settled, null, 120000);
+  const rejoined = await agree();
+  await guest.evaluate(() => document.activeElement?.blur());   // (out of the code box: game keys typed there are text)
+  const moved3 = await walk(8);
+  const back = await host.evaluate(async () => ({ in2: (await window.doom.sql('SELECT in_game FROM player WHERE id = 2'))[0].IN_GAME,
+    status: document.getElementById('net-status').textContent }));
+  const gtic = await guest.evaluate(() => window.doom.net.tic);
+  assert(rejoined.same && back.in2 === 1 && moved3 > 8 && !/Out of it/.test(back.status),
+    `…and invites them back: player 2 rejoins from the host's save (at tic ${gtic} now), the games agree at tic ${rejoined.tic}, and player 2 walks (${moved3.toFixed(0)} units)`);
+  // (and goes again, for what follows)
+  await guest.evaluate(() => document.getElementById('net-leave').click());
+  await until(host, () => /Out of it: player 2/.test(document.getElementById('net-status').textContent), null, 30000);
 
   // again, as a deathmatch with a timer: the host's choice reaches the guest
   await host.evaluate(() => document.getElementById('net-leave').click());
@@ -346,8 +375,8 @@ try {
 
   // loading a netgame (-loadgame): the host starts from the co-op save of slot 5. The save goes
   // in the start message, and both games restore it before the first tic: its map, its tic, its
-  // rules (co-op, though the panel still says deathmatch)
-  await until(host, () => window.doom.net?.error, null, 30000);
+  // rules (co-op, though the panel still says deathmatch). (The guest gone, the host plays on alone.)
+  await until(host, () => /Out of it: player 2/.test(document.getElementById('net-status').textContent), null, 30000);
   await host.evaluate(() => document.getElementById('net-leave').click());
   await host.evaluate(() => document.getElementById('net-host').click());
   await until(host, () => document.getElementById('net-out').value.length > 50);
@@ -456,10 +485,10 @@ try {
   assert(walked.every((w) => w.ok), `each guest's W moves their own player on the host's screen (${walked.map((w) => `${w.pid}: ${w.m.toFixed(0)}${w.shifted.length ? `, and ${w.shifted.join(', ')}` : ''}`).join('; ')}), and no one else`);
 
   // the four games at the same tic: the next checksum all four have made
-  const agree4 = async () => {
-    const after = Math.max(...await Promise.all(four.map((pg) => pg.evaluate(() => window.doom.net.tic))));
+  const agree4 = async (pages = four) => {
+    const after = Math.max(...await Promise.all(pages.map((pg) => pg.evaluate(() => window.doom.net.tic))));
     for (let i = 0; i < 600; i++) {
-      const sums = await Promise.all(four.map((pg) => pg.evaluate(() => window.doom.net.sums)));
+      const sums = await Promise.all(pages.map((pg) => pg.evaluate(() => window.doom.net.sums)));
       const t = Object.keys(sums[0]).map(Number).find((k) => k > after && sums.every((x) => k in x));
       if (t !== undefined) return { tic: t, same: sums.every((x) => x[t] === sums[0][t]) };
       await host.waitForTimeout(100);
@@ -488,18 +517,18 @@ try {
   const chat4 = await agree4();
   assert(chat4.same, `…and the games still agree (tic ${chat4.tic})`);
 
-  // player 4 leaves: the host stops, and tells the other two
+  // player 4 leaves: the other three play on without them, each told so, and still agree
   await g4.evaluate(() => document.getElementById('net-leave').click());
-  await until4(host, () => /player 4 left/.test(window.doom.net?.error ?? ''), null, 30000);
-  await until4(guest, () => !!window.doom.net?.error, null, 30000);
-  await until4(g3, () => !!window.doom.net?.error, null, 30000);
-  const why4 = await Promise.all([host, guest, g3].map((pg) => pg.evaluate(() => window.doom.net.error)));
-  assert(why4.every((w) => /player 4 left/.test(w)), `player 4 leaves: the host's game and both other guests' stop (${why4.join('; ')})`);
+  for (const pg of [host, guest, g3]) await until4(pg, () => /Out of it: player 4/.test(document.getElementById('net-status').textContent), null, 30000);
+  const three = await agree4([host, guest, g3]);
+  const errs3 = await Promise.all([host, guest, g3].map((pg) => pg.evaluate(() => window.doom.net.error)));
+  assert(three.same && errs3.every((e) => !e),
+    `player 4 leaves: the other three play on, each told player 4 is out, and the three games agree at tic ${three.tic}`);
 
   // the relay (worker/relay.js, here its local stand-in): the host's invite becomes a
   // six-letter room code, the guest joins with just that, the reply goes back through
   // the relay with no one pasting it, and the two play in step
-  for (const pg of [host, guest, g3, g4]) await pg.evaluate(() => document.getElementById('net-leave').click()).catch(() => {});
+  for (const pg of [g4, g3, guest, host]) await pg.evaluate(() => document.getElementById('net-leave').click()).catch(() => {});
   const relay = await startRelay();
   const rh = await open('relay host', `?relay=${relay.url}`);
   const rg = await open('relay guest', `?relay=${relay.url}`);

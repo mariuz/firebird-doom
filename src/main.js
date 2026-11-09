@@ -132,7 +132,7 @@ let wallsReused = 0;                 // frames drawn from it without asking agai
 // a netgame (net.js): { me, players, deathmatch, timer, ls: Lockstep, links: Map(player → link) }; null alone
 let net = null;
 // before it starts: the host's links so far and its open invite, or the guest's link
-const lobby = { role: null, links: [], invite: null, guest: null };
+const lobby = { role: null, links: [], invite: null, guest: null, rejoin: null };
 let netWait = 0;                     // since when the netgame has been waiting for a tic
 
 function setStatus(msg, isError = false) {
@@ -905,15 +905,22 @@ async function netTics(tics) {
     if (!r) break;
     // (from the network: numbers, and only numbers, go into the SQL)
     const num = (v, lo, hi) => Math.max(lo, Math.min(hi, Number(v) || 0));
-    const rows = r.cmds.map((c, i) => [i + 1, num(c[0], -1, 1), num(c[1], -1, 1), num(c[2], -Math.PI, Math.PI),
-      num(c[3], 0, 1) | 0, num(c[4], 0, 1) | 0, num(c[5], 0, 9) | 0, num(c[6], 0, 1) | 0]);
+    // (a null command: that player is out of the game this tic – dropped, not yet back)
+    const cmds = r.cmds.map((c) => (Array.isArray(c) ? c : null));
+    cmds.forEach((c, i) => {
+      if (!c && !net.out.has(i + 1)) { net.out.add(i + 1); pageSay(`Player ${i + 1} left the game.`); netPanel(); }
+      else if (c && net.out.has(i + 1)) { net.out.delete(i + 1); pageSay(`Player ${i + 1} is back.`); netPanel(); }
+    });
+    const rows = cmds.map((c, i) => c && [i + 1, num(c[0], -1, 1), num(c[1], -1, 1), num(c[2], -Math.PI, Math.PI),
+      num(c[3], 0, 1) | 0, num(c[4], 0, 1) | 0, num(c[5], 0, 9) | 0, num(c[6], 0, 1) | 0]).filter(Boolean);
     // G_Ticker's BT_SPECIAL, player by player: BTS_PAUSE flips the pause for
     // everyone; BTS_SAVEGAME saves once this tic is done (ga_savegame, acted on
     // before the next). A paused tic still goes round, so a pause can end, but
     // the world stands still (P_Ticker: if (paused) return)
     let saveSlot = -1;
     let saver = 0;
-    r.cmds.forEach((c, i) => {
+    cmds.forEach((c, i) => {
+      if (!c) return;
       const sp = num(c[8], 0, SPECIAL_SAVE + SLOTS - 1) | 0;
       if (sp === SPECIAL_PAUSE) net.paused = !net.paused;
       else if (sp >= SPECIAL_SAVE) { saveSlot = sp - SPECIAL_SAVE; saver = i + 1; }
@@ -922,9 +929,9 @@ async function netTics(tics) {
       await db.query(`EXECUTE BLOCK AS BEGIN DELETE FROM ticcmd;
         ${rows.map((v) => `INSERT INTO ticcmd (player_id, fwd, side, turn, fire, use_key, weapon_sel, run) VALUES (${v.join(', ')});`).join('\n')} END`);
       hud = (await db.query('SELECT * FROM net_tic', [], { rowMode: 'object' })).rows[0];
-      lastFire = rows[net.me - 1][4] === 1;
+      lastFire = rows.find((v) => v[0] === net.me)?.[4] === 1;
     }
-    net.chat.ticker(r.cmds.map((c) => num(c[7], 0, 127) | 0));   // (HU_Ticker)
+    net.chat.ticker(cmds.map((c) => (c ? num(c[7], 0, 127) | 0 : 0)));   // (HU_Ticker)
     if (saveSlot >= 0) {
       // (G_DoSaveGame: the one who saved names it; on the other machines it's a net game)
       await writeSave(saveSlot, saver === net.me ? net.saveName || NETGAME_SAVE : NETGAME_SAVE);
@@ -971,7 +978,8 @@ async function netStats() {
  * G_InitNew for a netgame: everyone the same map, skill, seed and options
  * (-nomonsters, -respawn, -fast); me is this browser's player.
  */
-async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, timer = 0, nomonsters = 0, respawn = 0, fast = 0, save = null }, links) {
+async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, timer = 0, nomonsters = 0, respawn = 0, fast = 0, save = null,
+  startTic = 0, startPaused = false }, links) {
   if (recorder) finishRecording();
   demoPlayer = null;
   paused = false;
@@ -982,23 +990,16 @@ async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, tim
   const strings = chatStrings(parseDehStrings(wad.dehacked() + '\n' + (dehPatch?.text ?? '')));
   const chat = new Chat({ me, players, strings, say: chatSay });
   amCheating = 0;   // (a netgame starts a fresh DOOM: no IDDT carried over from a game alone)
-  net = { me, players, deathmatch, timer, nomonsters, respawn, fast, links, chat, ls: new Lockstep({ me, players, send }), sums: new Map(),
-    special: 0, saveName: '', paused: false };
+  net = { me, players, deathmatch, timer, nomonsters, respawn, fast, links, chat, ls: new Lockstep({ me, players, send, start: startTic }), sums: new Map(),
+    special: 0, saveName: '', paused: startPaused, out: new Set() };
   netWait = 0;
-  for (const [pid, link] of links) {
-    link.onmessage = (m) => {
-      // (a goodbye: nothing more goes down that link, which its sender is closing)
-      if (m?.t === 'desync') link.dead = true;
-      if (net?.links === links) net.ls.receive(pid, m);
-    };
-    link.onclose = () => {
-      if (net?.links !== links || net.ls.error) return;
-      const why = pid === 1 ? 'the host left' : `player ${pid} left`;
-      // (to everyone else: not down the link that just closed)
-      if (me === 1) for (const [q, l] of links) if (q !== pid) l.send({ t: 'desync', why });
-      net.ls.fail(why);
-    };
-  }
+  // (host) a guest gone: the game goes on without them (D_QuitNetGame), and they can be let back in
+  net.ls.onDrop = (pid) => {
+    net.links.get(pid)?.close();
+    net.links.delete(pid);
+    netPanel();
+  };
+  for (const [pid, link] of links) attachNetLink(pid, link);
   settings.skill = skill;
   $('skill').value = String(skill);
   $('map').value = mapName;
@@ -1010,6 +1011,22 @@ async function beginNet({ me, players, mapName, skill, seed, deathmatch = 0, tim
   netPanel();
 }
 
+/** a netgame's link to player PID: its messages to the lockstep, and its end */
+function attachNetLink(pid, link) {
+  const links = net.links;
+  link.onmessage = (m) => {
+    // (a goodbye: nothing more goes down that link, which its sender is closing)
+    if (m?.t === 'desync' || m?.t === 'bye') link.dead = true;
+    if (net?.links === links) net.ls.receive(pid, m);
+  };
+  link.onclose = () => {
+    if (net?.links !== links || net.ls.error) return;
+    // the host gone ends it; a guest gone drops out, and the rest play on
+    if (pid !== 1) { net.ls.drop(pid); return; }
+    net.ls.fail('the host left');
+  };
+}
+
 /** Out of the netgame (and the lobby): the links closed, back to one player at the next start. */
 function leaveNet(why) {
   const links = net ? [...net.links.values()] : [...lobby.links.map((l) => l.link), lobby.guest].filter(Boolean);
@@ -1017,7 +1034,8 @@ function leaveNet(why) {
   // others have stopped sending on it (WebKit reports a send that crosses a close
   // as a page error, whatever catches it)
   if (net && !net.ls.error) {
-    for (const l of links) l.send({ t: 'desync', why: `player ${net.me} left` });
+    // (a guest says goodbye and the game goes on without them; the host going ends it for all)
+    for (const l of links) l.send(net.me === 1 ? { t: 'desync', why: 'the host left' } : { t: 'bye' });
     for (const l of links) { l.dead = true; setTimeout(() => l.close(), 1000); }
   } else for (const l of links) l.close();
   lobby.invite?.cancel();
@@ -1030,13 +1048,21 @@ function leaveNet(why) {
 /** The Co-op panel's buttons and words, for where things stand */
 function netPanel(say) {
   const host = lobby.role === 'host';
-  $('net-host').disabled = !!net || lobby.role === 'guest' || !!lobby.invite || lobby.links.length >= MAX_PLAYERS - 1;
+  // (the host of a netgame someone has dropped out of can invite them back)
+  const gone = net && net.me === 1 && !net.ls.error ? [...net.ls.out].sort((a, b) => a - b) : [];
+  $('net-host').disabled = net ? !gone.length || !!lobby.invite
+    : lobby.role === 'guest' || !!lobby.invite || lobby.links.length >= MAX_PLAYERS - 1;
+  $('net-host').textContent = gone.length ? `Invite player ${gone[0]} back` : 'Invite a player';
   $('net-join').disabled = !!net || !!lobby.role;
   $('net-start').disabled = !!net || !host || !lobby.links.length;
   $('net-leave').disabled = !net && !lobby.role;
-  $('net-connect').disabled = !!net || !(lobby.invite || (lobby.role === 'guest' && !lobby.guest && !lobby.replied));
+  $('net-connect').disabled = !(lobby.invite || (!net && lobby.role === 'guest' && !lobby.guest && !lobby.replied));
   if (say !== undefined) $('net-status').textContent = say;
-  else if (net) $('net-status').textContent = net.ls.error ? `Stopped: ${net.ls.error}.` : `In the ${net.deathmatch ? 'deathmatch' : 'game'}: player ${net.me} of ${net.players}.`;
+  else if (net) {
+    $('net-status').textContent = net.ls.error ? `Stopped: ${net.ls.error}.`
+      : `In the ${net.deathmatch ? 'deathmatch' : 'game'}: player ${net.me} of ${net.players}.`
+        + (net.out.size ? ` Out of it: player ${[...net.out].sort().join(', player ')}${gone.length ? ' (Invite lets them back in)' : ''}.` : '');
+  }
 }
 
 // The netgame relay (worker/relay.js): ?relay=URL, else the panel's Relay field,
@@ -1062,12 +1088,47 @@ async function iceServers() {
   }
 }
 
+/**
+ * (host) a player back in the netgame they dropped out of: the tics held, every one sent out
+ * run, the game saved as it stands then, and they start from that save at that tic (the start
+ * message's rejoin); their commands are wanted from the next. Not vanilla's: DOOM couldn't take
+ * a player back.
+ */
+async function rejoinGuest(pid, link) {
+  Object.assign(lobby, { role: null, rejoin: null });
+  netPanel(`Player ${pid} is connected: sending them the game…`);
+  net.ls.hold = true;
+  const release = (why) => {
+    if (net) { net.ls.hold = false; net.ls.flush(); }
+    link.close();
+    netPanel(why);
+  };
+  for (let i = 0; i < 500 && net && !net.ls.error && net.ls.executed < net.ls.broadcast; i++) await new Promise((r) => setTimeout(r, 20));
+  if (inFrame) await inFrame.catch(() => {});
+  if (!net || net.ls.error || net.ls.executed !== net.ls.broadcast || !net.ls.out.has(pid)) { release(`Player ${pid} couldn't be let back in.`); return; }
+  const tic = net.ls.broadcast;
+  const save = await captureGame(db, { seen: [], didSecret: [...didSecret] });
+  const packed = await packSave(save);
+  if (packed.length > NET_SAVE_MAX) { release(`The game is too big to send to player ${pid}.`); return; }
+  link.send({ t: 'start', you: pid, players: net.players, map: save.map, skill: save.skill, seed: 0, wad: wadKey, dm: net.deathmatch,
+    timer: net.timer, nomonsters: net.nomonsters, respawn: net.respawn, fast: net.fast, save: packed, rejoin: { tic, paused: net.paused } });
+  net.links.set(pid, link);
+  attachNetLink(pid, link);
+  net.ls.rejoin(pid);
+  net.ls.hold = false;
+  net.ls.flush();
+  $('net-out').value = '';
+  $('net-in').value = '';
+  netPanel();
+}
+
 /** (host) a guest's reply: the link, as player 2, 3 or 4 */
 async function hostAccept(reply) {
   netPanel('Connecting…');
   const link = await lobby.invite.accept(reply);
   lobby.invite = null;
   lobby.room = null;
+  if (net && lobby.rejoin) { await rejoinGuest(lobby.rejoin, link); return; }
   const pid = lobby.links.length + 2;
   lobby.links.push({ pid, link });
   link.onclose = () => {
@@ -1081,6 +1142,9 @@ async function hostAccept(reply) {
 
 $('net-host').addEventListener('click', async () => {
   try {
+    // in a netgame: the first player who has dropped out, invited back
+    lobby.rejoin = net ? Math.min(...net.ls.out) : null;
+    if (net && !Number.isFinite(lobby.rejoin)) return;
     lobby.role = 'host';
     netPanel('Making an invite…');
     const invite = await createInvite({ iceServers: await iceServers() });
@@ -1095,13 +1159,13 @@ $('net-host').addEventListener('click', async () => {
     }
     if (!room) {
       $('net-out').value = invite.code;
-      if (!r) netPanel(`Send the code above to player ${lobby.links.length + 2}, then paste their reply and press Connect.`);
+      if (!r) netPanel(`Send the code above to player ${lobby.rejoin ?? lobby.links.length + 2}, then paste their reply and press Connect.`);
       return;
     }
     // the room code is all the guest needs; their reply comes back through the relay
     lobby.room = room;
     $('net-out').value = room;
-    netPanel(`Send the room code ${room} to player ${lobby.links.length + 2}: they press Join, paste it and Connect. Waiting for them…`);
+    netPanel(`Send the room code ${room} to player ${lobby.rejoin ?? lobby.links.length + 2}: they press Join, paste it and Connect. Waiting for them…`);
     const reply = await r.waitReply(room, () => lobby.invite === invite);
     if (reply && lobby.invite === invite) await hostAccept(reply);
   } catch (err) { netPanel(`Couldn't make an invite: ${err.message}`); }
@@ -1162,7 +1226,8 @@ $('net-connect').addEventListener('click', async () => {
         const ok = m.wad === wadKey && wad.mapNames().includes(m.map) && [1, 2, 3, 4, 5].includes(m.skill)
           && Number.isInteger(m.seed) && Number.isInteger(m.you) && m.you >= 2 && m.you <= m.players && m.players <= MAX_PLAYERS
           && [0, 1, 2].includes(m.dm) && Number.isInteger(m.timer) && m.timer >= 0 && m.timer < 1000
-          && [m.nomonsters, m.respawn, m.fast].every((v) => v === 0 || v === 1);
+          && [m.nomonsters, m.respawn, m.fast].every((v) => v === 0 || v === 1)
+          && (m.rejoin === undefined || (save && Number.isInteger(m.rejoin.tic) && m.rejoin.tic >= 0 && typeof m.rejoin.paused === 'boolean'));
         if (!ok) {
           l.send({ t: 'desync', why: `player ${m.you} has another WAD loaded` });
           netPanel(`The host is playing ${String(m.wad).split('|')[0]}: load that, and join again.`);
@@ -1173,8 +1238,10 @@ $('net-connect').addEventListener('click', async () => {
         $('net-mode').value = String(m.dm);
         $('net-timer').value = String(m.timer);
         for (const o of NET_OPTIONS) $(`net-${o}`).checked = m[o] === 1;
+        // (a rejoin: the game from the host's save, and the lockstep from that save's tic)
         beginNet({ me: m.you, players: m.players, mapName: m.map, skill: m.skill, seed: m.seed, deathmatch: m.dm, timer: m.timer,
-          nomonsters: m.nomonsters, respawn: m.respawn, fast: m.fast, save }, new Map([[1, l]]))
+          nomonsters: m.nomonsters, respawn: m.respawn, fast: m.fast, save, startTic: m.rejoin?.tic ?? 0, startPaused: m.rejoin?.paused ?? false },
+        new Map([[1, l]]))
           .catch((err) => setStatus(err.message, true));
       };
       l.onclose = () => { if (!net) { lobby.guest = null; lobby.role = null; netPanel('The host went away.'); } };
