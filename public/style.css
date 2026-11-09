@@ -103,3 +103,29 @@ section { margin: 24px 0; }
 .keys-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 4px 16px; margin: 6px 0; }
 .keys-row { display: grid; grid-template-columns: 1fr 6em 6em; gap: 6px; align-items: center; }
 .keys-row button.waiting { outline: 2px solid currentColor; }
+
+/* touch controls (src/touch.js): over the view, only once the page is touched (or on a coarse
+   pointer); the overlay lets touches through to the canvas but for its buttons */
+.touch-overlay { position: absolute; inset: 0; pointer-events: none; touch-action: none; }
+.touch-buttons {
+  position: absolute; right: 8px; top: 8px; bottom: 8px;
+  display: flex; flex-direction: column; justify-content: center; gap: 8px;
+}
+.touch-overlay[data-mode="menu"] .touch-buttons { flex-direction: row; flex-wrap: wrap; top: auto; left: 8px; justify-content: center; }
+.touch-button {
+  pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none;
+  min-width: 56px; min-height: 44px; padding: 6px 10px;
+  font: 600 14px/1 var(--mono); color: var(--text);
+  background: rgba(29, 22, 18, 0.55); border: 1px solid rgba(232, 82, 28, 0.6); border-radius: 10px;
+}
+.touch-button.down { background: rgba(232, 82, 28, 0.55); }
+.touch-button[data-touch="fire"] { min-height: 72px; min-width: 72px; border-radius: 50%; }
+.touch-pad {
+  position: absolute; width: 120px; height: 120px; margin: -60px 0 0 -60px;
+  border: 2px solid rgba(233, 220, 207, 0.35); border-radius: 50%;
+}
+.touch-knob {
+  position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px;
+  border-radius: 50%; background: rgba(233, 220, 207, 0.35);
+}
+.touch-overlay [hidden], .touch-overlay[hidden] { display: none; }

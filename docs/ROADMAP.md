@@ -45,8 +45,6 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   L7, playing them on the page, L8, netgames, and L9, netgames through a level's end, are done.
   Left: someone with id's WADs running `WAD=/path/to/doom.wad npm run test:lmp` against their
   demos.
-- **Touch controls** (Input): on-screen move and turn pads and fire, use and weapon buttons for
-  phones and tablets, reading into `readInput` like the gamepad does. Pairs with the iPhone pass.
 - **Rejoining a netgame** (Multiplayer): a dropped player ends the game for everyone now. The
   host could send the current game to a player who comes back, the way a netgame starts from a
   save, and the lockstep go on from that tic.
@@ -780,6 +778,10 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   while all fire, a chat to one player reaches only them, and a guest leaving stops the rest.
   It found the host keeping a guest's desync to itself (the others froze); `Lockstep.receive`
   now passes it on, and `netgame-test` checks that with four peers in a star.
+- ~~**Touch controls.**~~ Done (`src/touch.js`): a move pad where the thumb lands (running past 1.5
+  radii), the right half turning, FIRE held, USE, WPN (the next slot's number key), MAP and the menu;
+  arrows, OK and back in the menus; a tap a key on the title and the endings. Checked in Chromium's
+  phone emulation; a real phone is still for the Safari and iPhone pass.
 - ~~**An installable app.**~~ Done: `public/manifest.webmanifest` (standalone, the page's colours)
   and icons made at build time from Freedoom's status bar face (`scripts/icons.mjs`: 192, 512, a
   maskable 512, the apple-touch-icon and a favicon), all in the offline shell.

@@ -1303,6 +1303,19 @@ the menus, repeating every 5 tics up and down and every 2 left and right. Button
 button 1 is Backspace. On the title any button opens the menu (`G_Responder`), so a game can
 start without touching the keyboard. A second stick has no part in it: DOOM's joystick had one.
 
+On a phone or tablet the view gets touch controls (`src/touch.js`), shown once the page is touched
+or wherever the pointer is a finger. In play the left half is a move pad: it centres where your thumb
+lands, and how far you slide says how fast you go, running past one and a half times its ring. The
+right half turns as you drag it, and a tap there fires once. Down the right edge are **FIRE** (held,
+as the fire key), **USE**, **WPN** (the next weapon), **MAP** (the automap) and **☰** (the menu). In
+the menus the buttons are the arrows, **OK** and back (↩), and on the title or an ending a tap is a
+key. DOOM had no touch screen, so these give only what its keys give. **WPN** presses the number key
+of the next slot that has a weapon, so the fist's slot still brings up the chainsaw and the shotgun's
+the super shotgun, as `P_PlayerThink` chooses (Chocolate Doom's own next-weapon key does the same).
+To the simulation a touch game is a keyboard game, demos and netgames included. `npm run test:browser`
+plays one in an emulated phone (Chromium): a tap opens the menu, **OK** starts a game, the pad walks,
+**FIRE** held fires, **WPN** brings up the shotgun, **MAP** opens the automap and **☰** the menu.
+
 ### Command line
 
 DOOM took options on its command line (`D_DoomMain`'s `M_CheckParm`); the page takes the same ones
@@ -1362,7 +1375,8 @@ test:browser` runs one locally. All three play both tests through. That covers:
 - two pages in co-op and deathmatch over a real WebRTC link, with chat, pause and a netgame save.
 
 Not covered: Safari itself on macOS and iOS (WebKit on Linux is close to it, not the same), pointer lock
-(a headless page can't take it, so the test moves `doom.mouse` directly), a real gamepad, and touch.
+(a headless page can't take it, so the test moves `doom.mouse` directly), a real gamepad, and a real
+touch screen (the browser test's phone is Chromium's emulation).
 The matrix found one bug, now fixed: a WebKit data channel on its way down can still say it's open and
 then throw on a send, and it reports that as a page error even when the page catches it. So a failed send
 now ends the netgame the way a closed link does, and a player who leaves hangs up properly: they send their

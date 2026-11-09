@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchBrowser, browserName } from './launch-browser.mjs';
 import { MouseInput, moveCommand, mouseRate, MOUSEX_RAD } from '../src/mouse.js';
+import { stickCommand, nextWeaponSlot, touchMode, STICK_RADIUS } from '../src/touch.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failures = 0;
@@ -69,6 +70,22 @@ const assert = (c, m) => { console.log(`${c ? 'ok  ' : 'FAIL'} ${m}`); if (!c) f
   const c3 = moveCommand(100, -100, 0);
   assert(c1.fwd === 1 && c1.run === 1 && c2.fwd === 0.4 && c2.run === 0 && c3.fwd === 1 && c3.side === -1 && c3.run === 1,
     'past walking speed the ticcmd says running, and it all clamps to MAXPLMOVE (50)');
+}
+
+// touch.js before the page: the move pad's slide, the next weapon's key, which controls show where
+{
+  const half = stickCommand(0, -STICK_RADIUS / 2);
+  const full = stickCommand(STICK_RADIUS * 3, 0);
+  const diag = stickCommand(-STICK_RADIUS, STICK_RADIUS);
+  assert(half.fwd === 0.5 && half.side === 0 && !half.run && full.side === 1 && full.fwd === 0 && full.run === 1
+    && diag.fwd === -1 && diag.side === -1 && diag.run === 0,
+    `the move pad: half a radius up walks at half (${half.fwd}), past 1.5 radii it runs, a corner walks back and left`);
+  const has = { HAS_SHOTGUN: 1, HAS_SSG: 0, HAS_CHAINGUN: 0, HAS_LAUNCHER: 1, HAS_PLASMA: 0, HAS_BFG: 0 };
+  const seq = [2, 3, 5, 8, 9].map((w) => nextWeaponSlot({ ...has, WEAPON: w }));
+  assert(JSON.stringify(seq) === JSON.stringify([3, 5, 1, 2, 5]),
+    `the next weapon is the next slot that has one: from the pistol 3, the shotgun 5, the launcher round to 1, the chainsaw (slot 1) 2, the super shotgun (slot 3) 5 (${seq})`);
+  assert(touchMode({ menu: true, title: true }) === 'menu' && touchMode({ title: true }) === 'screen' && touchMode({ intermission: true }) === 'screen'
+    && touchMode({}) === 'play', 'the controls: the menu\'s over anything, a tap on the title or between levels, the pads and buttons in play');
 }
 
 const port = await new Promise((resolve) => {
@@ -539,6 +556,73 @@ try {
     assert(td.frames > 20 && td.tics >= td.frames && td.fps > 0 && td.ms > 0 && /Timedemo: \d+ game tics/.test(td.status),
       `?timedemo=demo1: ${td.tics} tics in ${td.frames} frames, ${td.fps} frames a second ("${td.status}")`);
     await p2.close();
+  }
+
+  // touch controls (touch.js) in an emulated phone: the overlay shows, a tap on the title opens the
+  // menu, its buttons start a game; the move pad walks, FIRE held fires, WPN changes weapon, MAP
+  // opens the automap, ☰ the menu. (Real touches through Chromium's DevTools input: Chromium only.)
+  if (browserName === 'chromium') {
+    const ctx = await browser.newContext({ viewport: { width: 900, height: 700 }, hasTouch: true, isMobile: true });
+    const p6 = await ctx.newPage();
+    p6.on('pageerror', (e) => errors.push(e.message));
+    await load(p6, `http://localhost:${port}/?nomusic`, () => window.doom?.title && window.doom.screen === 'title');
+    const cdp = await ctx.newCDPSession(p6);
+    const touchAt = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], i) => ({ x, y, id: i })) });
+    // (scrolled into view first, as a thumb would: the view can be taller than the window)
+    const centre = (sel) => p6.evaluate((s) => {
+      const el = document.querySelector(s);
+      el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      const r = el.getBoundingClientRect();
+      return [r.x + r.width / 2, r.y + r.height / 2];
+    }, sel);
+    const tap = async (xy) => { await touchAt('touchStart', [xy]); await touchAt('touchEnd', []); await p6.waitForTimeout(200); };
+    const button = (name) => centre(`.touch-button[data-touch="${name}"]`);
+    const state = () => p6.evaluate(() => ({ ...window.doom.touch, menu: window.doom.menu.active, screen: window.doom.screen }));
+    const view = await centre('#screen');
+    await p6.waitForFunction(() => window.doom.touch.shown && window.doom.touch.mode === 'screen', null, { timeout: 30000 });
+    const t0 = await state();
+    await tap(view);
+    await p6.waitForFunction(() => window.doom.menu.active && window.doom.touch.mode === 'menu', null, { timeout: 30000 });
+    // (New Game, the episode, the skill: OK three times, with a pause for each menu)
+    for (let i = 0; i < 3; i++) { await tap(await button('Enter')); await p6.waitForTimeout(300); }
+    await p6.waitForFunction(() => window.doom.screen === 'level' && window.doom.settled && window.doom.touch.mode === 'play', null, { timeout: 120000, polling: 100 });
+    await p6.evaluate(() => window.doom.sql("UPDATE things SET hp = 0, st = 'dead', state = NULL, state_tic = NULL, solid = 0 WHERE kind = 'monster'"));
+    const where = () => p6.evaluate(() => window.doom.sql("SELECT t.x, t.y, t.angle, p.bullets, p.weapon, p.pending_weapon FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 1").then((r) => r[0]));
+    const tic6 = () => p6.evaluate(() => window.doom.sql('SELECT tic FROM game').then((r) => r[0].TIC));
+    // the move pad: a thumb on the left half, slid up a full radius, held for 12 tics
+    const a = await where();
+    const pad = [view[0] - 200, view[1] + 60];
+    await touchAt('touchStart', [pad]);
+    await touchAt('touchMove', [[pad[0], pad[1] - 45]]);
+    const padShown = (await state()).pad;
+    await waitTics(12, tic6);
+    await touchAt('touchEnd', []);
+    await waitTics(4, tic6);
+    const b = await where();
+    const walked = (b.X - a.X) * Math.cos(a.ANGLE) + (b.Y - a.Y) * Math.sin(a.ANGLE);
+    // FIRE held for 20 tics: the pistol, again and again
+    const fire = await button('fire');
+    await touchAt('touchStart', [fire]);
+    const held = (await state()).fire;
+    await waitTics(20, tic6);
+    await touchAt('touchEnd', []);
+    await waitTics(4, tic6);
+    const c = await where();
+    // WPN: with a shotgun given, the next slot's key (3)
+    await p6.evaluate(() => window.doom.sql('UPDATE player SET has_shotgun = 1, shells = 20 WHERE id = 1'));
+    await waitTics(3, tic6);   // (WPN reads the HUD's row, which the next tic brings)
+    await tap(await button('weapon'));
+    await waitTics(4, tic6);
+    const d = await where();
+    await tap(await button('map'));
+    const mapOpen = await p6.evaluate(() => window.doom.automap.open);
+    await tap(await button('map'));
+    await tap(await button('menu'));
+    const s3 = await state();
+    assert(t0.shown && t0.mode === 'screen' && padShown && walked > 8 && held && b.BULLETS - c.BULLETS >= 2
+      && (d.WEAPON === 3 || d.PENDING_WEAPON === 3) && mapOpen && s3.menu && s3.mode === 'menu',
+      `touch: the controls show on a touch screen; a tap on the title opens the menu and OK starts a game; the move pad walks (${walked.toFixed(0)} units), FIRE held fires (${b.BULLETS - c.BULLETS} bullets), WPN takes the shotgun (${d.WEAPON}, pending ${d.PENDING_WEAPON}), MAP opens the automap, ☰ the menu`);
+    await ctx.close();
   }
 
   // a gamepad as DOOM's joystick: a button on the title opens the menu, the stick and button 0

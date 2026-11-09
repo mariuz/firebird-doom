@@ -31,6 +31,7 @@ import { Chat, chatStrings, HU_MSGTIMEOUT } from './chat.js';
 import { MouseInput, moveCommand } from './mouse.js';
 import { parseCommandLine, startMapFor } from './cmdline.js';
 import { readJoystick, JoyMenu, JOYB } from './gamepad.js';
+import { TouchOverlay, stickCommand, nextWeaponSlot, touchMode } from './touch.js';
 import { ACTIONS, keysFrom, bindKey, actionDown, boundCodes, keyName, reservedKey } from './keys.js';
 
 const $ = (id) => document.getElementById(id);
@@ -626,9 +627,26 @@ window.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement === canvas) mouse.move(e.movementX, e.movementY, settings.mouse);
 });
 
-// Touch: left half moves, right half turns, tap on the right fires.
+// Touch (touch.js): the left half is a move pad, the right half turns, a tap on the right fires;
+// the overlay's buttons fire (held), use, change weapon, open the map and the menu, and work
+// the menus. A tap on the title or an ending is a key.
 const touch = { move: null, look: null };
+let touchFire = false;
+/** a key as the keyboard sends it, down and up (the menus, the map, the title read keys) */
+function synthKey(key) {
+  for (const type of ['keydown', 'keyup']) window.dispatchEvent(new KeyboardEvent(type, { key, code: key, bubbles: true }));
+}
+const touchUI = new TouchOverlay(document.querySelector('.screen-wrap'), (name, down) => {
+  if (name === 'fire') touchFire = down;
+  else if (name === 'use') keys.add('TapUse');
+  else if (name === 'weapon') { if (hud) weaponSel = nextWeaponSlot(hud); }
+  else if (name === 'map') synthKey('Tab');
+  else if (name === 'menu') synthKey('Escape');
+  else synthKey(name);   // (the menu's: arrows, Enter, Backspace)
+});
+if (window.matchMedia?.('(pointer: coarse)').matches) touchUI.show();
 function touchStart(e) {
+  touchUI.show();
   for (const t of e.changedTouches) {
     const r = canvas.getBoundingClientRect();
     const left = t.clientX - r.left < r.width / 2;
@@ -645,6 +663,7 @@ function touchMove(e) {
         if (k === 'look') mouseTurn -= (t.clientX - rec.x - rec.dx) * 0.01;
         rec.dx = t.clientX - rec.x;
         rec.dy = t.clientY - rec.y;
+        if (k === 'move') touchUI.showPad(rec);
       }
     }
   }
@@ -655,8 +674,12 @@ function touchEnd(e) {
     for (const k of ['move', 'look']) {
       const rec = touch[k];
       if (rec && rec.id === t.identifier) {
-        if (k === 'look' && Math.abs(rec.dx) < 10 && performance.now() - rec.t < 250) fireClick = 'tap';
-        if (k === 'move' && Math.abs(rec.dx) < 10 && Math.abs(rec.dy) < 10 && performance.now() - rec.t < 250) keys.add('TapUse');
+        const tap = Math.abs(rec.dx) < 10 && Math.abs(rec.dy) < 10 && performance.now() - rec.t < 250;
+        // (the title and the endings take a tap as a key: the menu opens, the text goes on)
+        if (tap && touchUI.mode === 'screen' && !intermission) synthKey('Enter');
+        else if (k === 'look' && tap) fireClick = 'tap';
+        else if (k === 'move' && tap) keys.add('TapUse');
+        if (k === 'move') touchUI.showPad(null);
         touch[k] = null;
       }
     }
@@ -702,8 +725,10 @@ function readInput(tics) {
     if (js.buttons[JOYB.speed]) run = 1;
   }
   if (touch.move) {
-    fwd = Math.max(-1, Math.min(1, -touch.move.dy / 40));
-    side = Math.max(-1, Math.min(1, touch.move.dx / 40));
+    const st = stickCommand(touch.move.dx, touch.move.dy);
+    fwd = st.fwd;
+    side = st.side;
+    if (st.run) run = 1;
   }
   // G_BuildTiccmd's mouse: button 2 held strafes (the turn keys too), button 3
   // moves forward, a double click on either uses; the X turns or strafes, the Y
@@ -719,7 +744,7 @@ function readInput(tics) {
   // angleturn 640/1280 per tic in DOOM ≈ 0.061 / 0.123 rad
   const turn = turnKeys * (run ? 0.123 : 0.07) * tics + mouseTurn + m.turn;
   mouseTurn = 0;
-  const fire = on('fire') || fireClick || m.fire || js?.buttons[JOYB.fire] ? 1 : 0;
+  const fire = on('fire') || fireClick || touchFire || m.fire || js?.buttons[JOYB.fire] ? 1 : 0;
   if (fireClick === 'tap') fireClick = false;
   const use = on('use') || k('TapUse') || m.use || js?.buttons[JOYB.use] ? 1 : 0;
   keys.delete('TapUse');
@@ -1270,6 +1295,7 @@ function joystickScreens() {
 async function frameNow() {
   frames++;
   joystickScreens();
+  if (touchUI.shown) touchUI.setMode(touchMode({ menu: !!menu?.active, title: !!title, intermission: !!intermission, finale: !!finale }));
   if (!running || document.hidden || (paused && !menu?.active)) {
     lastTic = performance.now();
     nextFrame();
@@ -1854,6 +1880,7 @@ async function boot() {
       get gamma() { return settings.gamma; },
       get options() { return { checked: { ...launchOptions }, game: { ...gameOptions } }; },
       get keys() { return JSON.parse(JSON.stringify(bindings)); },
+      get touch() { return { shown: touchUI.shown, mode: touchUI.mode, fire: touchFire, pad: !touchUI.pad.hidden }; },
       get timedemo() { return timedemo && { ...timedemo }; },
       get commandLine() { return commandLine; },
       // the mouse, for tests: DOM-style moves and buttons, as under pointer lock
