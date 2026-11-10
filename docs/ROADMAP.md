@@ -28,11 +28,6 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   The co-op test reloads such a page once, with a warning.
 - **Safari itself, pointer lock and touch** (Tooling): Firefox and WebKit are in CI now; a manual
   pass on a Mac and an iPhone would cover what headless engines can't.
-- **DOOM's frame tables** (Simulation): *Done.* `info.c`'s states (`states[]`, each frame's sprite,
-  tics, action and next state) in a table every thing and weapon steps through, as DOOM's do;
-  DEHACKED Frame, Pointer and Weapon patches apply. It was the biggest gap to vanilla, done in
-  seven phases (under **Simulation** below: *DOOM's frame tables, in phases*). The old per-mode
-  rules are gone.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
   tables above (done) and DOOM's fixed-point physics, bit for bit. What stands in the way is in the
   README (*Simplifications*, "What's still not vanilla"): doubles and radians for 16.16 and BAMs
@@ -44,7 +39,20 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   and its thinkers' order, L4, the monsters' sight and walk, L5, the attacks, and L6, the world,
   L7, playing them on the page, L8, netgames, and L9, netgames through a level's end, are done.
   Left: someone with id's WADs running `WAD=/path/to/doom.wad npm run test:lmp` against their
-  demos.
+  demos, and the code no fixture reaches yet (next item).
+- **Demos for the code no demo reaches** (Simulation): some rarer monster attacks (the revenant's
+  homing missile, the arch-vile's fire and raise, the mancubus's spread, the pain elemental's
+  souls) and the boss brain still do their sums in doubles and may draw `P_Random` in another
+  order. New `.lmp` fixtures on maps that have them, recorded against the oracle
+  (`npm run lmp-fixtures`), would show where they part from vanilla, then fix each in 16.16.
+- **No body for a player who left** (Multiplayer): at a new level a netgame player who is out
+  still gets a body on their start; vanilla's `G_DoLoadLevel` spawns only the players in the game
+  (`playeringame`). The one deviation rejoining brought in.
+- **Playwright past 1.56** (Tooling): the pinned 1.56 keeps CI on `ubuntu-24.04` (on 26.04 it
+  installs no browsers) and needs `CHROMIUM=` in this container; a newer one would let both go.
+- **Host migration** (Multiplayer; not vanilla, ask first): every command goes through the host,
+  so the host leaving ends the game for everyone. Another peer could take over from the last tic
+  all agreed on.
 - **Drawing off the main thread** (Rendering): the renderer and presenter in a Worker with an
   OffscreenCanvas, so input, sound and the page stay responsive when frames are slow (the browser
   test saw 3 frames a second with every test running beside it). The engine's ~17 ms of wall work
@@ -61,6 +69,13 @@ Everything else below is done.
 
 ## Game flow and menus
 
+- ~~**The keys as `G_BuildTiccmd`'s.**~~ Done (`src/ticcmd.js`): `sidemove`'s 24 (40 running) for a
+  strafe, `angleturn`'s 320 for the first five tics a turn key is held (`turnheld`, `SLOWTURNTICS`),
+  then 640 (1280), and the keys, the stick and the mouse summed before `MAXPLMOVE`; the turn
+  was 0.07 radians a tic before (vanilla's 640 is 0.0614).
+- ~~**DOOM's frame tables.**~~ Done in seven phases (under **Simulation**: *DOOM's frame tables, in
+  phases*): `info.c`'s states in a table every thing and weapon steps through, DEHACKED Frame,
+  Pointer and Weapon patches applying.
 - ~~**Rejoining a netgame.**~~ Done: a guest who leaves is out (`D_QuitNetGame`: their body stays,
   `PLAYER.IN_GAME` 0, monsters and `A_BossDeath` pass them by) and the rest play on. Not vanilla:
   the host can invite them back, sending the game at its last tic as a save, and the lockstep

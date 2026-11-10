@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { FirebirdBrowser, DirectTransport } from 'firebird-wasm/browser';
 import { Wad } from '../src/wad.js';
 import { createSchema, loadResources, loadMap } from '../src/loader.js';
+import { buildMove, TurnHeld, ANGLETURN } from '../src/ticcmd.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
@@ -1563,6 +1564,42 @@ if (slimeMap) {
     assert(!blocked && on.MSG === 'No Clipping Mode ON' && through && off.MSG === 'No Clipping Mode OFF' && !blockedAgain,
       `IDCLIP: line ${spot.l.ID} stops you (${!blocked}), with no clipping you walk through it (${through}), and then it stops you again (${!blockedAgain})`);
   } else console.log('(no wall to walk through)');
+}
+
+// ── the page's keys as G_BuildTiccmd's (ticcmd.js) through DOOM_TIC ─────
+// angleturn 320 for the first five tics a turn key is held, then 640 (1280 running); sidemove 24
+// (40 running) to forwardmove's 25 (50): the player turns by exactly those BAMs and thrusts by them
+{
+  await loadMap(db, wad, res, maps[0], { nomonsters: 1 });
+  const bam = async () => Number((await one(`SELECT bam_of(angle) a FROM things WHERE kind = 'player'`)).A);
+  const held = new TurnHeld();
+  const turns = [];
+  for (const [speed, n] of [[0, 7], [1, 2]]) {
+    for (let i = 0; i < n; i++) {
+      const c = buildMove({ keys: { fwd: 0, side: 0, turn: 1 }, speed, turnheld: held });
+      const a0 = await bam();
+      await db.query('SELECT * FROM doom_tic(1, ?, ?, ?, 0, 0, 0, ?)', [c.fwd, c.side, c.turn, c.run]);
+      turns.push(((await bam()) - a0 + 2 ** 32) % 2 ** 32 / 65536);
+    }
+  }
+  const tap = buildMove({ keys: { fwd: 0, side: 0, turn: 0 }, turnheld: held });   // (let go: turnheld starts over)
+  const again = buildMove({ keys: { fwd: 0, side: 0, turn: -1 }, speed: 1, turnheld: held });
+  assert(turns.join() === '320,320,320,320,320,640,640,1280,1280' && tap.turn === 0 && Math.abs(again.turn + 320 * 2 * Math.PI / 65536) < 1e-15,
+    `a turn key held: angleturn ${turns.join(', ')} (${ANGLETURN[2]} for SLOWTURNTICS' first five, then ${ANGLETURN[0]}, running ${ANGLETURN[1]}), and slow again after a let-go, running or not`);
+  // the thrust a tic of each, from standing (P_Thrust's forwardmove × 2048, then friction alike)
+  const push = async (keys, speed) => {
+    await db.exec(`UPDATE things SET momx = 0, momy = 0, angle = 0 WHERE kind = 'player'`);
+    const c = buildMove({ keys, speed, turnheld: new TurnHeld() });
+    await db.query('SELECT * FROM doom_tic(1, ?, ?, ?, 0, 0, 0, ?)', [c.fwd, c.side, c.turn, c.run]);
+    const p = await one(`SELECT momx, momy FROM things WHERE kind = 'player'`);
+    return Math.hypot(p.MOMX, p.MOMY);
+  };
+  const w = [await push({ fwd: 1, side: 0, turn: 0 }, 0), await push({ fwd: 0, side: 1, turn: 0 }, 0)];
+  const r = [await push({ fwd: 1, side: 0, turn: 0 }, 1), await push({ fwd: 0, side: 1, turn: 0 }, 1)];
+  const both = buildMove({ keys: { fwd: 1, side: 1, turn: -1 }, joy: { x: 0, y: -1 }, strafe: true, turnheld: new TurnHeld() });
+  assert(Math.abs(w[1] / w[0] - 24 / 25) < 2e-3 && Math.abs(r[1] / r[0] - 40 / 50) < 2e-3 && Math.abs(r[0] / w[0] - 2) < 2e-3
+    && both.fwd === 1 && both.run === 1 && Math.abs(both.side - 48 / 50) < 1e-12,
+    `a strafe is sidemove's 24 to forwardmove's 25 (${(w[1] / w[0] * 25).toFixed(2)}), running 40 to 50 (${(r[1] / r[0] * 50).toFixed(2)}); the keys and the stick add up before MAXPLMOVE (forward 25 + 25, a strafe key and a turn key strafing 24 + 24)`);
 }
 
 await db.close();

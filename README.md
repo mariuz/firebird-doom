@@ -1308,6 +1308,15 @@ weapon digits, the function keys, `-`, `=`, P, M and T. With the automap open, i
 G, M, C, 0, and the arrows while it pans) are its alone. The bindings are remembered in the
 browser (`src/keys.js`).
 
+What the keys give is `G_BuildTiccmd`'s, unit for unit (`src/ticcmd.js`). Forward and back move
+25 a tic (`forwardmove`), 50 running; a strafe is 24, 40 running (`sidemove`: a little slower
+than walking, as in DOOM). A turn key turns 320 a tic (in 65536ths of a circle) for the first five
+tics it's held (`turnheld` under `SLOWTURNTICS`), so a tap turns a hair, then 640, or 1280
+running. The keys, the gamepad and the mouse add up before the clamp to `MAXPLMOVE`: forward on
+the keys and the stick together is a run. The touch pad's full slide is the move keys' worth.
+`npm run test:physics` turns and strafes the player through `DOOM_TIC` with them and checks every
+angle and thrust.
+
 A gamepad is DOOM's joystick (`src/gamepad.js`, through the browser's Gamepad API). Vanilla read
 one stick as on or off each way, and so does this: the left stick past halfway, or the d-pad.
 Up and down walk, and left and right turn. Its buttons 0 to 3 are `default.cfg`'s: fire
@@ -1472,8 +1481,6 @@ What's still not vanilla (docs/ROADMAP.md):
   `finesine` table (the sector heights stay doubles, exact at DOOM's speeds). Code the demos
   haven't reached yet – some rarer monster attacks, the boss brain – still does its sums in
   doubles and may draw `P_Random` in another order.
-- **Keys:** the page's own keys aren't quite `G_BuildTiccmd`'s: a strafe is 25 (50 running)
-  rather than 24 (40), and the turn keys have no slow start.
 - **id's own demos:** nobody has played them against vanilla here: the repo can't hold id's WADs
   (`WAD=` above).
 Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods

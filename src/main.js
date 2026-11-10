@@ -28,7 +28,8 @@ import { createPresenter } from './present.js';
 import { Melt } from './wipe.js';
 import { Lockstep, createInvite, acceptInvite, relayClient, isRoomCode, MAX_PLAYERS, SPECIAL_PAUSE, SPECIAL_SAVE } from './net.js';
 import { Chat, chatStrings, HU_MSGTIMEOUT } from './chat.js';
-import { MouseInput, moveCommand } from './mouse.js';
+import { MouseInput } from './mouse.js';
+import { buildMove, TurnHeld } from './ticcmd.js';
 import { parseCommandLine, startMapFor } from './cmdline.js';
 import { readJoystick, JoyMenu, JOYB } from './gamepad.js';
 import { TouchOverlay, stickCommand, nextWeaponSlot, touchMode } from './touch.js';
@@ -143,6 +144,7 @@ function setStatus(msg, isError = false) {
 
 // ── input ────────────────────────────────────────────────────────────────
 const keys = new Set();
+const turnheld = new TurnHeld();      // (G_BuildTiccmd's turnheld: the turn keys' slow start)
 let mouseTurn = 0;                   // (touch: the right half's drag)
 let fireClick = false;               // (touch: a tap on the right half)
 const mouse = new MouseInput();      // the mouse under pointer lock: its moves and DOOM's three buttons
@@ -712,37 +714,31 @@ function readInput(tics) {
   // the bound keys (keys.js); the automap keeps its own keys while it's open
   const skip = (c) => (panning && c.startsWith('Arrow')) || (showMap && AM_KEYS.has(c));
   const on = (a) => actionDown(bindings, a, keys, skip);
-  let fwd = (on('forward') ? 1 : 0) - (on('back') ? 1 : 0);
-  let side = (on('straferight') ? 1 : 0) - (on('strafeleft') ? 1 : 0);
-  let turnKeys = (on('left') ? 1 : 0) - (on('right') ? 1 : 0);
-  let run = on('speed') ? 1 : 0;
+  const keyMove = {
+    fwd: (on('forward') ? 1 : 0) - (on('back') ? 1 : 0),
+    side: (on('straferight') ? 1 : 0) - (on('strafeleft') ? 1 : 0),
+    turn: (on('left') ? 1 : 0) - (on('right') ? 1 : 0),
+  };
+  let speed = on('speed') ? 1 : 0;
   const strafeKey = on('strafe');
   // G_BuildTiccmd's joystick (gamepad.js): Y walks, X turns – or strafes while
   // joybstrafe is held – and its buttons fire, use and run, as the keys do
   const js = readJoystick(gamepads());
-  if (js) {
-    fwd = Math.max(-1, Math.min(1, fwd - js.y));
-    if (js.buttons[JOYB.speed]) run = 1;
-  }
-  if (touch.move) {
-    const st = stickCommand(touch.move.dx, touch.move.dy);
-    fwd = st.fwd;
-    side = st.side;
-    if (st.run) run = 1;
-  }
+  if (js?.buttons[JOYB.speed]) speed = 1;
+  const pad = touch.move ? stickCommand(touch.move.dx, touch.move.dy) : null;
+  if (pad?.run) speed = 1;
   // G_BuildTiccmd's mouse: button 2 held strafes (the turn keys too), button 3
   // moves forward, a double click on either uses; the X turns or strafes, the Y
-  // (if chosen) walks. Then forward and side clamp to MAXPLMOVE
-  const m = mouse.take(tics, { run, mousey: settings.mousey, strafe: strafeKey });
-  // (strafe = key_strafe || mousebuttons[mousebstrafe] || joybuttons[joybstrafe]: any of
-  // them turns the turn keys and the stick's X into strafing)
-  if (m.strafe || js?.buttons[JOYB.strafe]) {
-    side = Math.max(-1, Math.min(1, side - turnKeys + (js?.x ?? 0)));
-    turnKeys = 0;
-  } else if (js?.x) turnKeys = Math.max(-1, Math.min(1, turnKeys - js.x));
-  if (m.forward || m.side) ({ fwd, side, run } = moveCommand(fwd * (run ? 50 : 25) + m.forward, side * (run ? 50 : 25) + m.side, run));
-  // angleturn 640/1280 per tic in DOOM ≈ 0.061 / 0.123 rad
-  const turn = turnKeys * (run ? 0.123 : 0.07) * tics + mouseTurn + m.turn;
+  // (if chosen) walks
+  const m = mouse.take(tics, { run: speed, mousey: settings.mousey, strafe: strafeKey });
+  // then everything summed in DOOM's units and clamped to MAXPLMOVE (ticcmd.js): strafe =
+  // key_strafe || mousebuttons[mousebstrafe] || joybuttons[joybstrafe], any of them turning the
+  // turn keys and the stick's X into sidemove; the turn keys slow for their first tics (turnheld)
+  const { fwd, side, run, turn: turned } = buildMove({
+    keys: keyMove, joy: js, pad, mouse: m, strafe: m.strafe || !!js?.buttons[JOYB.strafe], speed, tics, turnheld,
+    held: on('left') || on('right') || !!js?.x,
+  });
+  const turn = turned + mouseTurn;
   mouseTurn = 0;
   const fire = on('fire') || fireClick || touchFire || m.fire || js?.buttons[JOYB.fire] ? 1 : 0;
   if (fireClick === 'tap') fireClick = false;

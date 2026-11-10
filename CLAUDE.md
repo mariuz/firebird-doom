@@ -188,7 +188,7 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 | DOOM's frame tables (states) | `src/states.js` (GPL-2, generated), the `states` table, `SET_STATE` / `STATE_ACTION` / `STATES_THINK` in `sql/game.sql`; the phases in `docs/ROADMAP.md` (Simulation) |
 | DeHackEd, rules a patch can change | `src/dehacked.js`, the `RULES` table (SQL reads it instead of hard-coding those numbers) |
 | Demos | `src/demo.js`; recording and playback in `main.js` (`startRecording`, `playDemo`, the frame loop); the title loop's in `scripts/record-attract.mjs` (`startAttract` in `main.js`) |
-| Keys, mouse, gamepad | `readInput` in `main.js`, reading `src/keys.js` (the bindings), `src/mouse.js`, `src/gamepad.js` |
+| Keys, mouse, gamepad | `readInput` in `main.js`, reading `src/keys.js` (the bindings), `src/mouse.js`, `src/gamepad.js`; `src/ticcmd.js` sums them as `G_BuildTiccmd` (sidemove, turnheld) |
 | Netgame chat | `src/chat.js` (`hu_stuff.c`'s responder, queue and ticker); the `chatchar` rides as the ticcmd's 8th field in `netTics` |
 | Title screen, menus, options | `src/menu.js`; the actions (new game, settings) are wired in `main.js`'s `makeMenu` |
 | Previewing screens in the browser | `doom.finale('E3M8')`, `doom.intermission('E2M3', 'E2M4')` in the console |
