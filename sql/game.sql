@@ -3001,7 +3001,12 @@ RETURNS (ok SMALLINT)
 AS
 BEGIN
   ok = 1;
-  SELECT c.ok FROM check_position_fx(:old, fx_of(:sx), fx_of(:sy), fx_of((SELECT t.radius FROM things t WHERE t.id = :old)), 0) c INTO ok;
+  -- (G_CheckSpot with no body, players[playernum].mo NULL: clear unless a player stands on the
+  -- very spot – here a netgame player coming back to a level they had no body on)
+  IF (old IS NULL) THEN
+    ok = IIF(EXISTS (SELECT 1 FROM things t WHERE t.kind = 'player' AND t.x = :sx AND t.y = :sy), 0, 1);
+  ELSE
+    SELECT c.ok FROM check_position_fx(:old, fx_of(:sx), fx_of(:sy), fx_of((SELECT t.radius FROM things t WHERE t.id = :old)), 0) c INTO ok;
   SUSPEND;
 END^
 
@@ -7738,6 +7743,8 @@ BEGIN
   -- P_SpawnMapThing starts it partway into its spawn state (1 + P_Random() % tics); a player's
   -- start draws for its P_SpawnMobj where it lies among them (not in deathmatch: those come
   -- after). P_SpawnMobj gives each mobjinfo's reaction time (8; on Nightmare none).
+  -- (a new game has everyone in it: playeringame as D_CheckNetGame sets it)
+  IF (new_game = 1) THEN UPDATE player p SET in_game = 1;
   FOR SELECT m.id, m.ttype, t.id, tt.spawn_state, s.tics, tt.reaction_time, tt.on_states
         FROM map_things m
         LEFT JOIN things t ON t.mthing = m.id
@@ -7749,7 +7756,9 @@ BEGIN
   BEGIN
     IF (stid IS NULL) THEN
     BEGIN
-      IF (mtype BETWEEN 1 AND 4 AND mtype <= np AND dm = 0) THEN lastlook = p_rand256();
+      -- (P_SpawnMapThing: a start of a player not in the game spawns nothing, draws nothing)
+      IF (mtype BETWEEN 1 AND 4 AND mtype <= np AND dm = 0
+          AND NOT EXISTS (SELECT 1 FROM player p WHERE p.id = :mtype AND p.in_game = 0)) THEN lastlook = p_rand256();
       CONTINUE;
     END
     lastlook = MOD(p_rand256(), 4);
@@ -7770,10 +7779,18 @@ BEGIN
   END
 
   -- P_SpawnPlayer: each player at their own start (types 1–4); without one,
-  -- beside player 1's. In deathmatch, each at a deathmatch start, at random.
+  -- beside player 1's. In deathmatch, each at a deathmatch start, at random. Only the players
+  -- in the game (playeringame): one who left a netgame gets no body (and no draw for one) until
+  -- they come back (NET_TIC reborns them then).
   i = 1;
   WHILE (i <= np) DO
   BEGIN
+    IF (EXISTS (SELECT 1 FROM player p WHERE p.id = :i AND p.in_game = 0)) THEN
+    BEGIN
+      UPDATE player p SET thing_id = NULL WHERE p.id = :i;
+      i = i + 1;
+      CONTINUE;
+    END
     px = NULL;
     pstart = NULL;
     IF (dm > 0) THEN SELECT d.sx, d.sy, d.sa FROM deathmatch_spot(:i, NULL) d INTO px, py, pa;
@@ -7879,7 +7896,9 @@ BEGIN
      SET keycards = IIF(:dm > 0, 7, 0), kills = 0, items = 0, secrets = 0, dead = 0,
          damage_count = 0, bonus_count = 0, view_h = 41, delta_vh = 0, use_down = 0, invis_tics = 0, invuln_tics = 0, iron_tics = 0, infra_tics = 0, strength_tics = 0, allmap = 0,
          msg = :map_name, msg_tics = 105;
-  UPDATE player p SET view_z = (SELECT z FROM things t WHERE t.id = p.thing_id) + 41;
+  UPDATE player p SET view_z = (SELECT z FROM things t WHERE t.id = p.thing_id) + 41 WHERE p.thing_id IS NOT NULL;
+  -- (a player out of the game is PST_REBORN for when they come back)
+  UPDATE player p SET dead = 2 WHERE p.in_game = 0;
   -- P_SpawnPlayer's P_SetupPsprites: every level starts with the weapon coming up
   FOR SELECT p.id FROM player p ORDER BY p.id INTO i
   DO

@@ -36,10 +36,16 @@ const DM_VICTIMSX = 5;
 const DM_VICTIMSY = 50;
 export const WI_MAXPLAYERS = 4;
 
-/** WI_fragSum: player I's frags, their own deaths by their own hand taken off */
+/** playeringame[i] for the screens: a player who left a netgame is out (inGame false) */
+export const inGame = (p) => p?.inGame !== false;
+
+/** WI_fragSum: player I's frags of the players in the game, their own deaths by their own hand taken off */
 export function fragSum(players, i) {
   let sum = 0;
-  for (let j = 0; j < players.length; j++) sum += j === i ? -players[i].frags[j] : players[i].frags[j];
+  for (let j = 0; j < players.length; j++) {
+    if (j === i) sum -= players[i].frags[j];
+    else if (inGame(players[j])) sum += players[i].frags[j];
+  }
   return sum;
 }
 
@@ -263,7 +269,7 @@ export class NetgameState extends WiState {
       kills: pct(p.kills, stats.totalKills), items: pct(p.items, stats.totalItems),
       secret: pct(p.secrets, stats.totalSecrets), frags: fragSum(stats.players, i),
     }));
-    this.dofrags = this.final.some((f) => f.frags !== 0);
+    this.dofrags = this.final.some((f, i) => inGame(stats.players[i]) && f.frags !== 0);
     this.cnt = this.final.map(() => ({ kills: 0, items: 0, secret: 0, frags: 0 }));
     this.ng = 1;            // ng_state: odd = pause, 2/4/6 = kills/items/secrets, 8 = frags, 10 = all there
   }
@@ -279,6 +285,7 @@ export class NetgameState extends WiState {
       if (!(this.bcnt & 3)) this.sound('DSPISTOL');
       let ticking = false;
       this.cnt.forEach((c, i) => {
+        if (!inGame(this.players[i])) return;
         c[key] += step;
         if (c[key] >= this.final[i][key]) c[key] = this.final[i][key];
         else ticking = true;
@@ -337,13 +344,14 @@ export class DeathmatchState extends WiState {
       if (!(this.bcnt & 3)) this.sound('DSPISTOL');
       let ticking = false;
       this.frags.forEach((row, i) => {
+        if (!inGame(this.players[i])) return;
         row.forEach((v, j) => {
-          if (v !== this.final[i][j]) {
+          if (inGame(this.players[j]) && v !== this.final[i][j]) {
             row[j] = this.clamp(this.final[i][j] < 0 ? v - 1 : v + 1);
             ticking = true;
           }
         });
-        this.totals[i] = this.clamp(fragSum(this.frags.map((f) => ({ frags: f })), i));
+        this.totals[i] = this.clamp(fragSum(this.frags.map((f, k) => ({ frags: f, inGame: inGame(this.players[k]) })), i));
       });
       if (!ticking) {
         this.sound('DSBAREXP');
@@ -441,7 +449,8 @@ export class Intermission {
     if (s.dofrags) title(this.pic('WIFRGS'), 4);
     const pw = this.pic('WIPCNT')?.w ?? 0;
     let y = NG_STATSY + (kills?.h ?? 0);
-    s.players.forEach((_, i) => {
+    s.players.forEach((pl, i) => {
+      if (!inGame(pl)) return;
       const p = this.pic(`STPB${i}`);
       let x = x0;
       if (p) r.patch(p, x - p.w, y);
@@ -471,8 +480,8 @@ export class Intermission {
     const bstar = this.pic('STFDEAD0');
     let x = DM_MATRIXX + DM_SPACINGX;
     let y = DM_MATRIXY;
-    s.players.forEach((_, i) => {
-      const p = this.pic(`STPB${i}`);
+    s.players.forEach((pl, i) => {
+      const p = inGame(pl) ? this.pic(`STPB${i}`) : null;
       if (p) {
         const half = Math.floor(p.w / 2);
         r.patch(p, x - half, DM_MATRIXY - WI_SPACINGY);
@@ -487,13 +496,15 @@ export class Intermission {
     });
     const w = this.pic('WINUM0')?.w ?? 0;
     y = DM_MATRIXY + 10;
-    s.players.forEach((_, i) => {
+    s.players.forEach((pl, i) => {
       x = DM_MATRIXX + DM_SPACINGX;
-      s.players.forEach((__, j) => {
-        this.num(x + w, y, s.frags[i][j], 2);
-        x += DM_SPACINGX;
-      });
-      this.num(DM_TOTALSX + w, y, s.totals[i], 2);
+      if (inGame(pl)) {
+        s.players.forEach((pj, j) => {
+          if (inGame(pj)) this.num(x + w, y, s.frags[i][j], 2);
+          x += DM_SPACINGX;
+        });
+        this.num(DM_TOTALSX + w, y, s.totals[i], 2);
+      }
       y += WI_SPACINGY;
     });
   }

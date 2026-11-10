@@ -358,6 +358,26 @@ assert(a === b, `two players' 120 tics of commands, played twice from the same s
   await db.exec('UPDATE player SET health = 100 WHERE id = 1');
   assert(in1.every((r) => r.IN_GAME === 1) && in2[0].IN_GAME === 1 && in2[1].IN_GAME === 0 && lookOut === 0 && lookIn === 2,
     `a player with no command this tic is out of the game (in_game ${in2.map((r) => r.IN_GAME)}): P_LookForPlayers passes them by (${lookOut}), and finds them again once back (${lookIn})`);
+  // the next level with player 2 out (G_DoLoadLevel, P_SpawnMapThing: playeringame): no body, and
+  // no P_SpawnMobj draw for their start; PST_REBORN, so their first command brings them back at
+  // their start (G_DoReborn, G_CheckSpot with no body), with a pistol
+  const level = async (out) => {
+    await db.exec(`UPDATE player SET in_game = ${out ? 0 : 1} WHERE id = 2`);
+    await loadMap(db, wad, res, map, { skill: 3, players: 2, newGame: false, seed: 0 });
+    return Number((await one('SELECT rng FROM game WHERE id = 1')).RNG);
+  };
+  const rngIn = await level(false);
+  const rngOut = await level(true);
+  const p2 = await one('SELECT thing_id, dead, in_game FROM player WHERE id = 2');
+  const bodies = Number((await one("SELECT COUNT(*) n FROM things WHERE kind = 'player'")).N);
+  await tic([IDLE]);
+  const still = await one('SELECT thing_id, dead FROM player WHERE id = 2');
+  await tic([IDLE, IDLE]);
+  const back = await one('SELECT p.dead, p.in_game, p.weapon, p.health, t.x, t.y FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = 2');
+  const start2 = await one('SELECT FIRST 1 x, y FROM map_things WHERE ttype = 2 ORDER BY id DESC');
+  assert(rngIn - rngOut === 1 && p2.THING_ID === null && p2.DEAD === 2 && bodies === 1 && still.THING_ID === null
+    && back?.DEAD === 0 && back.IN_GAME === 1 && back.WEAPON === 2 && back.X === start2.X && back.Y === start2.Y,
+    `a level loaded with player 2 out: no body (${bodies} player thing), one draw fewer (P_Random's index ${rngOut}, ${rngIn} with them in), and still none while they send nothing; their first command brings them in at their start with the pistol (${back && `${back.X}, ${back.Y}, weapon ${back.WEAPON}`})`);
 }
 
 // ── deathmatch ──

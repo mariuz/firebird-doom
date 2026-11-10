@@ -45,9 +45,6 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   souls) and the boss brain still do their sums in doubles and may draw `P_Random` in another
   order. New `.lmp` fixtures on maps that have them, recorded against the oracle
   (`npm run lmp-fixtures`), would show where they part from vanilla, then fix each in 16.16.
-- **No body for a player who left** (Multiplayer): at a new level a netgame player who is out
-  still gets a body on their start; vanilla's `G_DoLoadLevel` spawns only the players in the game
-  (`playeringame`). The one deviation rejoining brought in.
 - **Playwright past 1.56** (Tooling): the pinned 1.56 keeps CI on `ubuntu-24.04` (on 26.04 it
   installs no browsers) and needs `CHROMIUM=` in this container; a newer one would let both go.
 - **Host migration** (Multiplayer; not vanilla, ask first): every command goes through the host,
@@ -79,7 +76,9 @@ Everything else below is done.
 - ~~**Rejoining a netgame.**~~ Done: a guest who leaves is out (`D_QuitNetGame`: their body stays,
   `PLAYER.IN_GAME` 0, monsters and `A_BossDeath` pass them by) and the rest play on. Not vanilla:
   the host can invite them back, sending the game at its last tic as a save, and the lockstep
-  goes on from there. An out player still gets a body at a new level (vanilla: none).
+  goes on from there. At a new level an out player gets no body and no draw for their start
+  (`P_SpawnMapThing`), and the intermission passes them by (`WI_fragSum`, the screens' loops);
+  coming back there, they're reborn at their start.
 - ~~**Pause and save in a netgame.**~~ Done: the ticcmd's ninth value is `BT_SPECIAL`
   (`SPECIAL_PAUSE`, or `SPECIAL_SAVE` + the slot, in `net.js`), with no fire, use or weapon change
   that tic; `netTics` acts on it as `G_Ticker` does. A pause stops the world on every peer while

@@ -962,9 +962,9 @@ const NETGAME_SAVE = 'NETGAME';
 /** WI_Start's wbs->plyr[]: every player's kills, items, secrets and frags, for the netgame screens */
 async function netStats() {
   const arr = { rowMode: 'array' };
-  const rows = (await db.query('SELECT p.id, p.kills, p.items, p.secrets FROM player p ORDER BY p.id', [], arr)).rows;
+  const rows = (await db.query('SELECT p.id, p.kills, p.items, p.secrets, p.in_game FROM player p ORDER BY p.id', [], arr)).rows;
   const frags = (await db.query('SELECT killer, victim, n FROM frags', [], arr)).rows;
-  const players = rows.map((r) => ({ kills: r[1], items: r[2], secrets: r[3], frags: rows.map(() => 0) }));
+  const players = rows.map((r) => ({ kills: r[1], items: r[2], secrets: r[3], inGame: r[4] === 1, frags: rows.map(() => 0) }));
   for (const [k, v, n] of frags) if (players[k - 1] && v <= players.length) players[k - 1].frags[v - 1] = n;
   const ng = net ?? demoNet;
   return { players, me: ng.me, deathmatch: ng.deathmatch };

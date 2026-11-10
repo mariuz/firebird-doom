@@ -117,6 +117,32 @@ assert(s2.stage === 'next', 'and another press moves on');
     && at('STPB0').join(' ') === '77,35 37,68' && at('STPB2').join(' ') === '157,35 37,134' && at('STFDEAD0')[0] === '77,35' && at('STFST01')[0] === '37,68'
     && at('WINUM2')[0] === '122,78' && at('WINUM1').includes('269,78'),
     `deathmatch's screen: killers down the side, victims along the top, each player's face both ways (the dead one over your column), the matrix 40 apart (player 1's 2 kills of player 2 at ${at('WINUM2')[0]}), the totals at 269`);
+
+  // player 2 left the netgame (playeringame false): WI_fragSum counts no frags of them, the counts
+  // pass them by, co-op's screen has no row for them (player 3's moves up), deathmatch's leaves
+  // their face and their row and column of the matrix empty
+  const out = players.map((p, i) => (i === 1 ? { ...p, inGame: false } : p));
+  const outSums = out.map((_, i) => fragSum(out, i));
+  const ngo = new NetgameState({ ...stats, totalKills: 20, totalItems: 20, totalSecrets: 4, players: out, me: 0 }, false, () => {});
+  t = 0;
+  while (ngo.ng !== 10 && t++ < 2000) ngo.tick(false);
+  const dmo = new DeathmatchState({ players: out, me: 0 }, false, () => {});
+  t = 0;
+  while (dmo.dm !== 4 && t++ < 2000) dmo.tick(false);
+  assert(outSums[0] === -1 && outSums[2] === 1 && ngo.cnt[1].kills === 0 && ngo.cnt[1].items === 0 && ngo.cnt[2].kills === 100 && ngo.dofrags
+    && dmo.frags.map((r) => r.join('')).join(' ') === '100 000 100' && dmo.totals.join() === '-1,0,1',
+    `with player 2 out: frag sums ${outSums[0]} and ${outSums[2]} (their 2 frags of player 2 don't count), player 2's counts stay at 0, the matrix without them (${dmo.frags.map((r) => r.join(' ')).join(' | ')})`);
+  calls.length = 0;
+  const wo = new Intermission(stub, audio, { lump: () => null }, 'MAP02', 'MAP03', { ...stats, players: out, me: 0 });
+  for (let i = 0; i < 400; i++) wo.tick(false);
+  wo.draw();
+  const coopOut = [at('STPB0')[0], at('STPB1').length, at('STPB2')[0]];
+  calls.length = 0;
+  const wdo = new Intermission(stub, audio, { lump: () => null }, 'E1M1', 'E1M2', { ...stats, players: out, me: 0, deathmatch: 1 });
+  for (let i = 0; i < 400; i++) wdo.tick(false);
+  wdo.draw();
+  assert(coopOut.join() === '27,60,0,27,93' && at('STPB1').length === 0 && at('STPB2').join(' ') === '157,35 37,134' && !at('WINUM2').includes('122,78'),
+    `drawn without them: co-op's rows player 1 then player 3 at ${coopOut[2]} (player 2's place), deathmatch's faces and numbers for players 1 and 3 where they stand`);
 }
 
 // DOOM II: no episode map, a moment of "Entering", then on; nothing to count is 0%

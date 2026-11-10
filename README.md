@@ -965,8 +965,11 @@ had started). The host's panel offers **Invite player 2 back**: the host holds i
 one it has sent run, and sends that game as a save at that tic in the start message, the way a
 netgame starts from a save; the returning player restores it and the lockstep goes on from the next
 tic with them in it. The host can't leave this way, as every command goes through it: the host
-leaving ends the game for all. One difference from vanilla: at a new level a player who is out
-still gets a body on their start, where vanilla spawns only the players in the game.
+leaving ends the game for all. At a new level a player who is out gets no body and no random
+draw for their start (`P_SpawnMapThing` passes over a player not in the game), and the
+intermission leaves them out too: co-op's screen has no row for them, deathmatch's matrix no
+numbers, and nobody's frags of them count (`WI_fragSum`). If they come back there, they start at
+their own start with the pistol, as a player reborn does (`G_DoReborn`).
 `npm run test:netgame` plays two players in one database, two peers through a
 pretend network that delivers late and out of order, and four peers through the host. `npm run test:coop` connects two real pages
 over WebRTC, with the codes swapped through the panel, and plays them in lockstep through a level
