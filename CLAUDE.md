@@ -28,6 +28,7 @@ npm run test:demo      # determinism (and without WAD=)
 npm run test:attract       # the title loop's demos (public/demos/) replay to their checksums; npm run attract records them
 npm run test:dehacked      # DeHackEd patches
 npm run test:lmp           # .lmp demos: the format, and how long the port keeps step with vanilla (a ratchet: -- --update)
+LMP_SHARD=2/4 npm run test:lmp    # only one share of the demos (test:all runs four side by side; --part=lmp on CI)
 WAD=~/doom.wad npm run test:lmp   # …and the WAD's own DEMO1–4 against the oracle's traces of them (PWAD= adds files)
 npm run oracle             # vanilla as a reference: Chocolate Doom built headless into oracle-build/ (needs SDL2 -dev packages)
 npm run lmp-fixtures       # the .lmp fixtures and vanilla's trace of each (needs the oracle); -- NAME … for only those
@@ -55,7 +56,7 @@ npm run screenshots        # regenerates docs/screenshot-*.png and docs/screensh
 ```
 
 Before every commit, run `npm run test:all`: the smoke test, weapons/specials/physics on **both** WADs, finale,
-intermission, menu, automap, light, statusbar, sound, music, dehacked, pwad, and savegame, demo and netgame (both WADs), attract, the visual test, the renderers, the build, the browser test and the co-op test, as many at once as there are cores (about 9 minutes here; one after another it was 25). Each test's output is in `test-logs/`; `npm run test:all -- music pwad` runs only those. A change that
+intermission, menu, automap, light, statusbar, sound, music, dehacked, pwad, and savegame, demo and netgame (both WADs), attract, the visual test, the renderers, the build, the browser test and the co-op test, as many at once as there are cores, the `.lmp` demos in four shares (about 7 minutes here; one after another it is 26). Each test's output is in `test-logs/`; `npm run test:all -- music pwad` runs only those. A change that
 means to alter what's drawn fails the visual test: look at `screenshots-diff/`, then run `npm run
 screenshots` and commit `docs/`. A change to the simulation fails the attract test: run `npm run
 attract` and commit `public/demos/`. All of them must pass; CI runs the same set.

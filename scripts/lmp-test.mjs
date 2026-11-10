@@ -9,6 +9,11 @@
 // demo and every field compared, the first tic the port differs mustn't come earlier than
 // scripts/fixtures/lmp/baseline.json says. When a change brings the port closer, the test says
 // so: `npm run test:lmp -- --update` writes the new baseline.
+//
+// LMP_SHARD=i/n plays only the i-th of n shares of the demos (test-all runs four side by side):
+// the demos go to the shares by their length in the baseline, longest first to the lightest.
+// The checks on a demo run in its share; the rest run in every share, the WAD's own demos in the
+// first. --update with a share writes that share's demos into the baseline and keeps the others.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,14 +61,30 @@ const dir = path.join(root, 'scripts/fixtures/lmp');
 const basePath = path.join(dir, 'baseline.json');
 const update = process.argv.includes('--update');
 const baseline = fs.existsSync(basePath) ? JSON.parse(fs.readFileSync(basePath, 'utf8')) : {};
+const [shard, shards] = (process.env.LMP_SHARD ?? '1/1').split('/').map(Number);
+if (!(shards >= 1 && shard >= 1 && shard <= shards)) throw new Error(`LMP_SHARD=${process.env.LMP_SHARD}: i/n, 1 ≤ i ≤ n`);
+const NAMES = fs.readdirSync(dir).filter((f) => f.endsWith('.lmp')).sort().map((f) => f.replace(/\.lmp$/, ''));
+const SHARE = new Map();
+{
+  const load = Array(shards).fill(0);
+  const cost = (n) => (baseline[n]?.tics ?? 2100) + (fs.existsSync(path.join(dir, `${n}.mobjs`)) ? 500 : 0);
+  for (const n of [...NAMES].sort((a, b) => cost(b) - cost(a) || (a < b ? -1 : 1))) {
+    const i = load.indexOf(Math.min(...load));
+    SHARE.set(n, i + 1);
+    load[i] += cost(n);
+  }
+}
+/** whether demo NAME is played in this share */
+const mine = (name) => SHARE.get(name) === shard;
+if (shards > 1) console.log(`(share ${shard} of ${shards}: ${NAMES.filter(mine).join(', ')})`);
 const sql = Object.fromEntries(['schema', 'game', 'render'].map((n) => [n, fs.readFileSync(path.join(root, `sql/${n}.sql`), 'utf8')]));
 const db = new FirebirdBrowser('memory://lmp', { transport: new DirectTransport({ threads: false }) });
 await createSchema(db, sql);
 const wads = new Map();
 const results = {};
 let better = 0;
-for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.lmp')).sort()) {
-  const name = file.replace(/\.lmp$/, '');
+for (const name of NAMES.filter(mine)) {
+  const file = `${name}.lmp`;
   const demo = parseLmp(fs.readFileSync(path.join(dir, file)));
   const trace = parseTrace(fs.readFileSync(path.join(dir, `${name}.trace`), 'utf8'));
   const wadFile = name.startsWith('map') ? 'freedoom2.wad' : 'freedoom1.wad';
@@ -105,6 +126,7 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.lmp')).sort())
 const ALLOWED = {};
 for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.mobjs')).sort()) {
   const name = file.replace(/\.mobjs$/, '');
+  if (!mine(name)) continue;
   const demo = parseLmp(fs.readFileSync(path.join(dir, `${name}.lmp`)));
   const van = parseMobjs(fs.readFileSync(path.join(dir, file), 'utf8'));
   const wadFile = name.startsWith('map') ? 'freedoom2.wad' : 'freedoom1.wad';
@@ -133,7 +155,7 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.mobjs')).sort(
 
 // phase L4: the monsters' sight and walk – zombiemen see the player come into view and chase,
 // and every column of the trace agrees with vanilla's to the end
-{
+if (mine('e1m1-wake')) {
   const w = results['e1m1-wake'];
   const off = w ? FIELDS.filter((f) => w.first[f] !== null) : ['no e1m1-wake'];
   assert(w && off.length === 0, `the monsters in fixed point: on e1m1-wake they wake, chase and stay in step with vanilla for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
@@ -144,7 +166,7 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.mobjs')).sort(
 // and the level restarted; the missiles (P_SpawnMissile, their flight through P_TryMove and
 // PIT_CheckThing), the lost souls' charge, a barrel's blast, pickups as a move touches them: the
 // scripted shots, the barrel and the title demos agree in every column to the end.
-for (const name of ['e1m1-shoot', 'e1m1-walk', 'e1m2-barrel', 'e1m1-attract', 'e1m2-attract', 'map01-attract', 'map02-attract', 'map03-attract', 'map04-attract']) {
+for (const name of ['e1m1-shoot', 'e1m1-walk', 'e1m2-barrel', 'e1m1-attract', 'e1m2-attract', 'map01-attract', 'map02-attract', 'map03-attract', 'map04-attract'].filter(mine)) {
   const w = results[name];
   const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
   assert(w && off.length === 0, `the attacks in fixed point: ${name} stays in step with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
@@ -154,7 +176,7 @@ for (const name of ['e1m1-shoot', 'e1m1-walk', 'e1m2-barrel', 'e1m1-attract', 'e
 // P_ChangeSector over the sector's blocks: a door closing on someone goes back up, what rides a lift
 // rides it, a corpse is crunched), the blocks' things in DOOM's order (blocklinks: the newest moved
 // first), sector specials, deaths and restarts: ten bot walks of 2100 tics, each in step to the end
-for (const name of ['e1m3-attract', 'e1m1-bot', 'e1m2-bot', 'e1m3-bot', 'e1m4-bot', 'e1m5-bot', 'map01-bot', 'map02-bot', 'map03-bot', 'map04-bot', 'map05-bot']) {
+for (const name of ['e1m3-attract', 'e1m1-bot', 'e1m2-bot', 'e1m3-bot', 'e1m4-bot', 'e1m5-bot', 'map01-bot', 'map02-bot', 'map03-bot', 'map04-bot', 'map05-bot'].filter(mine)) {
   const w = results[name];
   const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
   assert(w && off.length === 0, `the world in step: ${name} agrees with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
@@ -163,7 +185,7 @@ for (const name of ['e1m3-attract', 'e1m1-bot', 'e1m2-bot', 'e1m3-bot', 'e1m4-bo
 // phase L6: through a level's end – an exit walked over (a PWAD of Freedoom's map: EXIT_PWADS), the
 // intermission's tics as WI_Ticker spends them (fire pressed hurries it on, the press and not the
 // hold), the next level loaded as G_DoWorldDone loads it, the player carried over: in step to the end
-for (const [name, next] of [['e1m1-exit', 'E1M2'], ['map01-exit', 'MAP02']]) {
+for (const [name, next] of [['e1m1-exit', 'E1M2'], ['map01-exit', 'MAP02']].filter(([n]) => mine(n))) {
   const w = results[name];
   const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
   assert(w && off.length === 0 && w.map === next && w.unplayed === 0,
@@ -175,7 +197,7 @@ for (const [name, next] of [['e1m1-exit', 'E1M2'], ['map01-exit', 'MAP02']]) {
 // but the keys), and three players in -altdeath for half a minute (deaths, G_DoReborn at the next
 // tic's start through G_CheckSpot, the teleport fog where vanilla's DOS build put it): in step
 // with vanilla in every column to the end
-for (const name of ['e1m1-coop', 'map01-coop', 'e1m1-dm', 'e1m1-altdeath']) {
+for (const name of ['e1m1-coop', 'map01-coop', 'e1m1-dm', 'e1m1-altdeath'].filter(mine)) {
   const w = results[name];
   const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
   assert(w && off.length === 0 && w.unplayed === 0,
@@ -185,7 +207,7 @@ for (const name of ['e1m1-coop', 'map01-coop', 'e1m1-dm', 'e1m1-altdeath']) {
 // phase L9: netgames through a level's end – the netgame and deathmatch screens' tics as
 // WI_updateNetgameStats and WI_updateDeathmatchStats spend them, hurried on by any player's new
 // press; the next map for everyone, a dead player reborn there, the wounded keeping their health
-for (const [name, next] of [['e1m1-coop-exit', 'E1M2'], ['e1m1-dm-exit', 'E1M2'], ['map01-coop-exit', 'MAP02'], ['e1m1-altdeath-exit', 'E1M2']]) {
+for (const [name, next] of [['e1m1-coop-exit', 'E1M2'], ['e1m1-dm-exit', 'E1M2'], ['map01-coop-exit', 'MAP02'], ['e1m1-altdeath-exit', 'E1M2']].filter(([n]) => mine(n))) {
   const w = results[name];
   const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
   assert(w && off.length === 0 && w.map === next && w.unplayed === 0,
@@ -193,7 +215,7 @@ for (const [name, next] of [['e1m1-coop-exit', 'E1M2'], ['e1m1-dm-exit', 'E1M2']
 }
 
 // phase L2: the scripted walk (turns, runs, strafes, a wall) keeps the player in step all the way
-assert(results['e1m1-walk']?.synced === results['e1m1-walk']?.tics,
+if (mine('e1m1-walk')) assert(results['e1m1-walk']?.synced === results['e1m1-walk']?.tics,
   `the player in fixed point: the scripted walk on E1M1 stays in step with vanilla for all ${results['e1m1-walk']?.tics} tics (${results['e1m1-walk']?.synced})`);
 
 // ── DOOM's fixed point in SQL (m_fixed.c, tables.c, p_maputl.c, r_main.c), and the BLOCKMAP ──
@@ -222,7 +244,8 @@ assert(results['e1m1-walk']?.synced === results['e1m1-walk']?.tics,
 }
 
 if (update) {
-  fs.writeFileSync(basePath, `${JSON.stringify(results, null, 2)}\n`);
+  const whole = shards > 1 ? Object.fromEntries(NAMES.filter((n) => results[n] || baseline[n]).map((n) => [n, results[n] ?? baseline[n]])) : results;
+  fs.writeFileSync(basePath, `${JSON.stringify(whole, null, 2)}\n`);
   console.log(`(wrote ${path.relative(root, basePath)})`);
 } else if (better) {
   console.log(`(${better} demo(s) closer to vanilla than the baseline: npm run test:lmp -- --update to keep it)`);
@@ -260,10 +283,10 @@ if (update) {
 // of it – the oracle's, made here (npm run oracle first) – through deaths and level ends, every
 // column in step to its end ──
 {
-  const w = wadFromEnv();
+  const w = shard === 1 ? wadFromEnv() : null;
   const extra = (process.env.PWAD ?? '').split(path.delimiter).filter(Boolean).map((p) => path.resolve(p));
   const oracle = process.env.ORACLE ?? path.join(root, 'oracle-build/build/src/chocolate-doom');
-  if (!w) console.log("(WAD= not set: a WAD's own demos aren't played; WAD=/path/to/doom.wad npm run test:lmp plays id's)");
+  if (!w && shard > 1) { /* (a WAD's own demos: in the first share) */ } else if (!w) console.log("(WAD= not set: a WAD's own demos aren't played; WAD=/path/to/doom.wad npm run test:lmp plays id's)");
   else if (!fs.existsSync(oracle)) console.log(`(WAD=${w.name}: no oracle at ${oracle} to make vanilla's traces – npm run oracle first)`);
   else {
     const wad = extra.length ? new Wad(fs.readFileSync(w.path), ...extra.map((p) => fs.readFileSync(p))) : w.wad;

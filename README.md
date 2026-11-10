@@ -815,6 +815,8 @@ measured against vanilla itself:
   vanilla's trace of each, in `scripts/fixtures/lmp/`.
 - **The ratchet:** `npm run test:lmp` plays them in the port and reports the first tic each
   quantity differs. A change may bring the port closer, never further (`baseline.json`).
+  `LMP_SHARD=2/4` plays only the second of four shares of the demos, balanced by their length;
+  `npm run test:all` runs the four side by side (two minutes here, against seven and a half alone).
 - **Random numbers (phase L1, done):** `P_Random` is DOOM's table and index. As the map is set up
   the port draws what vanilla draws, in its order: each thing's `P_SpawnMobj`, the random tics
   `P_SpawnMapThing` starts it with, the player's start, then the flashing and strobing lights'
@@ -1362,8 +1364,9 @@ map the WAD hasn't got, is said in the status line. `src/cmdline.js` reads them.
 
 [.github/workflows/pages.yml](.github/workflows/pages.yml) runs on every push to `main`. It
 installs, fetches and caches Freedoom, and runs every test with `npm run test:all`
-([scripts/test-all.mjs](scripts/test-all.mjs)), in three jobs side by side: the SQL tests four at a time
-(`--part=sql`), and each browser test on a runner of its own (`--part=browser`, `--part=coop`). The SQL tests are the smoke test,
+([scripts/test-all.mjs](scripts/test-all.mjs)), in four jobs side by side: the SQL tests four at a time
+(`--part=sql`), the `.lmp` demos in four shares at a time (`--part=lmp`), and each browser test on a runner
+of its own (`--part=browser`, `--part=coop`). The SQL tests are the smoke test,
 weapons, specials, physics, saves, demos and the netgame on both WADs, the screens, menus, light, sound
 and music, and the BSP-vs-brute-force renderer check. `npm run test:visual` renders this README's
 pictures again and fails if a single pixel differs from `docs/screenshots.json`. The two browser tests

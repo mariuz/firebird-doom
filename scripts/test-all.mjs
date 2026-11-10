@@ -3,13 +3,15 @@
 //   npm run test:all              as many at once as there are cores
 //   JOBS=2 npm run test:all       or that many
 //   npm run test:all -- music pwad    only the tests whose names contain these
-//   npm run test:all -- --part=sql    all but the two browser tests (or --part=browser, --part=coop)
+//   npm run test:all -- --part=sql    all but the browser tests and the .lmp demos (or --part=lmp,
+//                                     --part=browser, --part=coop)
 //
 // Every SQL test opens its own in-memory database and the browser tests serve on
 // free ports, so they don't step on each other. The site is built once, first,
 // and the two browser tests serve that build (NO_BUILD=1) instead of each writing
 // dist/ again. The longest tests start first. Each one's output goes to
-// test-logs/<name>.log; a failure prints its end here, and the exit code is 1.
+// test-logs/<name>.log; a failure prints its end here, and the exit code is 1. The .lmp test,
+// the longest by far, goes as four shares of its demos side by side (LMP_SHARD).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -22,8 +24,10 @@ const npm = (script, env = {}, ...args) => ({ cmd: ['npm', 'run', '-s', script, 
 
 // [name, command, about how long it took with the others beside it here, in seconds]:
 // they start in this order, the longest first, so the short ones fill in at the end
+const LMP_SHARES = 4;
 const both = (t, sec) => [[t, npm(`test:${t}`), sec], [`${t} (Phase 2)`, npm(`test:${t}`, { WAD: F2 }), sec]];
 const TESTS = [
+  ...Array.from({ length: LMP_SHARES }, (_, i) => [`lmp ${i + 1}/${LMP_SHARES}`, npm('test:lmp', { LMP_SHARD: `${i + 1}/${LMP_SHARES}` }), 140]),
   ['coop', npm('test:coop', { NO_BUILD: '1' }), 460],
   ['browser', npm('test:browser', { NO_BUILD: '1' }), 500],
   ...both('physics', 60),
@@ -37,22 +41,22 @@ const TESTS = [
   ['smoke', npm('test'), 10],
   ['pwad', npm('test:pwad'), 10],
   ['dehacked', npm('test:dehacked'), 9],
-  ['lmp', npm('test:lmp'), 390],
   ...both('weapons', 6),
   ['relay', npm('test:relay'), 3],
   ...both('states', 5),
   ...['music', 'statusbar', 'light', 'sound', 'intermission', 'automap', 'finale', 'menu'].map((t) => [t, npm(`test:${t}`), 5]),
 ];
 
-// --part=sql|browser|coop: one share of the set (CI runs the three on runners of their own,
-// side by side: on a 4-core runner the browser tests are the slow ones, and slower still
-// beside the rest). Other arguments pick tests whose names contain them.
+// --part=sql|lmp|browser|coop: one share of the set (CI runs the four on runners of their own,
+// side by side: on a 4-core runner the browser tests and the .lmp demos are the slow ones, and
+// slower still beside the rest). Other arguments pick tests whose names contain them.
 const args = process.argv.slice(2);
 const part = args.find((a) => a.startsWith('--part='))?.slice(7);
 const only = args.filter((a) => !a.startsWith('--'));
-const PAGES = ['browser', 'coop'];
-if (part && !['sql', ...PAGES].includes(part)) throw new Error(`--part=${part}: sql, browser or coop`);
-const chosen = TESTS.filter(([name]) => (!part || (part === 'sql' ? !PAGES.includes(name) : name === part))
+const PARTS = ['browser', 'coop', 'lmp'];
+const partOf = (name) => PARTS.find((p) => name === p || name.startsWith(`${p} `)) ?? 'sql';
+if (part && !['sql', ...PARTS].includes(part)) throw new Error(`--part=${part}: sql, lmp, browser or coop`);
+const chosen = TESTS.filter(([name]) => (!part || partOf(name) === part)
   && (!only.length || only.some((o) => name.includes(o))));
 if (!chosen.length) { console.log(`no test matches ${args.join(' ')}`); process.exit(1); }
 const jobs = Math.max(1, Number(process.env.JOBS) || os.availableParallelism?.() || os.cpus().length);

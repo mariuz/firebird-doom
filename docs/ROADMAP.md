@@ -51,8 +51,6 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   doesn't shrink this way, but the page would stop waiting on it.
 - **A debug build of firebird-wasm** (Engine): an engine build with source maps and assertions,
   made in `mariuz/electric-firebird`, to find where the WebKit trap above happens.
-- **Splitting the browser test** (Tooling): it's the slowest CI job now (~4 minutes alone); two
-  halves on runners side by side (`--part=browser` in two) would bring CI to about 3.
 - **Rewind** (Showcase; not vanilla, ask first): the whole game is in tables, so a snapshot every
   second (as a save) would let a player step back in time, or open a past tic in the SQL console.
   Something only this port could do; DOOM never did it.
@@ -796,7 +794,10 @@ simulation over, and a yardstick measures how far into each demo the port stays 
   tests serve (`NO_BUILD=1`). About 9 minutes here against 25 one after another. CI runs it in
   three jobs side by side (`--part=sql|browser|coop`): in one job on a 4-core runner the browser
   tests took 12–16 minutes beside the rest, longer than the old steps one at a time. The
-  browser tests are the critical path; splitting the browser test itself would be the next step.
+  browser tests were the critical path, until the `.lmp` demos grew past them: alone they took 9
+  of the SQL job's 13½ minutes, starting last. Now they're four shares of their own
+  (`LMP_SHARD=i/n`, balanced by the demos' length) in a fourth job (`--part=lmp`), side by side,
+  so no job runs much past the browser test's four minutes.
 - ~~**A browser matrix.**~~ Done (`.github/workflows/browsers.yml`, `scripts/launch-browser.mjs`):
   the browser and co-op tests run in Firefox and WebKit as well as Chromium, all passing; the
   README's **Browsers** lists what that covers. It found WebKit throwing on a send over a
