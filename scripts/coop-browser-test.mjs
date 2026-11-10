@@ -292,7 +292,8 @@ try {
   await guest.evaluate(() => document.getElementById('net-leave').click());   // (the page reflows as it plays: no pointer)
   await until(host, () => /Out of it: player 2/.test(document.getElementById('net-status').textContent), null, 30000);
   const gone0 = await host.evaluate(() => window.doom.net.tic);
-  await host.waitForTimeout(1500);
+  // (eleven tics, however long they take: Firefox's frames on a CI runner are slow – 9 in 1.5 s once)
+  await until(host, (t) => window.doom.net?.tic > t + 10 || !!window.doom.net?.error, gone0, 30000).catch(() => {});
   const gone = await host.evaluate(async () => ({ tic: window.doom.net.tic, error: window.doom.net.error,
     in2: (await window.doom.sql('SELECT in_game FROM player WHERE id = 2'))[0].IN_GAME,
     invite: document.getElementById('net-host').textContent, can: !document.getElementById('net-host').disabled }));
