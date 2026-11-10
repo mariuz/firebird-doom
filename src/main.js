@@ -1948,7 +1948,7 @@ async function boot() {
       get commandLine() { return commandLine; },
       // the mouse, for tests: DOM-style moves and buttons, as under pointer lock
       mouse: { move: (dx, dy) => mouse.move(dx, dy, settings.mouse), button: (b, down) => mouse.button(b, down) },
-      get debug() { return { running, paused, frames, wallsReused, loopAlive, levelSerial, shownState, menu: !!menu?.active, melt: !!melt, keys: [...keys], mouseTurn, showMap, amFollow: amView?.follow, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, error: net.ls.error } }; },
+      get debug() { return { running, paused, frames, wallsReused, loopAlive, levelSerial, shownState, menu: !!menu?.active, melt: !!melt, keys: [...keys], mouseTurn, showMap, amFollow: amView?.follow, ls: net && { submitted: net.ls.submitted, executed: net.ls.executed, broadcast: net.ls.broadcast, ready: net.ls.ready.length, early: net.ls.early.size, pending: net.ls.pending.size, out: [...net.ls.out], seenOut: [...net.out], hold: net.ls.hold, error: net.ls.error } }; },
       get message() { return amMsg?.text ?? hud?.MSG ?? null; },
       get lastSaid() { return lastSaid; },
       get files() { return { base: baseWad?.label, pwads: pwads.map((p) => p.name), deh: dehPatch?.name ?? null }; },

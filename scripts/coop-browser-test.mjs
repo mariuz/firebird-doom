@@ -71,7 +71,12 @@ try {
     return page;
   };
   const [host, guest] = [await open('host'), await open('guest')];
-  const until = (page, fn, arg, timeout = 120000) => page.waitForFunction(fn, arg, { timeout, polling: 50 });
+  // (a wait that times out says where both pages were: the panel, the lockstep, the frame loop)
+  const until = (page, fn, arg, timeout = 120000) => page.waitForFunction(fn, arg, { timeout, polling: 50 }).catch(async (err) => {
+    const where = async (p) => p.evaluate(() => ({ net: document.getElementById('net-status')?.textContent, status: document.getElementById('status')?.textContent,
+      screen: window.doom?.screen, debug: window.doom?.debug })).catch((e) => e.message);
+    throw new Error(`${err.message.split('\n')[0]} waiting on the ${page === host ? 'host' : 'guest'} for ${String(fn).slice(0, 100)}; the host: ${JSON.stringify(await where(host))}; the guest: ${JSON.stringify(await where(guest))}`);
+  });
   const value = (page, id) => page.evaluate((i) => document.getElementById(i).value, id);
   const status = (page) => page.evaluate(() => document.getElementById('net-status').textContent);
 

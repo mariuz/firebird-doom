@@ -130,7 +130,8 @@ try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
   page.on('pageerror', (e) => errors.push(e.message));
   page.setDefaultTimeout(120000);
-  await page.goto(`http://localhost:${port}/`);
+  // (the first start too, with load's one reload: WebKit's trap has struck here on CI as well)
+  await load(page, `http://localhost:${port}/`, () => window.doom?.title);
   const doom = (fn, arg) => page.evaluate(fn, arg);
   // (a wait that times out says where the page was)
   const until = (fn, arg, timeout = 120000) => page.waitForFunction(fn, arg, { timeout, polling: 50 }).catch(async (err) => {

@@ -24,8 +24,15 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   borrow Freedoom Phase 1's text, as DOOM II's borrow Phase 2's.
 - **A WebAssembly trap in WebKit** (Engine): in a few co-op runs out of a dozen on CI, a page's engine stops
   with `Out of bounds memory access` while a second page starts; 30 paired starts didn't repeat it.
-  A source-mapped build of `firebird-embedded-st` would say where; it may be WebKit's or the engine's.
-  The co-op test reloads such a page once, with a warning.
+  It isn't only a second page: on 10 November the browser test's one page trapped the same way while
+  starting, before the title (a rerun passed). A source-mapped build of `firebird-embedded-st` would
+  say where; it may be WebKit's or the engine's. Both page tests reload such a page once, with a
+  warning.
+- **A co-op wait that timed out once** (Tooling): on 10 November (Chromium, CI) the co-op test's
+  host never said "Out of it: player 2" within 30 s after the guest left the deathmatch; a rerun
+  passed, and four runs here did too. The panel says it once the host runs a tic without player 2,
+  so either the goodbye was lost or the host's tics stopped. The test's waits now print both pages'
+  panel, lockstep (`doom.debug.ls`: out, broadcast, hold) and screen when they time out.
 - **Safari itself, pointer lock and touch** (Tooling): Firefox and WebKit are in CI now; a manual
   pass on a Mac and an iPhone would cover what headless engines can't.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
