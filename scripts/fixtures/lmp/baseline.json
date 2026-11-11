@@ -574,6 +574,29 @@
     },
     "map": "MAP01"
   },
+  "map01-doll": {
+    "tics": 517,
+    "synced": 517,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP01"
+  },
   "map01-exit": {
     "tics": 348,
     "synced": 348,

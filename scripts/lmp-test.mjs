@@ -228,6 +228,17 @@ for (const name of ['map01-revenant', 'map01-mancubus', 'map01-pain', 'map01-vil
     `the rarer monsters in step: ${name} agrees with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
 }
 
+// voodoo dolls (P_SpawnMapThing: a body at every start of a player's number, the last their own):
+// a doll at MAP01's start, the player at a second one – rockets at the doll hurt the player through
+// it and its death is theirs; the level again, the doll too; the pistol at it, a shot at a time,
+// nudging it onto a stimpack its player gets: in step with vanilla in every column to the end
+if (mine('map01-doll')) {
+  const w = results['map01-doll'];
+  const off = w ? FIELDS.filter((f) => w.first[f] !== null) : ['no map01-doll'];
+  assert(w && off.length === 0 && w.unplayed === 0,
+    `voodoo dolls in step: map01-doll agrees with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
+}
+
 // phase L2: the scripted walk (turns, runs, strafes, a wall) keeps the player in step all the way
 if (mine('e1m1-walk')) assert(results['e1m1-walk']?.synced === results['e1m1-walk']?.tics,
   `the player in fixed point: the scripted walk on E1M1 stays in step with vanilla for all ${results['e1m1-walk']?.tics} tics (${results['e1m1-walk']?.synced})`);

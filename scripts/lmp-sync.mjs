@@ -328,8 +328,11 @@ export const EXIT_PWADS = {
   'map01-spider': ['freedoom2.wad', 'MAP01', null, 0, [...ROCKETS, [448, -128, 180, 7]]],
   // MAP30 with the player's start (thing 73) moved to the walkway in front of the Icon of Sin,
   // facing it: its shooter sees them and wakes. (Moved, not added: a second start would leave a
-  // voodoo doll at the first, which the port doesn't spawn yet – docs/ROADMAP.md)
+  // voodoo doll at the first – map01-doll has one)
   'map30-icon': ['freedoom2.wad', 'MAP30', null, 0, [[-2208, 3000, 90, 1, 7, 73]]],
+  // MAP01 with a second player 1 start at the top of the stairs, facing back west: the first,
+  // the map's own, is a voodoo doll; a launcher just ahead, a stimpack just behind the doll
+  'map01-doll': ['freedoom2.wad', 'MAP01', null, 0, [[64, -192, 180, 1], [40, -192, 0, 2003], [40, -192, 0, 2046], [-232, -192, 0, 2011]]],
 };
 
 /** Load the demo's map in the port as the demo starts it (G_InitNew: skill, options; M_ClearRandom) */

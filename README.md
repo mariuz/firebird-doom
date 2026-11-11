@@ -907,6 +907,15 @@ measured against vanilla itself:
   blockmap as `PIT_VileCheck` does, its raised corpse with no target at all; the revenant's
   `A_Tracer` in BAMs and 16.16; and the Icon's cubes aimed as `P_SpawnMissile` aims, flying
   through walls with only the floor and ceiling under their centre.
+- **Voodoo dolls (done):** a map with two starts for one player gets a body at each, as vanilla's
+  `P_SpawnMapThing` spawns them: the last is the player's own, the others voodoo dolls, bodies of
+  the player's that stand where their starts are (`THINGS.DOLL_OF`). Whatever happens to a doll
+  happens to its player: a hit takes their health and armour (`P_DamageMobj`'s player half, the
+  doll keeping its own health), a doll's death is theirs, a doll pushed onto a pickup gives it to
+  them, a line it crosses is crossed for them. Some maps script with them. `map01-doll` puts one at
+  MAP01's start, the player at a second: rockets at it kill the player through it, the level starts
+  again with the doll, and pistol shots at it hurt the player a shot at a time and nudge it onto a
+  stimpack the player gets – in step with vanilla for all 517 tics.
 
 ### Co-op and deathmatch over the network
 
@@ -1495,9 +1504,6 @@ What's still not vanilla (docs/ROADMAP.md):
   `finesine` table (the sector heights stay doubles, exact at DOOM's speeds). Code the demos
   haven't reached yet may still do its sums in doubles and draw `P_Random` in another order;
   every monster's attacks, and the Icon of Sin's, have a demo now.
-- **Voodoo dolls:** a map with two starts for one player spawns a body at each in vanilla (the
-  extra ones "voodoo dolls", which pass what happens to them on to the player); the port spawns
-  only the last.
 - **id's own demos:** nobody has played them against vanilla here: the repo can't hold id's WADs
   (`WAD=` above).
 Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods

@@ -160,7 +160,8 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   T1,T2` sets every thinker beside vanilla's at those tics (`ORACLE_MOBJS`) and names the first
   thing that differs; vanilla's sectors per tic (`ORACLE_SECTORS`); `npm run lmp-rnglog` for who
   drew each random number. A monster no Freedoom map puts in reach goes in a PWAD fixture
-  (`EXIT_PWADS`' things). A second player start makes a voodoo doll in vanilla, not in the port.
+  (`EXIT_PWADS`' things). A second player start makes a voodoo doll (`THINGS.DOLL_OF`): a
+  `kind = 'player'` thing that isn't any `PLAYER.THING_ID`, so "the player's body" lookups miss it.
 - **`leveltime` is `TIC - 1` inside a tic:** `GAME.TIC` is counted up at the start of
   `DOOM_TIC`/`NET_TIC`, vanilla's `leveltime` at the end of `P_Ticker`. So a vanilla test of
   `leveltime & n` is `BIN_AND(tic - 1, n)` here (the floors' damage, the crushers, the

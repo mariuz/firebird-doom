@@ -914,8 +914,12 @@ BEGIN
 END^
 
 -- P_DamageMobj for a player: DMG from SRC (who did it; NULL: the world – crushers, slime),
--- by INFLICTOR (what hit: the shooter, a missile; NULL: nothing to be thrown back from)
-CREATE OR ALTER PROCEDURE damage_player (dmg INTEGER, src INTEGER = NULL, pid SMALLINT = 1, inflictor INTEGER = NULL)
+-- by INFLICTOR (what hit: the shooter, a missile; NULL: nothing to be thrown back from), to
+-- BODY: the player's own (NULL), or a voodoo doll of theirs (target->player). The player's
+-- health, armour, attacker and damage count take it either way; the body hit keeps its own
+-- health (target->health), and only its own running out kills – a doll's kills the player
+-- (P_KillMobj: playerstate PST_DEAD), the doll falling as a corpse, the player's body standing
+CREATE OR ALTER PROCEDURE damage_player (dmg INTEGER, src INTEGER = NULL, pid SMALLINT = 1, inflictor INTEGER = NULL, body INTEGER = NULL)
 AS
 DECLARE god SMALLINT;
 DECLARE hp INTEGER;
@@ -932,9 +936,11 @@ DECLARE sspec INTEGER;
 DECLARE thr INTEGER;
 DECLARE fkiller SMALLINT;
 BEGIN
-  SELECT p.armor, p.armor_type, p.dead, p.invuln_tics, p.god, p.thing_id, p.health,
+  -- (the player's own body: its health is the player's, as P_GiveBody and the cheats keep it; a
+  -- doll: its own)
+  SELECT p.armor, p.armor_type, IIF(:body IS NULL, p.dead, 0), p.invuln_tics, p.god, t.id, IIF(:body IS NULL, p.health, t.hp),
          (SELECT s.special FROM sectors s WHERE s.id = t.sector_id), t.threshold
-    FROM player p JOIN things t ON t.id = p.thing_id WHERE p.id = :pid
+    FROM player p JOIN things t ON t.id = COALESCE(:body, p.thing_id) WHERE p.id = :pid
     INTO arm, arm_type, is_dead, invuln, god, ptid, hp, sspec, thr;
   IF (ptid IS NULL) THEN EXIT;
   IF (is_dead > 0 OR hp <= 0 OR COALESCE(dmg, 0) <= 0) THEN EXIT;
@@ -1017,6 +1023,7 @@ END^
 -- INFLICTOR what hit it (thrown back from it; NULL: not thrown).
 CREATE OR ALTER PROCEDURE damage_thing (tid INTEGER, dmg INTEGER, src INTEGER = NULL, inflictor INTEGER = NULL)
 AS
+DECLARE doll SMALLINT;
 DECLARE k VARCHAR(10);
 DECLARE hp INTEGER;
 DECLARE st VARCHAR(8);
@@ -1043,6 +1050,14 @@ DECLARE spid SMALLINT;
 DECLARE skullfly INTEGER;
 DECLARE painroll INTEGER;
 BEGIN
+  -- (a voodoo doll: target->player, so P_DamageMobj's player half – its player takes it)
+  doll = NULL;
+  SELECT t.doll_of FROM things t WHERE t.id = :tid INTO doll;
+  IF (doll IS NOT NULL) THEN
+  BEGIN
+    EXECUTE PROCEDURE damage_player(dmg, src, doll, inflictor, tid);
+    EXIT;
+  END
   SELECT t.kind, t.hp, t.st, tt.pain_chance, tt.drop_type, tt.count_kill, t.thing_type,
          tt.hp, t.state, tt.spawn_state, tt.see_state, tt.pain_state, tt.death_state, tt.xdeath_state,
          BIN_AND(t.flags, 262144), t.threshold
@@ -1205,8 +1220,9 @@ BEGIN
        ORDER BY t.id
         INTO vid, vk
   DO
-    IF (vk = 'player') THEN EXECUTE PROCEDURE damage_player(10000, tid, (SELECT p.id FROM player p WHERE p.thing_id = :vid), tid);
-    ELSE EXECUTE PROCEDURE damage_thing(vid, 10000, IIF(:k = 'player', NULL, :tid), tid);
+    IF (vk = 'player' AND EXISTS (SELECT 1 FROM player p WHERE p.thing_id = :vid)) THEN
+      EXECUTE PROCEDURE damage_player(10000, tid, (SELECT p.id FROM player p WHERE p.thing_id = :vid), tid);
+    ELSE EXECUTE PROCEDURE damage_thing(vid, 10000, IIF(:k = 'player', NULL, :tid), tid);   -- (a doll too)
   sec = sector_at_fx(fx_of(dx), fx_of(dy));
   SELECT floor_h FROM sectors WHERE id = :sec INTO fz;
   UPDATE things t
@@ -2924,8 +2940,10 @@ BEGIN
     -- PIT_CheckThing over the blocks, column by column, each block's things newest-linked first:
     -- a pickup (MF_SPECIAL) a player's body touches (MF_PICKUP) – wherever a move tries, the move
     -- may yet fail; the first solid thing stops it, and what comes after isn't touched
+    -- (P_TouchSpecialThing: toucher->player – a voodoo doll's touch gives to its player)
     pid = NULL;
     SELECT p.id FROM player p WHERE p.thing_id = :tid INTO pid;
+    IF (pid IS NULL) THEN SELECT t.doll_of FROM things t WHERE t.id = :tid INTO pid;
     FOR SELECT t.id, t.kind, t.solid FROM things t
          WHERE t.x BETWEEN (:x - :rad) / 65536e0 - 160 AND (:x + :rad) / 65536e0 + 160
            AND (t.solid = 1 OR (t.kind = 'item' AND :pid IS NOT NULL)) AND t.id <> :tid
@@ -3556,7 +3574,8 @@ DECLARE side SMALLINT;
 DECLARE oldside SMALLINT;
 BEGIN
   SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z) FROM things t WHERE t.id = :tid INTO ox, oy, z;
-  SELECT p.noclip FROM player p WHERE p.id = :pid INTO noclip;
+  noclip = 0;
+  SELECT p.noclip FROM player p WHERE p.id = :pid AND p.thing_id = :tid INTO noclip;   -- (the body's: MF_NOCLIP)
   EXECUTE PROCEDURE check_position_fx(tid, x, y, 1048576, noclip) RETURNING_VALUES ok, fz, cz, dz, spec;
   IF (ok = 0) THEN EXIT;
   IF (noclip = 0 AND (cz - fz < 3670016 OR cz - z < 3670016 OR fz - z > 1572864)) THEN
@@ -3897,6 +3916,7 @@ END^
 -- ticcmd's), when a running body stands
 CREATE OR ALTER PROCEDURE xy_movement_fx (tid INTEGER, pid SMALLINT, cmd_fwd INTEGER, cmd_side INTEGER, tic INTEGER)
 AS
+DECLARE body INTEGER;
 DECLARE sfz BIGINT;
 DECLARE dead SMALLINT;
 DECLARE momx BIGINT;
@@ -3941,7 +3961,8 @@ BEGIN
     IF (xmove = 0 AND ymove = 0) THEN LEAVE;
   END
   SELECT fx_of(t.momx), fx_of(t.momy), fx_of(t.z), fx_of(t.floorz),
-         (SELECT fx_of(s.floor_h) FROM sectors s WHERE s.id = t.sector_id), (SELECT p.dead FROM player p WHERE p.id = :pid)
+         (SELECT fx_of(s.floor_h) FROM sectors s WHERE s.id = t.sector_id),
+         IIF(t.doll_of IS NULL, (SELECT p.dead FROM player p WHERE p.id = :pid), 1 - t.solid)   -- (a doll: its own MF_CORPSE)
     FROM things t WHERE t.id = :tid INTO momx, momy, z, fz, sfz, dead;
   IF (z > fz) THEN EXIT;                         -- (no friction in the air)
   -- (a dead player's body is a corpse (MF_CORPSE): with some speed left, it doesn't stop while
@@ -3949,9 +3970,12 @@ BEGIN
   IF (dead > 0 AND (momx > 16384 OR momx < -16384 OR momy > 16384 OR momy < -16384) AND fz <> sfz) THEN EXIT;
   IF (momx > -4096 AND momx < 4096 AND momy > -4096 AND momy < 4096 AND cmd_fwd = 0 AND cmd_side = 0) THEN
   BEGIN
+    -- (player->mo back to S_PLAY from a run frame: the body's, even when a voodoo doll stops)
+    body = NULL;
+    SELECT p.thing_id FROM player p WHERE p.id = :pid INTO body;
     IF (EXISTS (SELECT 1 FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-                 WHERE t.id = :tid AND t.state BETWEEN tt.see_state AND tt.see_state + 3)) THEN
-      EXECUTE PROCEDURE set_state(tid, (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1), tic)
+                 WHERE t.id = :body AND t.state BETWEEN tt.see_state AND tt.see_state + 3)) THEN
+      EXECUTE PROCEDURE set_state(body, (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1), tic)
         RETURNING_VALUES alive;
     momx = 0;
     momy = 0;
@@ -3978,11 +4002,14 @@ DECLARE vh BIGINT;
 DECLARE dvh BIGINT;
 DECLARE px DOUBLE PRECISION;
 DECLARE py DOUBLE PRECISION;
+DECLARE hgt BIGINT;
 BEGIN
-  SELECT fx_of(t.z), fx_of(t.momz), fx_of(t.floorz), fx_of(t.ceilz), fx_of(p.view_h), fx_of(p.delta_vh), t.x, t.y
-    FROM things t JOIN player p ON p.thing_id = t.id
-   WHERE t.id = :tid AND p.id = :pid
-    INTO z, momz, fz, cz, vh, dvh, px, py;
+  -- (the body moving – the player's own or a voodoo doll – and mo->player's view, either way)
+  z = NULL;
+  SELECT fx_of(t.z), fx_of(t.momz), fx_of(t.floorz), fx_of(t.ceilz), fx_of(t.height), t.x, t.y
+    FROM things t WHERE t.id = :tid INTO z, momz, fz, cz, hgt, px, py;
+  IF (z IS NULL) THEN EXIT;
+  SELECT fx_of(p.view_h), fx_of(p.delta_vh) FROM player p WHERE p.id = :pid INTO vh, dvh;
   IF (z = fz AND momz = 0) THEN EXIT;
   IF (z < fz) THEN
   BEGIN
@@ -4005,10 +4032,10 @@ BEGIN
   END
   ELSE IF (momz = 0) THEN momz = -131072;
   ELSE momz = momz - 65536;
-  IF (z + 3670016 > cz) THEN
+  IF (z + hgt > cz) THEN
   BEGIN
     IF (momz > 0) THEN momz = 0;
-    z = cz - 3670016;
+    z = cz - hgt;
   END
   UPDATE things t SET z = :z / 65536e0, momz = :momz / 65536e0 WHERE t.id = :tid;
   UPDATE player p SET view_h = :vh / 65536e0, delta_vh = :dvh / 65536e0 WHERE p.id = :pid;
@@ -4692,6 +4719,25 @@ BEGIN
   IF (tid IS NULL) THEN EXIT;
   EXECUTE PROCEDURE height_clip_fx(tid);
   EXECUTE PROCEDURE xy_movement_fx(tid, pid, cf, cs, tic);
+  EXECUTE PROCEDURE z_movement_fx(tid, pid);
+END^
+
+-- A voodoo doll's turn: P_MobjThinker for a mobj whose player isn't playing through it – it moves
+-- as a player's body does (P_XYMovement's player friction, the player's own ticcmd deciding when
+-- it stops; P_ZMovement squatting the player's view on a hard landing), touching pickups and
+-- crossing lines for its player; it never thinks as the player (P_PlayerThink is the body's)
+CREATE OR ALTER PROCEDURE doll_body (tid INTEGER, tic INTEGER)
+AS
+DECLARE pid SMALLINT;
+DECLARE cf INTEGER;
+DECLARE cs INTEGER;
+BEGIN
+  pid = NULL;
+  SELECT t.doll_of FROM things t WHERE t.id = :tid INTO pid;
+  IF (pid IS NULL) THEN EXIT;
+  SELECT p.cmd_fwd, p.cmd_side FROM player p WHERE p.id = :pid INTO cf, cs;
+  EXECUTE PROCEDURE height_clip_fx(tid);
+  EXECUTE PROCEDURE xy_movement_fx(tid, pid, COALESCE(cf, 0), COALESCE(cs, 0), tic);
   EXECUTE PROCEDURE z_movement_fx(tid, pid);
 END^
 
@@ -6662,8 +6708,8 @@ BEGIN
         pid = NULL;
         SELECT p.id FROM player p WHERE p.thing_id = :vid AND p.dead = 0 INTO pid;
         IF (pid IS NOT NULL) THEN EXECUTE PROCEDURE damage_player(10000, mid, pid, mid);
-        ELSE IF (NOT EXISTS (SELECT 1 FROM things o WHERE o.id = :vid AND o.kind = 'player')) THEN
-          EXECUTE PROCEDURE damage_thing(vid, 10000, mid, mid);
+        ELSE IF (NOT EXISTS (SELECT 1 FROM things o WHERE o.id = :vid AND o.kind = 'player' AND o.doll_of IS NULL)) THEN
+          EXECUTE PROCEDURE damage_thing(vid, 10000, mid, mid);   -- (a voodoo doll is shootable too)
       END
   END
   DELETE FROM things t WHERE t.id = :tid;
@@ -7337,6 +7383,7 @@ BEGIN
     pid = NULL;
     SELECT p.id FROM player p WHERE p.thing_id = :tid INTO pid;
     IF (pid IS NOT NULL) THEN EXECUTE PROCEDURE player_body(pid, tic);
+    ELSE EXECUTE PROCEDURE doll_body(tid, tic);
   END
   ELSE IF (k IN ('missile', 'cube')) THEN EXECUTE PROCEDURE missile_step(tid, tic);
   ELSE IF (moving = 1 OR (skull = 1 AND stt IS NOT NULL)) THEN EXECUTE PROCEDURE xy_movement_mobj(tid);
@@ -7400,7 +7447,7 @@ BEGIN
               UNION ALL
               SELECT 'M', COALESCE(m.think_key, 0), m.sector_id FROM movers m) q
        WHERE q.k > :lo AND q.k <= :hi AND POSITION(q.kind IN :kinds) > 0
-       ORDER BY q.k, q.kind
+       ORDER BY q.k, q.kind, q.id
         INTO kind, key_, id
   DO
   BEGIN
@@ -7705,6 +7752,11 @@ DECLARE lastlook INTEGER;
 DECLARE lsec INTEGER;
 DECLARE lspec INTEGER;
 DECLARE pstart INTEGER;
+DECLARE dstart INTEGER;
+DECLARE did INTEGER;
+DECLARE dx DOUBLE PRECISION;
+DECLARE dy DOUBLE PRECISION;
+DECLARE da DOUBLE PRECISION;
 BEGIN
   MERGE INTO linedefs l
   USING (SELECT l2.id, a.x ax, a.y ay, b.x bx, b.y bby, fs.sector_id fsec, bs.sector_id bsec
@@ -7882,6 +7934,24 @@ BEGIN
     END
     -- (in deathmatch, G_DeathMatchSpawnPlayer's P_SpawnPlayer: its P_SpawnMobj's draw)
     IF (dm > 0) THEN lastlook = p_rand256();
+    -- P_SpawnMapThing calls P_SpawnPlayer at every start of the player's number, each body the
+    -- player's (mobj->player) and the last their own (player->mo): the ones before are voodoo
+    -- dolls – bodies of the player's, with the player's health, in the thinkers' list where their
+    -- starts are, that take hurt, pickups and lines for them (not in deathmatch: no starts used)
+    IF (pstart IS NOT NULL) THEN
+      FOR SELECT m.id, m.x, m.y, TRUNC(m.angle / 45) * PI() / 4 FROM map_things m
+           WHERE m.ttype = :i AND m.id < :pstart ORDER BY m.id INTO dstart, dx, dy, da
+      DO
+      BEGIN
+        did = NEXT VALUE FOR thing_seq;
+        INSERT INTO things (id, thing_type, kind, x, y, angle, hp, radius, height, solid, st, translation, state, reaction, doll_of, think_key)
+        VALUES (:did, 1, 'player', :dx, :dy, :da,
+                (SELECT IIF(:new_game = 1 OR p.dead > 0, r.init_health, p.health) FROM player p CROSS JOIN rules r WHERE p.id = :i AND r.id = 1),
+                16, 56, 1, 'idle', :i - 1,
+                (SELECT tt.spawn_state FROM thing_types tt WHERE tt.thing_type = 1),
+                (SELECT IIF(:skill = 5, 0, tt.reaction_time) FROM thing_types tt WHERE tt.thing_type = 1), :i,
+                2 * COALESCE((SELECT MAX(o.id) FROM things o WHERE o.mthing < :dstart), 0) + 1);
+      END
     tid = NEXT VALUE FOR thing_seq;
     INSERT INTO things (id, thing_type, kind, x, y, angle, hp, radius, height, solid, st, translation, state, reaction)
     -- (P_SpawnPlayer: mobj->health = player->health – a new game's, or one reborn, starts with

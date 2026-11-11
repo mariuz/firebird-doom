@@ -397,6 +397,7 @@ CREATE TABLE things (
   target_id  INTEGER,                               -- who a monster is after (NULL = the player TPLAYER; 0 = nobody, as a raised corpse)
   threshold  INTEGER DEFAULT 0 NOT NULL,            -- chase steps before it may switch target again
   tplayer    SMALLINT DEFAULT 1 NOT NULL,           -- the player it's after when TARGET_ID is NULL
+  doll_of    SMALLINT,                              -- a voodoo doll: the player (mobj->player) it isn't the body of
   translation SMALLINT DEFAULT 0 NOT NULL,          -- a player's colours: 0 green, 1 indigo, 2 brown, 3 red (MF_TRANSLATION)
   -- DOOM's frame tables: the thing's state (STATES id; NULL only for the markers DOOM never
   -- draws) and the tic that state ends (NULL: never, a -1 tics state). SET_STATE and

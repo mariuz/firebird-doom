@@ -42,12 +42,6 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   L7, playing them on the page, L8, netgames, and L9, netgames through a level's end, are done.
   Left: someone with id's WADs running `WAD=/path/to/doom.wad npm run test:lmp` against their
   demos.
-- **Voodoo dolls** (Simulation): vanilla's `P_SpawnMapThing` spawns a player's body at every start
-  of their number, the last the one they play; the others are voodoo dolls, which carry on as
-  bodies (a crusher, a pickup or a line crossed reaches the player through them), and maps script
-  with them. The port spawns only the last (`INIT_MAP`). Found by the Icon fixture, whose PWAD now
-  moves the start instead of adding one. A fixture with a doll, recorded against the oracle,
-  would show what else they do.
 - **Playwright past 1.56** (Tooling): the pinned 1.56 keeps CI on `ubuntu-24.04` (on 26.04 it
   installs no browsers) and needs `CHROMIUM=` in this container; a newer one would let both go.
 - **Host migration** (Multiplayer; not vanilla, ask first): every command goes through the host,
@@ -68,6 +62,14 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
 Everything else below is done.
 
 ## Game flow and menus
+
+- ~~**Voodoo dolls.**~~ Done: `INIT_MAP` spawns a body at every start of a player's number (not in
+  deathmatch), the last the player's own, the others dolls (`THINGS.DOLL_OF`) in the thinkers'
+  list where their starts are. `damage_thing` hands a doll's hurt to `damage_player`, which now
+  takes the body hit and judges death by that body's own health; a doll moves as a body of its
+  player (pickups, lines, the player's ticcmd deciding when it stops, the body's run frame reset as
+  vanilla resets `player->mo`'s), never with the player's noclip; telefrags and crushers reach it.
+  `map01-doll` keeps step with vanilla for all 517 tics.
 
 - ~~**A co-op wait that timed out once.**~~ Explained: the test gives player 2 a deathmatch frag by
   writing the damage into each page's database, outside the ticcmds, and when the two pages take it

@@ -175,6 +175,11 @@ const DEMOS = [
   // the Icon of Sin: its shooter wakes (A_BrainAwake), spits cubes at the spots (A_BrainSpit), they
   // land in fire and become monsters (A_SpawnFly), and those come for the player, who stands still
   ['map30-icon', 'freedoom2.wad', scripted(1, 30, [[1400, 0, 0, 0, 0]])],
+  // a voodoo doll (EXIT_PWADS' map01-doll): rockets at it hurt its player through it, throw it back
+  // back, and its death is theirs; then use, the level again, the doll too, and the pistol at it: the
+  // player hurt a shot at a time, the doll nudged back onto the stimpack (its player's)
+  ['map01-doll', 'freedoom2.wad', scripted(1, 1, [[6, 25, 0, 0, 0], [40, 0, 0, 0, 0], [90, 0, 0, 0, BT_ATTACK], [120, 0, 0, 0, 0],
+    [1, 0, 0, 0, BT_USE], [60, 0, 0, 0, 0], [140, 0, 0, 0, BT_ATTACK], [60, 0, 0, 0, 0]])],
   ['e1m2-attract', 'freedoom1.wad', fromAttract('freedoom1-demo2.json', 700)],
   ['e1m3-attract', 'freedoom1.wad', fromAttract('freedoom1-demo3.json', 700)],
   ['map02-attract', 'freedoom2.wad', fromAttract('freedoom2-demo2.json', 700)],
