@@ -412,6 +412,15 @@ try {
   assert(loaded.every((d) => d.game.MAP_NAME.trim() === savedGame.map && d.game.TIC >= savedGame.tic && d.net.tic < savedGame.tic
       && d.game.DEATHMATCH === 0 && d.net.deathmatch === 0 && d.mode === '0' && d.game.PLAYERS === 2) && loadedSame.same,
     `the host starts from its save: both games are on ${savedGame.map} at the save's tic ${savedGame.tic} and on (${loaded.map((d) => d.game.TIC).join(', ')}; ${loaded[0].net.tic} tics since the start), co-op as saved, and in step (tic ${loadedSame.tic})`);
+  // the host leaves: the guest's game stops, and its panel and status line say why – a stop
+  // heard from the other side, between frames, is told as one found here
+  await host.evaluate(() => document.getElementById('net-leave').click());
+  await until(guest, () => /^Stopped: the host left/.test(document.getElementById('net-status').textContent), null, 30000);
+  const hostGone = await guest.evaluate(() => ({ status: document.getElementById('status').textContent, error: window.doom.net?.error }));
+  await host.waitForTimeout(500);
+  const hostSide = await host.evaluate(() => document.getElementById('status').textContent);
+  assert(/Co-op stopped: the host left/.test(hostGone.status) && hostGone.error === 'the host left' && !/Error/.test(hostSide),
+    `the host leaves: the guest's game stops ("${hostGone.status}"), its panel says so; the host's own page shows no error ("${hostSide}")`);
   await guest.evaluate(() => document.getElementById('net-leave').click());
 
   // four players: the host invites three guests in turn, each with an invite of

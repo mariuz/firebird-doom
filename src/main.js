@@ -884,28 +884,40 @@ const IDLE_CMD = [0, 0, 0, 0, 0, 0, 0];
  * the menu is up), then every tic the lockstep has complete, through NET_TIC.
  * False when no tic ran: nothing new to draw.
  */
+/** A stopped netgame said so, once: the status line and the panel (the stop found here, or a
+ * peer's desync or a closed link heard between frames) */
+function netStopped(n = net) {
+  if (n.stopShown || net !== n) return;
+  n.stopShown = true;
+  setStatus(`Co-op stopped: ${n.ls.error}.`, true);
+  netPanel();
+}
+
 async function netTics(tics) {
+  // (this netgame, for the whole frame: leaving it mid-frame sets net to null while a query is
+  // in flight, and then this one stops)
+  const n = net;
   const [, fwd, side, turn, fire, use, w, run] = readInput(tics);
-  if (net.ls.error) return false;
+  if (n.ls.error) { netStopped(n); return false; }
   const mine = menu?.active ? IDLE_CMD : [fwd, side, turn / tics, fire, use, w, run];
   // (G_BuildTiccmd: each tic's command carries the next chat character, cmd->chatchar)
-  for (let i = 0; i < tics && net.ls.canSubmit(); i++) {
-    const cmd = [...(i === 0 ? mine : [...mine.slice(0, 5), 0, mine[6]]), net.chat.dequeue(), net.special];
+  for (let i = 0; i < tics && n.ls.canSubmit(); i++) {
+    const cmd = [...(i === 0 ? mine : [...mine.slice(0, 5), 0, mine[6]]), n.chat.dequeue(), n.special];
     // (BT_SPECIAL: cmd->buttons = BT_SPECIAL | …, so no fire, use or weapon change that tic)
-    if (net.special) { cmd[3] = 0; cmd[4] = 0; cmd[5] = 0; net.special = 0; }
-    net.ls.submit(cmd);
+    if (n.special) { cmd[3] = 0; cmd[4] = 0; cmd[5] = 0; n.special = 0; }
+    n.ls.submit(cmd);
   }
   let ran = 0;
   while (ran < 12) {
-    const r = net.ls.take();
+    const r = n.ls.take();
     if (!r) break;
     // (from the network: numbers, and only numbers, go into the SQL)
     const num = (v, lo, hi) => Math.max(lo, Math.min(hi, Number(v) || 0));
     // (a null command: that player is out of the game this tic – dropped, not yet back)
     const cmds = r.cmds.map((c) => (Array.isArray(c) ? c : null));
     cmds.forEach((c, i) => {
-      if (!c && !net.out.has(i + 1)) { net.out.add(i + 1); pageSay(`Player ${i + 1} left the game.`); netPanel(); }
-      else if (c && net.out.has(i + 1)) { net.out.delete(i + 1); pageSay(`Player ${i + 1} is back.`); netPanel(); }
+      if (!c && !n.out.has(i + 1)) { n.out.add(i + 1); pageSay(`Player ${i + 1} left the game.`); netPanel(); }
+      else if (c && n.out.has(i + 1)) { n.out.delete(i + 1); pageSay(`Player ${i + 1} is back.`); netPanel(); }
     });
     const rows = cmds.map((c, i) => c && [i + 1, num(c[0], -1, 1), num(c[1], -1, 1), num(c[2], -Math.PI, Math.PI),
       num(c[3], 0, 1) | 0, num(c[4], 0, 1) | 0, num(c[5], 0, 9) | 0, num(c[6], 0, 1) | 0]).filter(Boolean);
@@ -918,34 +930,36 @@ async function netTics(tics) {
     cmds.forEach((c, i) => {
       if (!c) return;
       const sp = num(c[8], 0, SPECIAL_SAVE + SLOTS - 1) | 0;
-      if (sp === SPECIAL_PAUSE) net.paused = !net.paused;
+      if (sp === SPECIAL_PAUSE) n.paused = !n.paused;
       else if (sp >= SPECIAL_SAVE) { saveSlot = sp - SPECIAL_SAVE; saver = i + 1; }
     });
-    if (!net.paused) {
+    if (!n.paused) {
       await db.query(`EXECUTE BLOCK AS BEGIN DELETE FROM ticcmd;
         ${rows.map((v) => `INSERT INTO ticcmd (player_id, fwd, side, turn, fire, use_key, weapon_sel, run) VALUES (${v.join(', ')});`).join('\n')} END`);
       hud = (await db.query('SELECT * FROM net_tic', [], { rowMode: 'object' })).rows[0];
-      lastFire = rows.find((v) => v[0] === net.me)?.[4] === 1;
+      if (net !== n) return false;
+      lastFire = rows.find((v) => v[0] === n.me)?.[4] === 1;
     }
-    net.chat.ticker(cmds.map((c) => (c ? num(c[7], 0, 127) | 0 : 0)));   // (HU_Ticker)
+    n.chat.ticker(cmds.map((c) => (c ? num(c[7], 0, 127) | 0 : 0)));   // (HU_Ticker)
     if (saveSlot >= 0) {
       // (G_DoSaveGame: the one who saved names it; on the other machines it's a net game)
-      await writeSave(saveSlot, saver === net.me ? net.saveName || NETGAME_SAVE : NETGAME_SAVE);
+      await writeSave(saveSlot, saver === n.me ? n.saveName || NETGAME_SAVE : NETGAME_SAVE);
+      if (net !== n) return false;
       pageSay('Game saved.');
     }
     ran++;
     // the consistency check (d_net.c's consistancy): the host compares everyone's
     if (r.tic % 35 === 0) {
       const sum = (await db.query('SELECT csum FROM net_checksum')).rows[0].CSUM;
-      net.ls.report(r.tic, sum);
-      net.sums.set(r.tic, sum);           // (the last few, for doom.net)
-      if (net.sums.size > 8) net.sums.delete(net.sums.keys().next().value);
+      if (net !== n) return false;
+      n.ls.report(r.tic, sum);
+      n.sums.set(r.tic, sum);           // (the last few, for doom.net)
+      if (n.sums.size > 8) n.sums.delete(n.sums.keys().next().value);
     }
     if (hud.EXIT_KIND) break;
   }
-  if (net.ls.error) {
-    setStatus(`Co-op stopped: ${net.ls.error}.`, true);
-    netPanel();
+  if (n.ls.error) {
+    netStopped(n);
     return false;
   }
   if (ran) {
