@@ -155,9 +155,12 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   only off the floor or with momz). A test that puts a thing somewhere by `UPDATE` keeps its old
   floor unless it sets those too. `THINGS.LINK_SEQ` (a trigger on x, y) is DOOM's blocklinks' order:
   write new block walks `ORDER BY` block, then `link_seq DESC`, never `id`.
-- **Finding where the port parts from vanilla:** `npm run test:lmp` names the first tic; then
-  `test-logs`-style probes: vanilla's thinkers at a tic (`ORACLE_MOBJS`), its sectors per tic
-  (`ORACLE_SECTORS`), and `npm run lmp-rnglog` for who drew each random number.
+- **Finding where the port parts from vanilla:** `npm run test:lmp` names the first tic
+  (`node scripts/lmp-one.mjs NAME …` for a few fixtures alone); `node scripts/lmp-mobjs.mjs NAME
+  T1,T2` sets every thinker beside vanilla's at those tics (`ORACLE_MOBJS`) and names the first
+  thing that differs; vanilla's sectors per tic (`ORACLE_SECTORS`); `npm run lmp-rnglog` for who
+  drew each random number. A monster no Freedoom map puts in reach goes in a PWAD fixture
+  (`EXIT_PWADS`' things). A second player start makes a voodoo doll in vanilla, not in the port.
 - **`leveltime` is `TIC - 1` inside a tic:** `GAME.TIC` is counted up at the start of
   `DOOM_TIC`/`NET_TIC`, vanilla's `leveltime` at the end of `P_Ticker`. So a vanilla test of
   `leveltime & n` is `BIN_AND(tic - 1, n)` here (the floors' damage, the crushers, the

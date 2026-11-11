@@ -28,11 +28,6 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   starting, before the title (a rerun passed). A source-mapped build of `firebird-embedded-st` would
   say where; it may be WebKit's or the engine's. Both page tests reload such a page once, with a
   warning.
-- **A co-op wait that timed out once** (Tooling): on 10 November (Chromium, CI) the co-op test's
-  host never said "Out of it: player 2" within 30 s after the guest left the deathmatch; a rerun
-  passed, and four runs here did too. The panel says it once the host runs a tic without player 2,
-  so either the goodbye was lost or the host's tics stopped. The test's waits now print both pages'
-  panel, lockstep (`doom.debug.ls`: out, broadcast, hold) and screen when they time out.
 - **Safari itself, pointer lock and touch** (Tooling): Firefox and WebKit are in CI now; a manual
   pass on a Mac and an iPhone would cover what headless engines can't.
 - **Original `.lmp` demos** (Simulation): playing id's and the community's demos needs the frame
@@ -46,12 +41,13 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   and its thinkers' order, L4, the monsters' sight and walk, L5, the attacks, and L6, the world,
   L7, playing them on the page, L8, netgames, and L9, netgames through a level's end, are done.
   Left: someone with id's WADs running `WAD=/path/to/doom.wad npm run test:lmp` against their
-  demos, and the code no fixture reaches yet (next item).
-- **Demos for the code no demo reaches** (Simulation): some rarer monster attacks (the revenant's
-  homing missile, the arch-vile's fire and raise, the mancubus's spread, the pain elemental's
-  souls) and the boss brain still do their sums in doubles and may draw `P_Random` in another
-  order. New `.lmp` fixtures on maps that have them, recorded against the oracle
-  (`npm run lmp-fixtures`), would show where they part from vanilla, then fix each in 16.16.
+  demos.
+- **Voodoo dolls** (Simulation): vanilla's `P_SpawnMapThing` spawns a player's body at every start
+  of their number, the last the one they play; the others are voodoo dolls, which carry on as
+  bodies (a crusher, a pickup or a line crossed reaches the player through them), and maps script
+  with them. The port spawns only the last (`INIT_MAP`). Found by the Icon fixture, whose PWAD now
+  moves the start instead of adding one. A fixture with a doll, recorded against the oracle,
+  would show what else they do.
 - **Playwright past 1.56** (Tooling): the pinned 1.56 keeps CI on `ubuntu-24.04` (on 26.04 it
   installs no browsers) and needs `CHROMIUM=` in this container; a newer one would let both go.
 - **Host migration** (Multiplayer; not vanilla, ask first): every command goes through the host,
@@ -72,6 +68,21 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
 Everything else below is done.
 
 ## Game flow and menus
+
+- ~~**A co-op wait that timed out once.**~~ Explained: the test gives player 2 a deathmatch frag by
+  writing the damage into each page's database, outside the ticcmds, and when the two pages take it
+  on different tics the next checksum stops the game ("out of sync at tic 35"), as it should; the
+  host then never says "Out of it". The wait after the guest leaves now takes that too. (The
+  test's new report of both pages on a timeout is what showed it.)
+
+- ~~**Demos for the code no demo reaches.**~~ Done: eight fixtures on PWADs (MAP01 with the
+  monsters at the foot of the stairs, MAP30 with the start before the Icon), all in step with
+  vanilla in every column, after fixing what they found: the mancubus's spread turned after
+  `P_SpawnMissile`, `A_Fire` and `A_VileTarget` in 16.16, `A_VileChase` as `PIT_VileCheck` walks
+  the blockmap (and a raised corpse with no target), `A_Tracer` in BAMs, `A_BrainSpit` as
+  `P_SpawnMissile`, and the cubes' flight through walls. `scripts/lmp-one.mjs` plays fixtures
+  alone, `scripts/lmp-mobjs.mjs` sets their thinkers beside vanilla's at chosen tics, and
+  `lmp-rnglog` takes the PWAD fixtures too.
 
 - ~~**The keys as `G_BuildTiccmd`'s.**~~ Done (`src/ticcmd.js`): `sidemove`'s 24 (40 running) for a
   strafe, `angleturn`'s 320 for the first five tics a turn key is held (`turnheld`, `SLOWTURNTICS`),

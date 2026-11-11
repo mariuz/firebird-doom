@@ -5541,6 +5541,9 @@ DECLARE palive SMALLINT;
 DECLARE shadow SMALLINT;
 DECLARE vile INTEGER;
 DECLARE an DOUBLE PRECISION;
+DECLARE fa INTEGER;
+DECLARE fx DOUBLE PRECISION;
+DECLARE fy DOUBLE PRECISION;
 BEGIN
   IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.thing_type = 9015)) THEN EXIT;
   SELECT t.owner_id FROM things t WHERE t.id = :tid INTO vile;
@@ -5550,8 +5553,11 @@ BEGIN
   IF (mobj_sees(vile, px, py, pz, psec) = 0) THEN EXIT;
   IF (tgt IS NOT NULL) THEN SELECT o.angle FROM things o WHERE o.id = :tgt INTO an;
   ELSE SELECT o.angle FROM player p JOIN things o ON o.id = p.thing_id WHERE p.id = :tp INTO an;
-  UPDATE things t SET x = :px + COS(:an) * 24, y = :py + SIN(:an) * 24, z = :pz,
-                      sector_id = sector_at(:px + COS(:an) * 24, :py + SIN(:an) * 24)
+  -- (in 16.16: dest->x + FixedMul(24 * FRACUNIT, finecosine[dest->angle >> ANGLETOFINESHIFT]))
+  fa = BIN_SHR(bam_of(an), 19);
+  fx = (fx_of(px) + fx_mul(1572864, fine_cosine(fa))) / 65536e0;
+  fy = (fx_of(py) + fx_mul(1572864, fine_sine(fa))) / 65536e0;
+  UPDATE things t SET x = :fx, y = :fy, z = :pz, sector_id = sector_at_fx(fx_of(:fx), fx_of(:fy))
    WHERE t.id = :tid;
 END^
 
@@ -5575,7 +5581,9 @@ BEGIN
   EXECUTE PROCEDURE a_face_target(tid);
   IF (tgt IS NOT NULL) THEN SELECT o.angle FROM things o WHERE o.id = :tgt INTO gang;
   ELSE SELECT o.angle FROM player p JOIN things o ON o.id = p.thing_id WHERE p.id = :tp INTO gang;
-  EXECUTE PROCEDURE spawn_thing(9015, px + COS(gang) * 24, py + SIN(gang) * 24, pz, 0) RETURNING_VALUES mid;
+  -- (P_SpawnMobj at target->x, target->x – vanilla's slip, x twice – and target->z; A_Fire
+  -- below moves it in front of the target if the arch-vile sees it, else there it stays)
+  EXECUTE PROCEDURE spawn_thing(9015, px, px, pz, 0) RETURNING_VALUES mid;
   -- fog->target = actor, fog->tracer = actor->target; then A_Fire. (Spawned in S_FIRE1, it never
   -- calls that state's A_StartFire, so DOOM's DSFLAMST is never heard: the crackle is)
   UPDATE things t SET owner_id = :tid, target_id = :tgt, tplayer = :tp WHERE t.id = :mid;
@@ -5909,10 +5917,12 @@ END^
 
 -- P_SpawnMissile: a monster's projectile, MTYPE, from its middle 32 up (ZOFF higher: the
 -- revenant's 16), at its target: R_PointToAngle2 to it (at a shadow, P_SubRandom() << 20
--- astray), turned by TURN (BAMs: the mancubus's spreads), its speed along that (20 for the
--- imp's, cacodemon's and baron's fireballs on Nightmare or -fast), and climbing or sinking to
--- reach the target's feet over P_AproxDistance / speed tics (at least 1; C's division); then
--- P_CheckMissileSpawn. → MID
+-- astray), its speed along that (20 for the imp's, cacodemon's and baron's fireballs on
+-- Nightmare or -fast), and climbing or sinking to reach the target's feet over P_AproxDistance /
+-- speed tics (at least 1; C's division); then P_CheckMissileSpawn. TURN (BAMs: the mancubus's
+-- spreads) turns it after all that, as A_FatAttack1–3 turn the missile P_SpawnMissile gave
+-- them: its angle and its momx and momy (not momz), the half step P_CheckMissileSpawn took
+-- already taken along the line to the target – and even one that burst there moves again. → MID
 CREATE OR ALTER PROCEDURE spawn_missile_fx (owner INTEGER, mtype INTEGER, zoff BIGINT = 0, turn BIGINT = 0)
 RETURNS (mid INTEGER)
 AS
@@ -5949,7 +5959,6 @@ BEGIN
     r = r - p_rand256();
     an = BIN_AND(an + r * 1048576, 4294967295);
   END
-  an = BIN_AND(an + turn, 4294967295);
   fa = BIN_SHR(an, 19);
   dist = aprox_distance(fx_of(px) - sx, fx_of(py) - sy) / spd;
   IF (dist < 1) THEN dist = 1;
@@ -5962,6 +5971,13 @@ BEGIN
    WHERE t.id = :mid;
   IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :mid AND t.state IS NOT NULL)) THEN
     EXECUTE PROCEDURE check_missile_spawn(mid);
+  IF (turn <> 0) THEN
+  BEGIN
+    an = BIN_AND(an + turn, 4294967295);
+    fa = BIN_SHR(an, 19);
+    UPDATE things t SET angle = rad_of(:an), momx = fx_mul(:spd, fine_cosine(:fa)) / 65536e0, momy = fx_mul(:spd, fine_sine(:fa)) / 65536e0
+     WHERE t.id = :mid;
+  END
 END^
 
 -- P_TryMove for a monster (not a player: TRY_MOVE_FX), in 16.16: to (X, Y) if P_CheckPosition
@@ -6379,62 +6395,86 @@ BEGIN
   IF (nst IS NOT NULL) THEN EXECUTE PROCEDURE set_state(tid, nst, tic) RETURNING_VALUES alive;
 END^
 
--- A_VileChase: where its next step would take it, a corpse lying still that can be raised
--- (a raise state), within its radius and the arch-vile's (20), with room to stand up
--- (P_CheckPosition: the arch-vile itself in the way counts)? Then the arch-vile turns to it
--- and goes into S_VILE_HEAL1, DSSLOP, and the corpse gets up through its raise state, at
--- full health, solid, with no target. Else A_Chase.
+-- A_VileChase: where its next step would take it (viletryx, viletryy: speed × xspeed[movedir],
+-- in 16.16), the blocks around that spot, column by column, each block's things the newest
+-- linked first (P_BlockThingsIterator over MAXRADIUS × 2): a corpse (MF_CORPSE) whose last
+-- frame doesn't run out, with a raise state, within its radius and the arch-vile's (20) of the
+-- spot (PIT_VileCheck)? Each such one is stopped where it lies (momx = momy = 0), checked or
+-- not; one with room to stand up (P_CheckPosition: the arch-vile itself in the way counts) is
+-- raised: the arch-vile turns to it (A_FaceTarget's R_PointToAngle2; no longer in ambush) and
+-- goes into S_VILE_HEAL1, DSSLOP, and the corpse gets up through its raise state, at full
+-- health, solid, with no target at all (corpsehit->target = NULL: here TARGET_ID 0, no thing,
+-- so its first A_Chase looks for players before it moves). Else A_Chase.
 CREATE OR ALTER PROCEDURE a_vile_chase (tid INTEGER, tic INTEGER)
 AS
-DECLARE x DOUBLE PRECISION;
-DECLARE y DOUBLE PRECISION;
-DECLARE spd DOUBLE PRECISION;
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE spd BIGINT;
+DECLARE vrad BIGINT;
 DECLARE movedir SMALLINT;
-DECLARE d DOUBLE PRECISION = 0.7171630859375e0;
-DECLARE tx DOUBLE PRECISION;
-DECLARE ty DOUBLE PRECISION;
+DECLARE tx BIGINT;
+DECLARE ty BIGINT;
+DECLARE orgx BIGINT;
+DECLARE orgy BIGINT;
+DECLARE bw INTEGER;
+DECLARE bh INTEGER;
+DECLARE xl INTEGER;
+DECLARE xh INTEGER;
+DECLARE yl INTEGER;
+DECLARE yh INTEGER;
 DECLARE cid INTEGER;
-DECLARE cx DOUBLE PRECISION;
-DECLARE cy DOUBLE PRECISION;
-DECLARE cz DOUBLE PRECISION;
-DECLARE crad DOUBLE PRECISION;
-DECLARE chgt DOUBLE PRECISION;
+DECLARE cx BIGINT;
+DECLARE cy BIGINT;
+DECLARE crad BIGINT;
 DECLARE craise INTEGER;
 DECLARE ok SMALLINT;
-DECLARE fz DOUBLE PRECISION;
-DECLARE cz2 DOUBLE PRECISION;
-DECLARE dz DOUBLE PRECISION;
-DECLARE sec INTEGER;
+DECLARE fz BIGINT;
+DECLARE cz BIGINT;
+DECLARE dz BIGINT;
+DECLARE spec VARCHAR(4000);
 DECLARE alive SMALLINT;
 BEGIN
-  SELECT t.x, t.y, tt.speed, t.movedir FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
-    INTO x, y, spd, movedir;
+  SELECT fx_of(t.x), fx_of(t.y), CAST(tt.speed AS BIGINT), fx_of(tt.radius), t.movedir
+    FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
+    INTO x, y, spd, vrad, movedir;
   IF (movedir < 8) THEN
   BEGIN
-    tx = x + spd * CASE movedir WHEN 0 THEN 1 WHEN 1 THEN d WHEN 2 THEN 0 WHEN 3 THEN -d
-                                WHEN 4 THEN -1 WHEN 5 THEN -d WHEN 6 THEN 0 ELSE d END;
-    ty = y + spd * CASE movedir WHEN 0 THEN 0 WHEN 1 THEN d WHEN 2 THEN 1 WHEN 3 THEN d
-                                WHEN 4 THEN 0 WHEN 5 THEN -d WHEN 6 THEN -1 ELSE -d END;
-    FOR SELECT c.id, c.x, c.y, c.z, ct.radius, ct.height, ct.raise_state
+    -- (xspeed[], yspeed[]: FRACUNIT, 47000 on the diagonals)
+    tx = x + spd * CASE movedir WHEN 0 THEN 65536 WHEN 1 THEN 47000 WHEN 2 THEN 0 WHEN 3 THEN -47000
+                                WHEN 4 THEN -65536 WHEN 5 THEN -47000 WHEN 6 THEN 0 ELSE 47000 END;
+    ty = y + spd * CASE movedir WHEN 0 THEN 0 WHEN 1 THEN 47000 WHEN 2 THEN 65536 WHEN 3 THEN 47000
+                                WHEN 4 THEN 0 WHEN 5 THEN -47000 WHEN 6 THEN -65536 ELSE -47000 END;
+    SELECT CAST(b.org_x AS BIGINT) * 65536, CAST(b.org_y AS BIGINT) * 65536, b.w, b.h
+      FROM blockmap_info b WHERE b.id = 1 INTO orgx, orgy, bw, bh;
+    -- (MAXRADIUS * 2: 64 units; a block off the map has nothing in it)
+    xl = MAXVALUE(BIN_SHR(tx - orgx - 4194304, 23), 0);
+    xh = MINVALUE(BIN_SHR(tx - orgx + 4194304, 23), bw - 1);
+    yl = MAXVALUE(BIN_SHR(ty - orgy - 4194304, 23), 0);
+    yh = MINVALUE(BIN_SHR(ty - orgy + 4194304, 23), bh - 1);
+    FOR SELECT c.id, fx_of(c.x), fx_of(c.y), fx_of(ct.radius), ct.raise_state
           FROM things c JOIN thing_types ct ON ct.thing_type = c.thing_type
-         WHERE c.x BETWEEN :tx - 160 AND :tx + 160 AND c.state IS NOT NULL AND c.state_tic IS NULL
-           AND c.st = 'dead' AND ct.raise_state > 0
-           AND ABS(c.x - :tx) <= ct.radius + 20 AND ABS(c.y - :ty) <= ct.radius + 20
-         ORDER BY c.id
-          INTO cid, cx, cy, cz, crad, chgt, craise
+         WHERE c.x BETWEEN (:tx - 4194304) / 65536e0 - 128 AND (:tx + 4194304) / 65536e0 + 128
+           AND c.state IS NOT NULL AND c.state_tic IS NULL
+           AND c.st IN ('dying', 'dead') AND ct.raise_state > 0
+           AND BIN_SHR(fx_of(c.x) - :orgx, 23) BETWEEN :xl AND :xh
+           AND BIN_SHR(fx_of(c.y) - :orgy, 23) BETWEEN :yl AND :yh
+         ORDER BY BIN_SHR(fx_of(c.x) - :orgx, 23), BIN_SHR(fx_of(c.y) - :orgy, 23), c.link_seq DESC
+          INTO cid, cx, cy, crad, craise
     DO
     BEGIN
-      EXECUTE PROCEDURE check_position(cid, cx, cy, cz, crad, chgt, 1) RETURNING_VALUES ok, fz, cz2, dz, sec;
+      IF (ABS(cx - tx) > crad + vrad OR ABS(cy - ty) > crad + vrad) THEN CONTINUE;
+      UPDATE things c SET momx = 0, momy = 0 WHERE c.id = :cid;
+      EXECUTE PROCEDURE check_position_fx(cid, cx, cy, crad, 0) RETURNING_VALUES ok, fz, cz, dz, spec;
       IF (ok = 1) THEN
       BEGIN
-        UPDATE things t SET angle = atan2_safe(:cy - t.y, :cx - t.x) WHERE t.id = :tid;
+        UPDATE things t SET angle = rad_of(point_to_angle2(:x, :y, :cx, :cy)), flags = BIN_AND(t.flags, BIN_NOT(8)) WHERE t.id = :tid;
         EXECUTE PROCEDURE set_state(tid, (SELECT s.id FROM states s WHERE s.name = 'S_VILE_HEAL1'), tic) RETURNING_VALUES alive;
-        EXECUTE PROCEDURE play_sound('DSSLOP', cid, cx, cy);
+        EXECUTE PROCEDURE play_sound('DSSLOP', cid, cx / 65536e0, cy / 65536e0);
+        EXECUTE PROCEDURE set_state(cid, craise, tic) RETURNING_VALUES alive;
         UPDATE things t SET hp = (SELECT ct.hp FROM thing_types ct WHERE ct.thing_type = t.thing_type), solid = 1,
                             height = (SELECT ct.height FROM thing_types ct WHERE ct.thing_type = t.thing_type),
-                            target_id = NULL, just_hit = 0, dead_tic = NULL, flags = BIN_AND(t.flags, BIN_NOT(8))
+                            target_id = 0, just_hit = 0, dead_tic = NULL, flags = BIN_AND(t.flags, BIN_NOT(8))
          WHERE t.id = :cid;
-        EXECUTE PROCEDURE set_state(cid, craise, tic) RETURNING_VALUES alive;
         EXIT;
       END
     END
@@ -6443,9 +6483,11 @@ BEGIN
 END^
 
 -- A_Tracer: every fourth tic, a puff where the revenant's missile is and smoke (MT_SMOKE) just
--- behind it; then, while its target lives, it turns towards it by at
--- most TRACEANGLE (16.875°), goes on at its speed that way, and climbs or sinks by 1/8 towards
--- 40 above the target's feet
+-- behind it; then, while its target lives, in 16.16 and BAMs as vanilla: turn towards it
+-- (R_PointToAngle2) by TRACEANGLE (0xc000000), or all the way if that's nearer – the unsigned
+-- 32-bit comparisons of the difference with 0x80000000 – speed along the new angle (FixedMul by
+-- finecosine, finesine), and climb or sink by FRACUNIT/8 towards 40 above the target's feet over
+-- P_AproxDistance / speed tics (at least 1; C's division)
 CREATE OR ALTER PROCEDURE a_tracer (tid INTEGER, tic INTEGER)
 AS
 DECLARE tgt INTEGER;
@@ -6465,12 +6507,14 @@ DECLARE momy DOUBLE PRECISION;
 DECLARE momz DOUBLE PRECISION;
 DECLARE ang DOUBLE PRECISION;
 DECLARE spd DOUBLE PRECISION;
-DECLARE d DOUBLE PRECISION;
-DECLARE ta DOUBLE PRECISION;
-DECLARE adx DOUBLE PRECISION;
-DECLARE ady DOUBLE PRECISION;
-DECLARE n DOUBLE PRECISION;
 DECLARE mid INTEGER;
+DECLARE fspd BIGINT;
+DECLARE a BIGINT;
+DECLARE exact BIGINT;
+DECLARE fa INTEGER;
+DECLARE dist BIGINT;
+DECLARE slope BIGINT;
+DECLARE fmz BIGINT;
 BEGIN
   -- (gametic & 3: within a demo's first level, TIC - 1 while the thinkers run, as leveltime)
   IF (MOD(tic - 1, 4) <> 0) THEN EXIT;
@@ -6481,62 +6525,84 @@ BEGIN
   UPDATE things t SET momz = 1, state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1) WHERE t.id = :mid;
   EXECUTE PROCEDURE chase_target(tid) RETURNING_VALUES tgt, tp, px, py, pz, psec, prad, palive, shadow;
   IF (px IS NULL OR palive = 0) THEN EXIT;
-  ta = 0.29452431127404e0;   -- TRACEANGLE, 0xc000000
-  d = atan2_safe(py - y, px - x) - ang;
-  d = d - 2 * PI() * FLOOR((d + PI()) / (2 * PI()));   -- (into [−π, π))
-  IF (ABS(d) <= ta) THEN ang = ang + d;
-  ELSE ang = ang + SIGN(d) * ta;
-  adx = ABS(px - x);
-  ady = ABS(py - y);
-  n = MAXVALUE(1, FLOOR((adx + ady - MINVALUE(adx, ady) / 2) / spd));
-  momz = IIF((pz + 40 - z) / n < momz, momz - 0.125e0, momz + 0.125e0);
-  UPDATE things t SET angle = :ang, momx = COS(:ang) * :spd, momy = SIN(:ang) * :spd, momz = :momz WHERE t.id = :tid;
+  fspd = fx_of(spd);
+  exact = point_to_angle2(fx_of(x), fx_of(y), fx_of(px), fx_of(py));
+  a = bam_of(ang);
+  IF (exact <> a) THEN
+  BEGIN
+    IF (BIN_AND(exact - a, 4294967295) > 2147483648) THEN
+    BEGIN
+      a = BIN_AND(a - 201326592, 4294967295);
+      IF (BIN_AND(exact - a, 4294967295) < 2147483648) THEN a = exact;
+    END
+    ELSE
+    BEGIN
+      a = BIN_AND(a + 201326592, 4294967295);
+      IF (BIN_AND(exact - a, 4294967295) > 2147483648) THEN a = exact;
+    END
+  END
+  fa = BIN_SHR(a, 19);
+  dist = aprox_distance(fx_of(px) - fx_of(x), fx_of(py) - fx_of(y)) / fspd;
+  IF (dist < 1) THEN dist = 1;
+  slope = (fx_of(pz) + 2621440 - fx_of(z)) / dist;
+  fmz = fx_of(momz);
+  fmz = IIF(slope < fmz, fmz - 8192, fmz + 8192);
+  UPDATE things t SET angle = rad_of(:a), momx = fx_mul(:fspd, fine_cosine(:fa)) / 65536e0, momy = fx_mul(:fspd, fine_sine(:fa)) / 65536e0,
+                      momz = :fmz / 65536e0
+   WHERE t.id = :tid;
 END^
 
 -- A_BrainSpit: on skills 1 and 2 only every other time; a cube (MT_SPAWNSHOT, DSBOSPIT) at the
--- next of the spawn spots in turn (braintargeton), its reaction time the tics it'll take to get
--- there, worked out from the y distance alone, as DOOM does: (dy / momy) / its state's 3 tics
+-- next of the spawn spots in turn (braintargeton), as P_SpawnMissile throws it, in 16.16 and BAMs:
+-- from 32 above the shooter, R_PointToAngle2 to the spot, its speed (10) along that, climbing or
+-- sinking to the spot's z over P_AproxDistance / speed tics (at least 1; C's division); then
+-- P_CheckMissileSpawn's tics and half step (MF_NOCLIP: through walls, P_TryMove never stops it).
+-- Its reaction time the tics it'll take to get there, worked out from the y distance alone, as
+-- DOOM does: (dy / momy) / its state's 3 tics, C's divisions (a spot straight east or west, momy
+-- 0, crashed vanilla: here 0)
 CREATE OR ALTER PROCEDURE a_brain_spit (tid INTEGER)
 AS
 DECLARE n INTEGER;
 DECLARE k INTEGER;
 DECLARE spot INTEGER;
-DECLARE sx DOUBLE PRECISION;
-DECLARE sy DOUBLE PRECISION;
-DECLARE sz DOUBLE PRECISION;
-DECLARE x DOUBLE PRECISION;
-DECLARE y DOUBLE PRECISION;
-DECLARE z DOUBLE PRECISION;
-DECLARE ang DOUBLE PRECISION;
-DECLARE adx DOUBLE PRECISION;
-DECLARE ady DOUBLE PRECISION;
-DECLARE flight DOUBLE PRECISION;
+DECLARE sx BIGINT;
+DECLARE sy BIGINT;
+DECLARE sz BIGINT;
+DECLARE x BIGINT;
+DECLARE y BIGINT;
+DECLARE z BIGINT;
+DECLARE spd BIGINT;
+DECLARE an BIGINT;
+DECLARE fa INTEGER;
+DECLARE mx BIGINT;
+DECLARE my BIGINT;
+DECLARE mz BIGINT;
+DECLARE dist BIGINT;
 DECLARE mid INTEGER;
-DECLARE momy DOUBLE PRECISION;
-DECLARE tic INTEGER;
 BEGIN
   UPDATE game g SET brain_easy = 1 - g.brain_easy WHERE g.id = 1;
   IF (EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND g.skill <= 2 AND g.brain_easy = 0)) THEN EXIT;
   n = (SELECT COUNT(*) FROM things t WHERE t.thing_type = 87);
   IF (n = 0) THEN EXIT;
-  SELECT MOD(g.brain_on, :n), g.tic FROM game g WHERE g.id = 1 INTO k, tic;
+  SELECT MOD(g.brain_on, :n) FROM game g WHERE g.id = 1 INTO k;
   UPDATE game g SET brain_on = MOD(:k + 1, :n) WHERE g.id = 1;
-  SELECT FIRST 1 SKIP (:k) t.id, t.x, t.y, t.z FROM things t WHERE t.thing_type = 87 ORDER BY t.id INTO spot, sx, sy, sz;
-  SELECT t.x, t.y, t.z FROM things t WHERE t.id = :tid INTO x, y, z;
-  -- P_SpawnMissile
-  ang = atan2_safe(sy - y, sx - x);
-  EXECUTE PROCEDURE spawn_thing(9009, x, y, z + 32, ang) RETURNING_VALUES mid;
-  adx = ABS(sx - x);
-  ady = ABS(sy - y);
-  flight = MAXVALUE(1, FLOOR((adx + ady - MINVALUE(adx, ady) / 2) / 10));
-  momy = SIN(ang) * 10;
-  UPDATE things t SET momx = COS(:ang) * 10, momy = :momy, momz = (:sz - :z) / :flight, owner_id = :spot,
-         reaction = IIF(ABS(:momy) < 1e-9, 0, TRUNC(TRUNC((:sy - :y) / :momy) / 3)),
-         -- (P_CheckMissileSpawn: through walls, it's never stopped)
+  SELECT FIRST 1 SKIP (:k) t.id, fx_of(t.x), fx_of(t.y), fx_of(t.z) FROM things t WHERE t.thing_type = 87 ORDER BY t.id INTO spot, sx, sy, sz;
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z) FROM things t WHERE t.id = :tid INTO x, y, z;
+  SELECT fx_of(tt.speed) FROM thing_types tt WHERE tt.thing_type = 9009 INTO spd;
+  an = point_to_angle2(x, y, sx, sy);
+  fa = BIN_SHR(an, 19);
+  mx = fx_mul(spd, fine_cosine(fa));
+  my = fx_mul(spd, fine_sine(fa));
+  dist = aprox_distance(sx - x, sy - y) / spd;
+  IF (dist < 1) THEN dist = 1;
+  mz = (sz - z) / dist;
+  EXECUTE PROCEDURE spawn_thing(9009, x / 65536e0, y / 65536e0, (z + 2097152) / 65536e0, rad_of(an)) RETURNING_VALUES mid;
+  UPDATE things t SET momx = :mx / 65536e0, momy = :my / 65536e0, momz = :mz / 65536e0, owner_id = :spot,
+         reaction = IIF(:my = 0, 0, ((:sy - :y) / :my) / (SELECT st0.tics FROM states st0 WHERE st0.id = t.state)),
          state_tic = t.state_tic - MINVALUE(p_rand_and(3), (SELECT st0.tics FROM states st0 WHERE st0.id = t.state) - 1),
-         x = t.x + COS(:ang) * 5, y = t.y + :momy / 2, z = t.z + (:sz - :z) / :flight / 2
+         x = (:x + BIN_SHR(:mx, 1)) / 65536e0, y = (:y + BIN_SHR(:my, 1)) / 65536e0, z = (:z + 2097152 + BIN_SHR(:mz, 1)) / 65536e0
    WHERE t.id = :mid;
-  EXECUTE PROCEDURE play_sound('DSBOSPIT', mid, x, y);
+  EXECUTE PROCEDURE play_sound('DSBOSPIT', mid, x / 65536e0, y / 65536e0);
   EXECUTE PROCEDURE play_sound('DSBOSPIT', NULL, NULL, NULL);
 END^
 
@@ -6823,6 +6889,7 @@ END^
 CREATE OR ALTER PROCEDURE missile_step (tid INTEGER, tic INTEGER)
 AS
 DECLARE fx BIGINT;
+DECLARE sec INTEGER;
 DECLARE fy BIGINT;
 DECLARE bx BIGINT;
 DECLARE by_ BIGINT;
@@ -6852,23 +6919,33 @@ DECLARE cz DOUBLE PRECISION;
 BEGIN
   IF (NOT EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.kind IN ('missile', 'cube') AND t.state IS NOT NULL
                    AND t.st NOT IN ('dying', 'dead'))) THEN EXIT;
-  -- a boss cube (MF_NOCLIP): straight through everything, kept between floor and ceiling
+  -- a boss cube (MF_NOCLIP), in 16.16: P_XYMovement's one step (its speed, 10, is under MAXMOVE/2)
+  -- straight through everything – P_TryMove's P_CheckPosition returns before any line or thing,
+  -- the floor and ceiling those of the sector under its centre – no friction (MF_MISSILE); then,
+  -- off its floor or moving up or down, P_ZMovement: up or down by momz (MF_NOGRAVITY), kept
+  -- between that floor and ceiling (momz stopped there), and never bursting (MF_NOCLIP)
   IF (EXISTS (SELECT 1 FROM things t WHERE t.id = :tid AND t.kind = 'cube')) THEN
   BEGIN
-    SELECT t.x + t.momx, t.y + t.momy, t.z + t.momz, t.momz, t.radius, t.height FROM things t WHERE t.id = :tid
-      INTO x, y, z, momz, rad, hgt;
-    EXECUTE PROCEDURE z_range(x, y, rad) RETURNING_VALUES fz, cz;
-    IF (z <= fz) THEN
+    SELECT fx_of(t.x) + fx_of(t.momx), fx_of(t.y) + fx_of(t.momy), fx_of(t.z), fx_of(t.momz), fx_of(t.height) FROM things t WHERE t.id = :tid
+      INTO bx, by_, bz, fx, fy;
+    sec = sector_at_fx(bx, by_);
+    SELECT fx_of(s.floor_h), fx_of(s.ceil_h) FROM sectors s WHERE s.id = :sec INTO ffz, fcz;
+    IF (bz <> ffz OR fx <> 0) THEN
     BEGIN
-      z = fz;
-      IF (momz < 0) THEN momz = 0;
+      bz = bz + fx;
+      IF (bz <= ffz) THEN
+      BEGIN
+        IF (fx < 0) THEN fx = 0;
+        bz = ffz;
+      END
+      IF (bz + fy > fcz) THEN
+      BEGIN
+        IF (fx > 0) THEN fx = 0;
+        bz = fcz - fy;
+      END
     END
-    IF (z + hgt > cz) THEN
-    BEGIN
-      IF (momz > 0) THEN momz = 0;
-      z = cz - hgt;
-    END
-    UPDATE things t SET x = :x, y = :y, z = :z, momz = :momz, sector_id = sector_at(:x, :y) WHERE t.id = :tid;
+    UPDATE things t SET x = :bx / 65536e0, y = :by_ / 65536e0, z = :bz / 65536e0, momz = :fx / 65536e0, sector_id = :sec,
+                        floorz = :ffz / 65536e0, ceilz = :fcz / 65536e0 WHERE t.id = :tid;
     EXIT;
   END
   -- (in 16.16: MAXMOVE, the halved steps, each a TRY_MOVE_MISSILE; stopped, it bursts – or, the

@@ -896,6 +896,17 @@ measured against vanilla itself:
   the end. On the way: a player's body at a new level now starts with the player's health, a
   wounded player's or a DeHackEd patch's (it was always 100), and one dead at the exit is reborn
   there with the pistol (`G_PlayerReborn`), as vanilla has it.
+- **The rarer monsters and the bosses (done):** no Freedoom map puts them before a demo, so these
+  fixtures play on PWADs: MAP01 with a monster or a few at the foot of the stairs and a rocket
+  launcher ahead, and MAP30 with the player's start moved before the Icon of Sin. The revenant, the
+  mancubus, the pain elemental, the arch-vile, a chaingunner with a hell knight and an arachnotron,
+  the cyberdemon and the spider mastermind for 608 tics each, the Icon for 1400, all in step with
+  vanilla in every column. On the way, each place they parted was put right: the mancubus's
+  fireballs turned after `P_SpawnMissile` (its half step taken first); the arch-vile's fire in
+  16.16, spawned where vanilla's slip puts it (`target->x` twice), and `A_VileChase` walking the
+  blockmap as `PIT_VileCheck` does, its raised corpse with no target at all; the revenant's
+  `A_Tracer` in BAMs and 16.16; and the Icon's cubes aimed as `P_SpawnMissile` aims, flying
+  through walls with only the floor and ceiling under their centre.
 
 ### Co-op and deathmatch over the network
 
@@ -1482,8 +1493,11 @@ step.
 What's still not vanilla (docs/ROADMAP.md):
 - **Arithmetic:** what moves, moves in DOOM's 16.16 fixed point, with BAM angles and the
   `finesine` table (the sector heights stay doubles, exact at DOOM's speeds). Code the demos
-  haven't reached yet – some rarer monster attacks, the boss brain – still does its sums in
-  doubles and may draw `P_Random` in another order.
+  haven't reached yet may still do its sums in doubles and draw `P_Random` in another order;
+  every monster's attacks, and the Icon of Sin's, have a demo now.
+- **Voodoo dolls:** a map with two starts for one player spawns a body at each in vanilla (the
+  extra ones "voodoo dolls", which pass what happens to them on to the player); the port spawns
+  only the last.
 - **id's own demos:** nobody has played them against vanilla here: the repo can't hold id's WADs
   (`WAD=` above).
 Monsters hear gunfire the way DOOM does (`P_NoiseAlert`). Every shot, from any weapon, floods

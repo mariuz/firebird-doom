@@ -94,7 +94,7 @@ for (const name of NAMES.filter(mine)) {
   }
   // (some on a PWAD over the IWAD: its map with an exit where the demo walks – EXIT_PWADS)
   const pw = EXIT_PWADS[name];
-  const w = pw ? { wad: new Wad(wads.get(wadFile).wad.files[0].bytes, exitPwad(wads.get(wadFile).wad, pw[1], pw[2], pw[3])) } : wads.get(wadFile);
+  const w = pw ? { wad: new Wad(wads.get(wadFile).wad.files[0].bytes, exitPwad(wads.get(wadFile).wad, pw[1], pw[2], pw[3], [], pw[4])) } : wads.get(wadFile);
   w.res = await loadResources(db, w.wad);   // (each WAD's resources again: they share one database)
   await startDemo(db, w.wad, w.res, demo, loadMap);
   const r = await playAgainst(db, demo, trace, { restart: () => restartDemo(db, w.wad, w.res, demo, loadMap),
@@ -212,6 +212,20 @@ for (const [name, next] of [['e1m1-coop-exit', 'E1M2'], ['e1m1-dm-exit', 'E1M2']
   const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
   assert(w && off.length === 0 && w.map === next && w.unplayed === 0,
     `a netgame through the level's end: ${name} plays on to ${w?.map} and agrees with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
+}
+
+// the rarer monsters and the bosses, which no Freedoom map puts before a demo (a PWAD of MAP01 with
+// them at the foot of the stairs, MAP30 with the player's start before the Icon; EXIT_PWADS): the
+// revenant's homing missile (A_Tracer), the mancubus's spread (A_FatAttack1–3, each turned after
+// P_SpawnMissile), the pain elemental's lost souls, the arch-vile's fire (A_VileTarget, A_Fire) and
+// the corpses it raises (A_VileChase, PIT_VileCheck), the chaingunner, hell knight and
+// arachnotron, the cyberdemon, the spider mastermind, and the Icon of Sin's cubes (A_BrainSpit,
+// their flight through walls, A_SpawnFly): in step with vanilla in every column to the end
+for (const name of ['map01-revenant', 'map01-mancubus', 'map01-pain', 'map01-vile', 'map01-heavy', 'map01-cyber', 'map01-spider', 'map30-icon'].filter(mine)) {
+  const w = results[name];
+  const off = w ? FIELDS.filter((f) => w.first[f] !== null) : [`no ${name}`];
+  assert(w && off.length === 0 && w.unplayed === 0,
+    `the rarer monsters in step: ${name} agrees with vanilla in every column for all ${w?.tics} tics${off.length ? ` (but ${off.join(', ')})` : ''}`);
 }
 
 // phase L2: the scripted walk (turns, runs, strafes, a wall) keeps the player in step all the way

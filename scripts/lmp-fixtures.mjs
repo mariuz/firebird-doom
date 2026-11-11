@@ -162,6 +162,19 @@ const DEMOS = [
   ['map01-coop-exit', 'freedoom2.wad', scriptedNet(1, 1, [
     [[35, 25, 0, 0, 0], ...WI_PRESSES, [60, 50, 0, 640, 0], [60, 25, 10, 0, BT_ATTACK]],
     [[19, 0, 0, 0, 0], [16, 50, 0, 0, 0], [153, 0, 0, 0, 0], [120, 25, 0, -320, BT_ATTACK]]])],
+  // the rarer monsters (a PWAD of MAP01, EXIT_PWADS): over the rocket launcher ahead (picked up,
+  // in hand at once), then rockets at what waits at the foot of the stairs, a pause, and again
+  ...['mancubus', 'pain', 'vile', 'heavy'].map((m) => [`map01-${m}`, 'freedoom2.wad', scripted(1, 1, [
+    [8, 25, 0, 0, 0], [40, 0, 0, 0, 0], [120, 0, 0, 0, BT_ATTACK], [80, 0, 0, 0, 0], [160, 0, 0, 0, BT_ATTACK], [200, 0, -24, 0, 0]])]),
+  // (the revenant first left to fire its homing missiles for a while, A_Tracer, dodged sideways)
+  ['map01-revenant', 'freedoom2.wad', scripted(1, 1, [
+    [8, 25, 0, 0, 0], [150, 0, 0, 0, 0], [60, 0, 24, 0, 0], [90, 0, -24, 0, 0], [120, 0, 0, 0, BT_ATTACK], [180, 0, 0, 0, 0]])],
+  // the bosses: the cyberdemon's rockets and hooves, the spider mastermind's chaingun (A_SpidRefire)
+  ...['cyber', 'spider'].map((m) => [`map01-${m}`, 'freedoom2.wad', scripted(1, 1, [
+    [8, 25, 0, 0, 0], [150, 0, 0, 0, 0], [60, 0, 24, 0, 0], [90, 0, -24, 0, 0], [120, 0, 0, 0, BT_ATTACK], [180, 0, 0, 0, 0]])]),
+  // the Icon of Sin: its shooter wakes (A_BrainAwake), spits cubes at the spots (A_BrainSpit), they
+  // land in fire and become monsters (A_SpawnFly), and those come for the player, who stands still
+  ['map30-icon', 'freedoom2.wad', scripted(1, 30, [[1400, 0, 0, 0, 0]])],
   ['e1m2-attract', 'freedoom1.wad', fromAttract('freedoom1-demo2.json', 700)],
   ['e1m3-attract', 'freedoom1.wad', fromAttract('freedoom1-demo3.json', 700)],
   ['map02-attract', 'freedoom2.wad', fromAttract('freedoom2-demo2.json', 700)],
@@ -183,9 +196,9 @@ for (const [name, wadFile, make, mobjTics] of DEMOS.filter(([n]) => !only.length
   // (on a PWAD of the IWAD's map with an exit where the demo walks: W_AddFile, -file)
   const pwad = [];
   if (EXIT_PWADS[name]) {
-    const [iwadFile, map, line, special] = EXIT_PWADS[name];
+    const [iwadFile, map, line, special, things] = EXIT_PWADS[name];
     const file = path.join(home, `${name}.wad`);
-    fs.writeFileSync(file, exitPwad(new Wad(fs.readFileSync(path.join(root, 'public/wads', iwadFile))), map, line, special));
+    fs.writeFileSync(file, exitPwad(new Wad(fs.readFileSync(path.join(root, 'public/wads', iwadFile))), map, line, special, [], things));
     pwad.push('-file', file);
   }
   try {

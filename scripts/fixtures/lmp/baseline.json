@@ -551,6 +551,29 @@
     },
     "map": "MAP01"
   },
+  "map01-cyber": {
+    "tics": 608,
+    "synced": 608,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP01"
+  },
   "map01-exit": {
     "tics": 348,
     "synced": 348,
@@ -573,6 +596,144 @@
       "sumstate": null
     },
     "map": "MAP02"
+  },
+  "map01-heavy": {
+    "tics": 608,
+    "synced": 608,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP01"
+  },
+  "map01-mancubus": {
+    "tics": 608,
+    "synced": 608,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP01"
+  },
+  "map01-pain": {
+    "tics": 608,
+    "synced": 608,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP01"
+  },
+  "map01-revenant": {
+    "tics": 608,
+    "synced": 608,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP01"
+  },
+  "map01-spider": {
+    "tics": 608,
+    "synced": 608,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP01"
+  },
+  "map01-vile": {
+    "tics": 608,
+    "synced": 608,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP01"
   },
   "map02-attract": {
     "tics": 700,
@@ -734,5 +895,28 @@
       "sumstate": null
     },
     "map": "MAP05"
+  },
+  "map30-icon": {
+    "tics": 1400,
+    "synced": 1400,
+    "unplayed": 0,
+    "first": {
+      "leveltime": null,
+      "prndindex": null,
+      "x": null,
+      "y": null,
+      "z": null,
+      "angle": null,
+      "momx": null,
+      "momy": null,
+      "health": null,
+      "mobjs": null,
+      "sumx": null,
+      "sumy": null,
+      "sumz": null,
+      "sumhealth": null,
+      "sumstate": null
+    },
+    "map": "MAP30"
   }
 }

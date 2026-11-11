@@ -268,12 +268,27 @@ export async function nextDemoMap(db, wad, res, demo, loadMap, secret) {
  * level's end where Freedoom's exits lie behind keys and switches. EXTRA: more lumps, [name,
  * bytes] (a DEMO1, for the page's title loop). → the PWAD's bytes.
  */
-export function exitPwad(iwad, map, line, special, extra = []) {
+export function exitPwad(iwad, map, line, special, extra = [], things = []) {
   const LUMPS = ['THINGS', 'LINEDEFS', 'SIDEDEFS', 'VERTEXES', 'SEGS', 'SSECTORS', 'NODES', 'SECTORS', 'REJECT', 'BLOCKMAP'];
   const at = iwad.lump(map).index;
   const lumps = [[map, new Uint8Array(0)], ...LUMPS.map((n, k) => [n, Uint8Array.from(iwad.data(iwad.lumps[at + 1 + k]))]), ...extra];
   const ld = lumps[2][1];
-  new DataView(ld.buffer).setUint16(line * 14 + 6, special, true);
+  if (line !== null) new DataView(ld.buffer).setUint16(line * 14 + 6, special, true);
+  // (THINGS: each thing added at the end, [x, y, angle, type, flags] – 10 bytes, as P_LoadThings
+  // reads them – or, with a sixth value, put in place of the map's thing of that index)
+  if (things.length) {
+    const old = lumps[1][1];
+    const added = things.filter((t) => t[5] === undefined).length;
+    const more = new Uint8Array(old.length + 10 * added);
+    more.set(old);
+    const tv = new DataView(more.buffer);
+    let k = 0;
+    things.forEach(([x, y, angle, type, flags = 7, at]) => {
+      const o = at === undefined ? old.length + 10 * k++ : 10 * at;
+      tv.setInt16(o, x, true); tv.setInt16(o + 2, y, true); tv.setInt16(o + 4, angle, true); tv.setInt16(o + 6, type, true); tv.setInt16(o + 8, flags, true);
+    });
+    lumps[1][1] = more;
+  }
   const size = lumps.reduce((a, [, b]) => a + b.length, 0);
   const out = new Uint8Array(12 + size + 16 * lumps.length);
   const dv = new DataView(out.buffer);
@@ -292,7 +307,10 @@ export function exitPwad(iwad, map, line, special, extra = []) {
   return out;
 }
 
-// the fixtures played on a PWAD: NAME → [the IWAD, the map, the line, its new special]
+// the fixtures played on a PWAD: NAME → [the IWAD, the map, the line, its new special (or none),
+// and things added to the map]: an exit where a demo walks, or monsters no Freedoom map puts in
+// reach of a demo's start
+const ROCKETS = [[-128, -192, 0, 2003], [-128, -192, 0, 2046], [-112, -192, 0, 2046]];   // (a launcher and two boxes 64 ahead)
 export const EXIT_PWADS = {
   'e1m1-exit': ['freedoom1.wad', 'E1M1', 834, 52],
   'map01-exit': ['freedoom2.wad', 'MAP01', 88, 52],
@@ -300,6 +318,18 @@ export const EXIT_PWADS = {
   'e1m1-dm-exit': ['freedoom1.wad', 'E1M1', 722, 52],
   'map01-coop-exit': ['freedoom2.wad', 'MAP01', 82, 52],
   'e1m1-altdeath-exit': ['freedoom1.wad', 'E1M1', 582, 52],
+  // MAP01 with monsters at the foot of the stairs east of the start (640 ahead), facing the player
+  'map01-revenant': ['freedoom2.wad', 'MAP01', null, 0, [...ROCKETS, [448, -128, 180, 66]]],
+  'map01-mancubus': ['freedoom2.wad', 'MAP01', null, 0, [...ROCKETS, [448, -128, 180, 67]]],
+  'map01-pain': ['freedoom2.wad', 'MAP01', null, 0, [...ROCKETS, [448, -128, 180, 71]]],
+  'map01-vile': ['freedoom2.wad', 'MAP01', null, 0, [...ROCKETS, [448, -128, 180, 64], [256, -192, 180, 3004], [256, -64, 180, 3004], [320, -128, 180, 3001]]],
+  'map01-heavy': ['freedoom2.wad', 'MAP01', null, 0, [...ROCKETS, [448, -192, 180, 65], [448, -64, 180, 69], [576, -128, 180, 68]]],
+  'map01-cyber': ['freedoom2.wad', 'MAP01', null, 0, [...ROCKETS, [448, -128, 180, 16]]],
+  'map01-spider': ['freedoom2.wad', 'MAP01', null, 0, [...ROCKETS, [448, -128, 180, 7]]],
+  // MAP30 with the player's start (thing 73) moved to the walkway in front of the Icon of Sin,
+  // facing it: its shooter sees them and wakes. (Moved, not added: a second start would leave a
+  // voodoo doll at the first, which the port doesn't spawn yet – docs/ROADMAP.md)
+  'map30-icon': ['freedoom2.wad', 'MAP30', null, 0, [[-2208, 3000, 90, 1, 7, 73]]],
 };
 
 /** Load the demo's map in the port as the demo starts it (G_InitNew: skill, options; M_ClearRandom) */
