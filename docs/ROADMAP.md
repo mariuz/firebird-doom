@@ -25,7 +25,7 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
 - **A WebAssembly trap in WebKit** (Engine): in a few co-op runs out of a dozen on CI, a page's engine stops
   with `Out of bounds memory access` while a second page starts; 30 paired starts didn't repeat it.
   It isn't only a second page: on 10 November the browser test's one page trapped the same way while
-  starting, before the title (a rerun passed). A source-mapped build of `firebird-embedded-st` would
+  starting, before the title (a rerun passed). On 11 November a WebKit page process crashed outright ("Target crashed") in the browser test's command-line section, a load after `?warp`; a rerun passed. A source-mapped build of `firebird-embedded-st` would
   say where; it may be WebKit's or the engine's. Both page tests reload such a page once, with a
   warning.
 - **Safari itself, pointer lock and touch** (Tooling): Firefox and WebKit are in CI now; a manual
