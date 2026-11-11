@@ -370,7 +370,10 @@ try {
   await guest.evaluate(() => document.activeElement?.blur());
   const dmArrows = await arrowsNow(guest);
   assert(JSON.stringify(dmArrows) === JSON.stringify([{ id: 2, color: 96 }]), `deathmatch automap: only your own arrow (${JSON.stringify(dmArrows)})`);
-  // the guest kills the host: a frag for player 2, on both status bars' numbers
+  // the guest kills the host: a frag for player 2, on both status bars' numbers. (The damage goes
+  // into each page's database directly, not through the ticcmds, so the two may take it on
+  // different tics: then the next checksum stops the game, as it should – the wait after the
+  // guest leaves takes that too)
   await guest.evaluate(() => window.doom.sql('EXECUTE PROCEDURE damage_player(1000, (SELECT thing_id FROM player WHERE id = 2), 1)'));
   await host.evaluate(() => window.doom.sql('EXECUTE PROCEDURE damage_player(1000, (SELECT thing_id FROM player WHERE id = 2), 1)'));
   await host.waitForTimeout(1500);
@@ -382,7 +385,7 @@ try {
   // loading a netgame (-loadgame): the host starts from the co-op save of slot 5. The save goes
   // in the start message, and both games restore it before the first tic: its map, its tic, its
   // rules (co-op, though the panel still says deathmatch). (The guest gone, the host plays on alone.)
-  await until(host, () => /Out of it: player 2/.test(document.getElementById('net-status').textContent), null, 30000);
+  await until(host, () => /Out of it: player 2|^Stopped: out of sync/.test(document.getElementById('net-status').textContent), null, 30000);
   await host.evaluate(() => document.getElementById('net-leave').click());
   await host.evaluate(() => document.getElementById('net-host').click());
   await until(host, () => document.getElementById('net-out').value.length > 50);
