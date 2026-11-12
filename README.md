@@ -943,7 +943,9 @@ itself is still peer to peer. The site uses the relay set at deploy time (`RELAY
 **Relay** field or `?relay=URL` points it at another. Without one, codes go by hand as above, through
 STUN only. Deploying it takes a Cloudflare account and four commands ([worker/README.md](worker/README.md)).
 `npm run relay` runs it locally, `npm run test:relay` checks it, and the co-op test ends with two pages
-joining by a room code.
+joining by a room code. To try co-op with two tabs of the dev server in Firefox, open it at
+`http://127.0.0.1:8080/`, not `localhost`: Firefox 155 gathers no WebRTC candidates on a page from
+`http://localhost`, so the two never connect (the site itself, over https, is unaffected).
 
 It plays the way DOOM did over IPX: in lockstep (`d_net.c`). Nothing about the game crosses the
 wire but each player's ticcmd, once a tic: forward, strafe, turn, fire, use, weapon and run. The

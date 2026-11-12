@@ -52,7 +52,10 @@ try {
       recent.push(`${m.type()}: ${m.text().slice(0, 200)}`);
     });
     page.setDefaultTimeout(120000);
-    await page.goto(`http://localhost:${port}/${query}`);
+    // (Firefox from 127.0.0.1, not localhost: Firefox 155 gathers no ICE candidates at all on a
+    // page from http://localhost, so two pages there never connect; from 127.0.0.1 they do.
+    // Chromium and WebKit connect from localhost, as they always have)
+    await page.goto(`http://${browserName === 'firefox' ? '127.0.0.1' : 'localhost'}:${port}/${query}`);
     // A page that doesn't start says where it stopped. In WebKit on CI the engine has now
     // and then trapped while a second page started ("Out of bounds memory access", about
     // a few co-op runs in a dozen; docs/ROADMAP.md): then it's reloaded once, as a player would,

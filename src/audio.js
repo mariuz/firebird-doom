@@ -74,7 +74,9 @@ export class DoomAudio {
       this.musicGain.connect(this.master);
       this.setVolumes(this.sfxVolume, this.musicVolume);
     }
-    if (this.ctx.state === 'suspended') this.ctx.resume();
+    // (suspended until a gesture, or WebKit's 'interrupted' – Safari's when something else took the
+    // audio, a call, or as WebKit 26.6 starts on a CI runner: a gesture's resume() brings it back)
+    if (this.ctx.state !== 'running') this.ctx.resume();
     if (this.pendingMusic) {
       const m = this.pendingMusic;
       this.pendingMusic = null;

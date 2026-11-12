@@ -63,7 +63,11 @@ Everything else below is done.
 
 - ~~**Playwright past 1.56.**~~ Done: 1.63, whose Chromium (build 1243) is the container's, so the
   page tests run here without `CHROMIUM=`, and which installs its browsers on Ubuntu 26.04, so both
-  workflows run on `ubuntu-latest`. Firefox 155 and WebKit 26.6 in the browser matrix.
+  workflows run on `ubuntu-latest`. Firefox 155 and WebKit 26.6 in the browser matrix, and each
+  found something: WebKit 26.6 starts its audio "interrupted", which the page's unlock didn't
+  resume (it resumes any state but running now: Safari's after a call too); Firefox 155 gathers
+  no WebRTC candidates on a page from http://localhost, so the co-op test opens Firefox's pages
+  at 127.0.0.1.
 
 - ~~**Voodoo dolls.**~~ Done: `INIT_MAP` spawns a body at every start of a player's number (not in
   deathmatch), the last the player's own, the others dolls (`THINGS.DOLL_OF`) in the thinkers'
