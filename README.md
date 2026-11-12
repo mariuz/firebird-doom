@@ -1411,7 +1411,7 @@ and the pictures that changed are uploaded for a look. Then it builds and publis
 
 The page is tested in three browser engines on every push to `main`. The main workflow uses Chromium,
 and [.github/workflows/browsers.yml](.github/workflows/browsers.yml) runs the same browser and co-op tests in
-Firefox and in WebKit, Safari's engine (Playwright 1.56: Firefox 142, WebKit 26). `BROWSER=firefox npm run
+Firefox and in WebKit, Safari's engine (Playwright 1.63: Firefox 155, WebKit 26.6). `BROWSER=firefox npm run
 test:browser` runs one locally. All three play both tests through. That covers:
 
 - the engine in its Worker;

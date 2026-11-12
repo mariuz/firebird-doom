@@ -74,9 +74,10 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 - **The browser test** (`scripts/browser-test.mjs`) drives the real page. Waiting for a new level:
   `doom.screen` reads `level` while the next map is still loading, and melts queue up (a level
   loaded behind another screen's melt gets its own after), so wait for `doom.settled` (the screen
-  shown is the current one and no melt is running) before pressing keys – a melt drops them. Playwright is pinned (1.56); CI installs
-  its own Chromium. If the container's Chromium in `/opt/pw-browsers` is another revision (Playwright
-  says "Executable doesn't exist"), run the page tests with `CHROMIUM=/opt/pw-browsers/chromium`.
+  shown is the current one and no melt is running) before pressing keys – a melt drops them. Playwright is pinned (1.63, whose Chromium
+  build, 1243, is the one in `/opt/pw-browsers` here); CI installs its own. Should the container's
+  Chromium move on (Playwright says "Executable doesn't exist"), run the page tests with
+  `CHROMIUM=/opt/pw-browsers/chromium`, or pin the Playwright whose `browsers.json` names that build.
 - **Check live when you can.** The desktop app's browser pane runs the dev server. The game loop
   pauses while the page is hidden (`document.hidden`), so if the pane is hidden, say so and verify
   headless: drive the state machines, render PNGs with `renderer.toRGBA`, use stub renderers. Never
@@ -113,9 +114,8 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   Patch scripts should `throw` when an anchor is missing, so nothing half-applies.
 - **Don't kill unknown `node` processes.** Port 8080 is often taken. The launch config has
   `autoPort`.
-- **CI runs on `ubuntu-24.04`, not `-latest`.** On 26.04 the pinned Playwright (1.56, the version
-  whose Chromium is installed here) can't install its browsers. Move both workflows on when
-  Playwright is upgraded.
+- **CI runs on `ubuntu-latest`** (26.04): Playwright 1.63 installs its browsers there. An older
+  Playwright may not (1.56 couldn't, and kept CI on 24.04 until November 2026).
 - **`git push` can 500 on GitHub.** Retry in a loop. Someone else (the user) may push to `main` too,
   so check `git status -sb` after pushing, then `git pull --ff-only`.
 - **Freedoom specifics:** `WISPLAT`, `WIURH0/1` and all `WIA*` intermission lumps are empty 1×1

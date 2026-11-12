@@ -42,8 +42,6 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   L7, playing them on the page, L8, netgames, and L9, netgames through a level's end, are done.
   Left: someone with id's WADs running `WAD=/path/to/doom.wad npm run test:lmp` against their
   demos.
-- **Playwright past 1.56** (Tooling): the pinned 1.56 keeps CI on `ubuntu-24.04` (on 26.04 it
-  installs no browsers) and needs `CHROMIUM=` in this container; a newer one would let both go.
 - **Host migration** (Multiplayer; not vanilla, ask first): every command goes through the host,
   so the host leaving ends the game for everyone. Another peer could take over from the last tic
   all agreed on.
@@ -62,6 +60,10 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
 Everything else below is done.
 
 ## Game flow and menus
+
+- ~~**Playwright past 1.56.**~~ Done: 1.63, whose Chromium (build 1243) is the container's, so the
+  page tests run here without `CHROMIUM=`, and which installs its browsers on Ubuntu 26.04, so both
+  workflows run on `ubuntu-latest`. Firefox 155 and WebKit 26.6 in the browser matrix.
 
 - ~~**Voodoo dolls.**~~ Done: `INIT_MAP` spawns a body at every start of a player's number (not in
   deathmatch), the last the player's own, the others dolls (`THINGS.DOLL_OF`) in the thinkers'
