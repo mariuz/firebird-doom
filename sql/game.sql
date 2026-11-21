@@ -2889,7 +2889,7 @@ END^
 -- line that brought the ceiling lowest is CEILINGLINE (a context variable, DOOM's global).
 CREATE OR ALTER PROCEDURE check_position_fx (
   tid INTEGER, x BIGINT, y BIGINT, rad BIGINT, noclip SMALLINT, things SMALLINT = 1, monster SMALLINT = 0, missile SMALLINT = 0)
-RETURNS (ok SMALLINT, floorz BIGINT, ceilz BIGINT, dropoffz BIGINT, spechit VARCHAR(4000))
+RETURNS (ok SMALLINT, floorz BIGINT, ceilz BIGINT, dropoffz BIGINT, spechit VARCHAR(4000), at_sector INTEGER)
 AS
 DECLARE seen VARCHAR(8000);
 DECLARE cbx INTEGER;
@@ -2931,6 +2931,7 @@ BEGIN
   ok = 1;
   spechit = '';
   sec = sector_at_fx(x, y);
+  at_sector = sec;   -- (the subsector's sector at X, Y: for the caller that moves there, asked once)
   SELECT fx_of(s.floor_h), fx_of(s.ceil_h) FROM sectors s WHERE s.id = :sec INTO floorz, ceilz;
   dropoffz = floorz;
   IF (noclip = 1) THEN EXIT;
@@ -3181,6 +3182,7 @@ END^
 CREATE OR ALTER PROCEDURE thing_height_clip (tid INTEGER)
 RETURNS (fits SMALLINT)
 AS
+DECLARE cp_sec INTEGER;
 DECLARE x BIGINT;
 DECLARE y BIGINT;
 DECLARE z BIGINT;
@@ -3201,7 +3203,7 @@ BEGIN
          COALESCE((SELECT p.noclip FROM player p WHERE p.thing_id = t.id), 0), IIF(t.kind = 'player', 1, 0)
     FROM things t WHERE t.id = :tid INTO x, y, z, h, rad, fz0, noclip, isp;
   IF (x IS NULL) THEN EXIT;
-  EXECUTE PROCEDURE check_position_fx(tid, x, y, rad, noclip, 1, 1 - isp) RETURNING_VALUES ok, fz, cz, dz, spec;
+  EXECUTE PROCEDURE check_position_fx(tid, x, y, rad, noclip, 1, 1 - isp) RETURNING_VALUES ok, fz, cz, dz, spec, cp_sec;
   -- (onfloor: z == floorz, the floor it had; walking monsters rise and fall with it)
   IF (z = COALESCE(fz0, z)) THEN z = fz;
   ELSE IF (z + h > cz) THEN z = cz - h;
@@ -3573,6 +3575,7 @@ END^
 CREATE OR ALTER PROCEDURE try_move_fx (tid INTEGER, pid SMALLINT, x BIGINT, y BIGINT)
 RETURNS (ok SMALLINT)
 AS
+DECLARE cp_sec INTEGER;
 DECLARE ox BIGINT;
 DECLARE oy BIGINT;
 DECLARE z BIGINT;
@@ -3596,7 +3599,7 @@ BEGIN
   SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z) FROM things t WHERE t.id = :tid INTO ox, oy, z;
   noclip = 0;
   SELECT p.noclip FROM player p WHERE p.id = :pid AND p.thing_id = :tid INTO noclip;   -- (the body's: MF_NOCLIP)
-  EXECUTE PROCEDURE check_position_fx(tid, x, y, 1048576, noclip) RETURNING_VALUES ok, fz, cz, dz, spec;
+  EXECUTE PROCEDURE check_position_fx(tid, x, y, 1048576, noclip) RETURNING_VALUES ok, fz, cz, dz, spec, cp_sec;
   IF (ok = 0) THEN EXIT;
   IF (noclip = 0 AND (cz - fz < 3670016 OR cz - z < 3670016 OR fz - z > 1572864)) THEN
   BEGIN
@@ -3605,7 +3608,7 @@ BEGIN
   END
   UPDATE things t
      SET x = :x / 65536e0, y = :y / 65536e0, floorz = :fz / 65536e0, ceilz = :cz / 65536e0,
-         fz_x = :x / 65536e0, fz_y = :y / 65536e0, sector_id = sector_at_fx(:x, :y)
+         fz_x = :x / 65536e0, fz_y = :y / 65536e0, sector_id = :cp_sec
    WHERE t.id = :tid;
   IF (noclip = 1) THEN EXIT;
   WHILE (spec <> '') DO
@@ -4071,6 +4074,7 @@ END^
 -- where they were found (FZ_X, FZ_Y: a test, the console – it stays at its height)
 CREATE OR ALTER PROCEDURE height_clip_fx (tid INTEGER, force SMALLINT = 0)
 AS
+DECLARE cp_sec INTEGER;
 DECLARE x BIGINT;
 DECLARE y BIGINT;
 DECLARE z BIGINT;
@@ -4086,7 +4090,7 @@ BEGIN
     FROM things t WHERE t.id = :tid
     INTO x, y, z, oldfz, moved;
   IF (oldfz IS NOT NULL AND force = 0 AND moved = 0) THEN EXIT;
-  EXECUTE PROCEDURE check_position_fx(tid, x, y, 1048576, 0, 0) RETURNING_VALUES ok, fz, cz, dz, spec;
+  EXECUTE PROCEDURE check_position_fx(tid, x, y, 1048576, 0, 0) RETURNING_VALUES ok, fz, cz, dz, spec, cp_sec;
   IF (oldfz IS NULL OR (z = oldfz AND moved = 0)) THEN z = fz;
   ELSE IF (z + 3670016 > cz) THEN z = cz - 3670016;
   UPDATE things t SET z = :z / 65536e0, floorz = :fz / 65536e0, ceilz = :cz / 65536e0, fz_x = t.x, fz_y = t.y
@@ -5809,6 +5813,7 @@ END^
 CREATE OR ALTER PROCEDURE try_move_missile (tid INTEGER, x BIGINT, y BIGINT)
 RETURNS (ok SMALLINT)
 AS
+DECLARE cp_sec INTEGER;
 DECLARE ox BIGINT;
 DECLARE oy BIGINT;
 DECLARE z BIGINT;
@@ -5896,13 +5901,13 @@ BEGIN
     ELSE EXECUTE PROCEDURE damage_thing(hid, dmg, owner, tid);
     EXIT;
   END
-  EXECUTE PROCEDURE check_position_fx(tid, x, y, rad, 0, 0, 0, 1) RETURNING_VALUES lok, fz, cz, dz, spec;
+  EXECUTE PROCEDURE check_position_fx(tid, x, y, rad, 0, 0, 0, 1) RETURNING_VALUES lok, fz, cz, dz, spec, cp_sec;
   IF (lok = 0) THEN EXIT;
   IF (cz - fz < hgt) THEN EXIT;                     -- (doesn't fit)
   IF (cz - z < hgt) THEN EXIT;                      -- (under the ceiling)
   IF (fz - z > 1572864) THEN EXIT;                  -- (a step of more than 24)
   ok = 1;
-  UPDATE things t SET x = :x / 65536e0, y = :y / 65536e0, sector_id = sector_at_fx(:x, :y),
+  UPDATE things t SET x = :x / 65536e0, y = :y / 65536e0, sector_id = :cp_sec,
                       floorz = :fz / 65536e0, ceilz = :cz / 65536e0, fz_x = :x / 65536e0, fz_y = :y / 65536e0
    WHERE t.id = :tid;
   IF (mtype IN (9000, 9001, 9002, 9003, 9004, 9005)) THEN EXIT;
@@ -6065,6 +6070,7 @@ END^
 CREATE OR ALTER PROCEDURE try_move_mobj (tid INTEGER, x BIGINT, y BIGINT, things SMALLINT = 1)
 RETURNS (ok SMALLINT, floatok SMALLINT, tmfloorz BIGINT, spechit VARCHAR(4000))
 AS
+DECLARE cp_sec INTEGER;
 DECLARE ox BIGINT;
 DECLARE oy BIGINT;
 DECLARE z BIGINT;
@@ -6090,7 +6096,7 @@ BEGIN
          IIF(COALESCE(tt.floats, 0) = 1 OR t.st IN ('dying', 'dead'), 1, 0)
     FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type WHERE t.id = :tid
     INTO ox, oy, z, rad, hgt, fl;
-  EXECUTE PROCEDURE check_position_fx(tid, x, y, rad, 0, things, 1) RETURNING_VALUES ok, tmfloorz, cz, dz, spechit;
+  EXECUTE PROCEDURE check_position_fx(tid, x, y, rad, 0, things, 1) RETURNING_VALUES ok, tmfloorz, cz, dz, spechit, cp_sec;
   IF (ok = 0) THEN EXIT;
   ok = 0;
   IF (cz - tmfloorz < hgt) THEN EXIT;           -- (doesn't fit)
@@ -6099,7 +6105,7 @@ BEGIN
   IF (tmfloorz - z > 1572864) THEN EXIT;        -- (a step up of more than 24)
   IF (fl = 0 AND tmfloorz - dz > 1572864) THEN EXIT;   -- (over a drop-off: MF_DROPOFF – a corpse – and MF_FLOAT may)
   ok = 1;
-  UPDATE things t SET x = :x / 65536e0, y = :y / 65536e0, sector_id = sector_at_fx(:x, :y),
+  UPDATE things t SET x = :x / 65536e0, y = :y / 65536e0, sector_id = :cp_sec,
                       floorz = :tmfloorz / 65536e0, ceilz = :cz / 65536e0, fz_x = :x / 65536e0, fz_y = :y / 65536e0
    WHERE t.id = :tid;
   spec = spechit;
@@ -6482,6 +6488,7 @@ END^
 -- so its first A_Chase looks for players before it moves). Else A_Chase.
 CREATE OR ALTER PROCEDURE a_vile_chase (tid INTEGER, tic INTEGER)
 AS
+DECLARE cp_sec INTEGER;
 DECLARE x BIGINT;
 DECLARE y BIGINT;
 DECLARE spd BIGINT;
@@ -6539,7 +6546,7 @@ BEGIN
     BEGIN
       IF (ABS(cx - tx) > crad + vrad OR ABS(cy - ty) > crad + vrad) THEN CONTINUE;
       UPDATE things c SET momx = 0, momy = 0 WHERE c.id = :cid;
-      EXECUTE PROCEDURE check_position_fx(cid, cx, cy, crad, 0) RETURNING_VALUES ok, fz, cz, dz, spec;
+      EXECUTE PROCEDURE check_position_fx(cid, cx, cy, crad, 0) RETURNING_VALUES ok, fz, cz, dz, spec, cp_sec;
       IF (ok = 1) THEN
       BEGIN
         UPDATE things t SET angle = rad_of(point_to_angle2(:x, :y, :cx, :cy)), flags = BIN_AND(t.flags, BIN_NOT(8)) WHERE t.id = :tid;
