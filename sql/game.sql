@@ -3634,6 +3634,7 @@ CREATE OR ALTER PROCEDURE slide_traverse (
   best_in BIGINT, line_in INTEGER)
 RETURNS (best BIGINT, best_line INTEGER)
 AS
+DECLARE lfront INTEGER;
 DECLARE orgx BIGINT;
 DECLARE orgy BIGINT;
 DECLARE bw INTEGER;
@@ -3744,14 +3745,13 @@ BEGIN
   BEGIN
     -- P_BlockLinesIterator (mapx, mapy, PIT_AddLineIntercepts)
     IF (mapx >= 0 AND mapy >= 0 AND mapx < bw AND mapy < bh) THEN
-      FOR SELECT l.id, l.fx, l.fy, l.fdx, l.fdy, l.flags, l.back_sector, fs.floor_h, fs.ceil_h, bs.floor_h, bs.ceil_h
+      -- (the sectors' heights read only for a two-sided line the trace crosses)
+      FOR SELECT l.id, l.fx, l.fy, l.fdx, l.fdy, l.flags, l.back_sector, l.front_sector
             FROM blockmap b
             JOIN linedefs l ON l.id = b.line_id
-            LEFT JOIN sectors fs ON fs.id = l.front_sector
-            LEFT JOIN sectors bs ON bs.id = l.back_sector
            WHERE b.bx = :mapx AND b.by_ = :mapy
            ORDER BY b.seq
-            INTO lid, lx, ly, ldx, ldy, lflags, lback, ff, fc, bf, bc
+            INTO lid, lx, ly, ldx, ldy, lflags, lback, lfront
       DO
       BEGIN
         IF (POSITION(',' || lid || ',' IN seen) > 0) THEN CONTINUE;
@@ -3777,6 +3777,9 @@ BEGIN
           blocks = 1;                             -- (P_LineOpening: no back, no opening)
         ELSE
         BEGIN
+          ff = NULL; fc = NULL; bf = NULL; bc = NULL;
+          SELECT z.floor_h, z.ceil_h FROM sectors z WHERE z.id = :lfront INTO ff, fc;
+          SELECT z.floor_h, z.ceil_h FROM sectors z WHERE z.id = :lback INTO bf, bc;
           opentop = MINVALUE(fx_of(fc), fx_of(bc));
           openbottom = MAXVALUE(fx_of(ff), fx_of(bf));
           IF (opentop - openbottom < 3670016 OR opentop - mz < 3670016 OR openbottom - mz > 1572864) THEN blocks = 1;
