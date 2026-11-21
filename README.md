@@ -1595,7 +1595,13 @@ The DOOM II monsters' signature attacks follow DOOM's code:
   they charge from far off. Souls spat out by a pain elemental charge at once
 
 Large maps with many monsters awake at once can still drop below 10 fps. The *Low* detail setting
-(160 columns, like DOOM's own) halves the render cost.
+(160 columns, like DOOM's own) halves the render cost. The stats line under the view says where a
+frame goes: `doom_tic` (the simulation, every tic since the last frame), `frame_walls` and
+`frame_sprites` (what's visible), and `raster` (drawing it, the only part on the page's own
+thread: 1–5 ms; the engine runs in its Worker). The simulation is the biggest part.
+`node scripts/sql-profile.mjs E1M1,E1M2 300` times its pieces inside the engine – the player,
+the thinkers, each state action – over a few hundred tics: monsters asleep looking for you
+(`A_Look`, a sight check each) were the largest share, and the player's own move next.
 
 ## Credits
 

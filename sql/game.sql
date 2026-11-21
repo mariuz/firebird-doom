@@ -2889,6 +2889,9 @@ CREATE OR ALTER PROCEDURE check_position_fx (
   tid INTEGER, x BIGINT, y BIGINT, rad BIGINT, noclip SMALLINT, things SMALLINT = 1, monster SMALLINT = 0, missile SMALLINT = 0)
 RETURNS (ok SMALLINT, floorz BIGINT, ceilz BIGINT, dropoffz BIGINT, spechit VARCHAR(4000))
 AS
+DECLARE seen VARCHAR(8000);
+DECLARE cbx INTEGER;
+DECLARE cby INTEGER;
 DECLARE orgx BIGINT;
 DECLARE orgy BIGINT;
 DECLARE bw INTEGER;
@@ -2964,25 +2967,36 @@ BEGIN
       END
     END
   END
-  xl = BIN_SHR(x - rad - orgx, 23);
-  xh = BIN_SHR(x + rad - orgx, 23);
-  yl = BIN_SHR(y - rad - orgy, 23);
-  yh = BIN_SHR(y + rad - orgy, 23);
+  -- PIT_CheckLine over the blocks the box touches, column by column (P_BlockLinesIterator), each
+  -- block's list in its order, a line met in an earlier block passed over (validcount). Each block
+  -- looked up by its key: a range on bx alone would read whole columns of the blockmap
+  xl = MAXVALUE(BIN_SHR(x - rad - orgx, 23), 0);
+  xh = MINVALUE(BIN_SHR(x + rad - orgx, 23), bw - 1);
+  yl = MAXVALUE(BIN_SHR(y - rad - orgy, 23), 0);
+  yh = MINVALUE(BIN_SHR(y + rad - orgy, 23), bh - 1);
+  seen = ',';
+  cbx = xl;
+  WHILE (cbx <= xh) DO
+  BEGIN
+  cby = yl;
+  WHILE (cby <= yh) DO
+  BEGIN
+  -- (the box's own test first – tmbbox against the line's – then the sectors only for those
+  -- that pass: a line outside it is outside it in every block)
   FOR SELECT l.id, l.fx, l.fy, l.fdx, l.fdy, l.slope, l.flags, l.special, l.back_sector,
-             l.minx, l.maxx, l.miny, l.maxy, fs.floor_h, fs.ceil_h, bs.floor_h, bs.ceil_h
-        FROM (SELECT b.line_id, b.bx, b.by_, b.seq,
-                     ROW_NUMBER() OVER (PARTITION BY b.line_id ORDER BY b.bx, b.by_, b.seq) rn
-                FROM blockmap b
-               WHERE b.bx BETWEEN :xl AND :xh AND b.by_ BETWEEN :yl AND :yh) q
-        JOIN linedefs l ON l.id = q.line_id
+             fs.floor_h, fs.ceil_h, bs.floor_h, bs.ceil_h
+        FROM blockmap b
+        JOIN linedefs l ON l.id = b.line_id
         LEFT JOIN sectors fs ON fs.id = l.front_sector
         LEFT JOIN sectors bs ON bs.id = l.back_sector
-       WHERE q.rn = 1
-       ORDER BY q.bx, q.by_, q.seq
-        INTO lid, lx, ly, ldx, ldy, lslope, lflags, lspecial, lback, lminx, lmaxx, lminy, lmaxy, ff, fc, bf, bc
+       WHERE b.bx = :cbx AND b.by_ = :cby
+         AND NOT (:x + :rad <= fx_of(l.minx) OR :x - :rad >= fx_of(l.maxx) OR :y + :rad <= fx_of(l.miny) OR :y - :rad >= fx_of(l.maxy))
+       ORDER BY b.seq
+        INTO lid, lx, ly, ldx, ldy, lslope, lflags, lspecial, lback, ff, fc, bf, bc
   DO
   BEGIN
-    IF (x + rad <= fx_of(lminx) OR x - rad >= fx_of(lmaxx) OR y + rad <= fx_of(lminy) OR y - rad >= fx_of(lmaxy)) THEN CONTINUE;
+    IF (POSITION(',' || lid || ',' IN seen) > 0) THEN CONTINUE;
+    seen = seen || lid || ',';
     IF (box_on_line_side(y + rad, y - rad, x - rad, x + rad, lx, ly, ldx, ldy, lslope) <> -1) THEN CONTINUE;
     -- one-sided, or ML_BLOCKING; for a monster, ML_BLOCKMONSTERS; a missile, only one-sided
     IF (lback IS NULL OR (missile = 0 AND (BIN_AND(lflags, 1) = 1 OR (monster = 1 AND BIN_AND(lflags, 2) = 2)))) THEN
@@ -3002,6 +3016,10 @@ BEGIN
     IF (openbottom > floorz) THEN floorz = openbottom;
     IF (lowfloor < dropoffz) THEN dropoffz = lowfloor;
     IF (lspecial <> 0) THEN spechit = lid || ',' || spechit;
+  END
+  cby = cby + 1;
+  END
+  cbx = cbx + 1;
   END
 END^
 
@@ -4895,22 +4913,23 @@ BEGIN
     BEGIN
       IF (c = 2 OR ll = stp) THEN LEAVE;        -- (c++ == 2 || lastlook == stop: done looking)
       c = c + 1;
-      -- (P_CheckSight again for a player already looked at gives the same answer: kept)
-      IF (POSITION(',' || ll || ':' IN seen) = 0) THEN seen = seen || ll || ':' || IIF(hp > 0, sight_fx(tid, pthing), 0) || ',';
-      IF (POSITION(',' || ll || ':1,' IN seen) > 0) THEN
+      -- (not all around: behind it – between 90° and 270° of its facing – and beyond MELEERANGE,
+      -- the player is passed over whatever P_CheckSight would say; vanilla asks the sight first,
+      -- but it changes nothing, so asking it only when it can count gives the same answer, and
+      -- spares the BSP walk for every player behind a sleeping monster)
+      ok = 1;
+      IF (allaround = 0 AND hp > 0) THEN
       BEGIN
-        ok = 1;
-        IF (allaround = 0) THEN
-        BEGIN
-          SELECT fx_of(t.x), fx_of(t.y) FROM things t WHERE t.id = :pthing INTO qx, qy;
-          an = BIN_AND(point_to_angle2(ax, ay, qx, qy) - aang, 4294967295);
-          IF (an > 1073741824 AND an < 3221225472 AND aprox_distance(fx32(qx - ax), fx32(qy - ay)) > 4194304) THEN ok = 0;
-        END
-        IF (ok = 1) THEN
-        BEGIN
-          found = ll + 1;
-          LEAVE;
-        END
+        SELECT fx_of(t.x), fx_of(t.y) FROM things t WHERE t.id = :pthing INTO qx, qy;
+        an = BIN_AND(point_to_angle2(ax, ay, qx, qy) - aang, 4294967295);
+        IF (an > 1073741824 AND an < 3221225472 AND aprox_distance(fx32(qx - ax), fx32(qy - ay)) > 4194304) THEN ok = 0;
+      END
+      -- (P_CheckSight again for a player already looked at gives the same answer: kept)
+      IF (ok = 1 AND POSITION(',' || ll || ':' IN seen) = 0) THEN seen = seen || ll || ':' || IIF(hp > 0, sight_fx(tid, pthing), 0) || ',';
+      IF (ok = 1 AND POSITION(',' || ll || ':1,' IN seen) > 0) THEN
+      BEGIN
+        found = ll + 1;
+        LEAVE;
       END
     END
     ll = BIN_AND(ll + 1, 3);

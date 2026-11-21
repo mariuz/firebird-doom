@@ -95,9 +95,10 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   against it keeps the index out, and a range on the first column of a composite index scans
   every row of that range: `LINES_IN_BOX` went from 480 to 38 µs with a single-key `CELL` column
   and exact lookups. When the optimizer picks the wrong index, `col + 0` hides a column from it.
-  Time things with `scripts/frame-bench.mjs`, or a WHILE loop in an `EXECUTE BLOCK` around one
-  call (there's no profiler plugin in the WASM build), and compare runs alternately: the machine
-  is noisy.
+  Time things with `scripts/frame-bench.mjs`, `scripts/sql-profile.mjs` (a tic's parts timed
+  inside the engine), or a WHILE loop in an `EXECUTE BLOCK` around one call (there's no profiler
+  plugin in the WASM build; timing each call from JS measures mostly the round trip, ~0.8 ms in
+  Node), and compare runs alternately: the machine is noisy.
 - **Firebird:** `db.exec` splits on `;` (use `SET TERM` or `db.query` for `EXECUTE BLOCK`). About
   256 contexts per statement (an `EXECUTE BLOCK` of `INSERT`s; bulk inserts use `execBatch`). CTEs are inlined (use PSQL generators).
   Pin join order (`LEFT JOIN`/`LATERAL`). Qualify columns and use `:var`. `FOR SELECT` cursors are

@@ -45,10 +45,21 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
 - **Host migration** (Multiplayer; not vanilla, ask first): every command goes through the host,
   so the host leaving ends the game for everyone. Another peer could take over from the last tic
   all agreed on.
-- **Drawing off the main thread** (Rendering): the renderer and presenter in a Worker with an
-  OffscreenCanvas, so input, sound and the page stay responsive when frames are slow (the browser
-  test saw 3 frames a second with every test running beside it). The engine's ~17 ms of wall work
-  doesn't shrink this way, but the page would stop waiting on it.
+- **The simulation's speed** (Simulation): measured in the page (headless Chromium, walking E1M1),
+  a frame's `doom_tic` was 14–124 ms and `frame_walls` 6–40 ms, both in the engine's Worker,
+  against 1–5 ms of drawing on the page's own thread – so it's the simulation that holds frames
+  back. `scripts/sql-profile.mjs` times its parts inside the engine. Over 900 tics of E1M1–3 (in
+  Node, the player walking and firing) a tic was 13.7 ms: sleeping monsters' `A_Look` 3.8 ms (a
+  `P_CheckSight` each, 550 µs: the BSP walk, a query a subsector), the player's move 2.3 ms
+  (`P_TryMove`, `P_CheckPosition`), `P_PlayerThink` 1.1 ms, `A_Chase` 1 ms a call. Two fixes so
+  far, 13.7 → 11.6 ms: `P_LookForPlayers` asks the angle before the sight (the same answer: the
+  sight changes nothing), and `P_CheckPosition`'s lines come block by block by the blockmap's key
+  (a range on `bx` read whole columns), 300 → 140 µs. Next: the sight check itself (its answer
+  doesn't depend on the order of the lines crossed, since the slopes only narrow, so one query over
+  the segs the line crosses might do for a walk of the BSP – but where it passes exactly through a
+  vertex the walk decides, so it needs the fixtures' word), and the thinkers' list (a scan of every
+  thing each tic, 0.7 ms). Moving the rasteriser off the main thread, as once planned here, would
+  save only its 1–5 ms; the page already waits on the engine without blocking.
 - **A debug build of firebird-wasm** (Engine): an engine build with source maps and assertions,
   made in `mariuz/electric-firebird`, to find where the WebKit trap above happens.
 - **Rewind** (Showcase; not vanilla, ask first): the whole game is in tables, so a snapshot every
