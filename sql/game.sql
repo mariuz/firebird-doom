@@ -539,6 +539,8 @@ CREATE OR ALTER PROCEDURE cross_subsector (
   top_in BIGINT, bottom_in BIGINT)
 RETURNS (ok SMALLINT, top BIGINT, bottom BIGINT)
 AS
+DECLARE fsec INTEGER;
+DECLARE bsec INTEGER;
 DECLARE lx BIGINT;
 DECLARE ly BIGINT;
 DECLARE ldx BIGINT;
@@ -557,20 +559,17 @@ BEGIN
   ok = 1;
   top = top_in;
   bottom = bottom_in;
-  FOR SELECT l.fx, l.fy, l.fdx, l.fdy, l.back_sector, l.flags,
-             fx_of(fs.floor_h), fx_of(fs.ceil_h), fx_of(bs.floor_h), fx_of(bs.ceil_h)
-        FROM ssectors ss
-        JOIN segs sg ON sg.id >= ss.first_seg AND sg.id < ss.first_seg + ss.seg_count
-        JOIN linedefs l ON l.id = sg.linedef
-        LEFT JOIN sectors fs ON fs.id = sg.front_sector
-        LEFT JOIN sectors bs ON bs.id = sg.back_sector
-       WHERE ss.id = :num
+  -- (the subsector's lines from SS_LINES, its segs in order; the sectors' heights read only for a
+  -- line the sight line crosses)
+  FOR SELECT q.fx, q.fy, q.fdx, q.fdy, q.lback, q.flags, q.fsec, q.bsec
+        FROM ss_lines q
+       WHERE q.ss_id = :num
          -- (a line whose box the sight line's box doesn't reach can't be crossed: skipped at once)
          -- (2 units wider: DOOM's side test is in whole units)
-         AND l.maxx * 65536 + 131072 >= MINVALUE(:sx, :tx) AND l.minx * 65536 - 131072 <= MAXVALUE(:sx, :tx)
-         AND l.maxy * 65536 + 131072 >= MINVALUE(:sy, :ty) AND l.miny * 65536 - 131072 <= MAXVALUE(:sy, :ty)
-       ORDER BY sg.id
-        INTO lx, ly, ldx, ldy, lback, lflags, ff, fc, bf, bc
+         AND q.maxx >= MINVALUE(:sx, :tx) AND q.minx <= MAXVALUE(:sx, :tx)
+         AND q.maxy >= MINVALUE(:sy, :ty) AND q.miny <= MAXVALUE(:sy, :ty)
+       ORDER BY q.seg_id
+        INTO lx, ly, ldx, ldy, lback, lflags, fsec, bsec
   DO
   BEGIN
     -- (DOOM marks each line checked: checked again it gives the same answer, so here it's not)
@@ -581,6 +580,9 @@ BEGIN
       ok = 0;
       EXIT;
     END
+    ff = NULL; fc = NULL; bf = NULL; bc = NULL;
+    SELECT fx_of(z.floor_h), fx_of(z.ceil_h) FROM sectors z WHERE z.id = :fsec INTO ff, fc;
+    SELECT fx_of(z.floor_h), fx_of(z.ceil_h) FROM sectors z WHERE z.id = :bsec INTO bf, bc;
     IF (ff = bf AND fc = bc) THEN CONTINUE;
     opentop = MINVALUE(fc, bc);
     openbottom = MAXVALUE(ff, bf);
@@ -4917,16 +4919,21 @@ BEGIN
       -- the player is passed over whatever P_CheckSight would say; vanilla asks the sight first,
       -- but it changes nothing, so asking it only when it can count gives the same answer, and
       -- spares the BSP walk for every player behind a sleeping monster)
-      ok = 1;
-      IF (allaround = 0 AND hp > 0) THEN
+      -- (a player already looked at gives the same answer – the angle and P_CheckSight change
+      -- nothing – so it's kept: alone in the game, the loop meets its one player twice)
+      IF (POSITION(',' || ll || ':' IN seen) = 0) THEN
       BEGIN
-        SELECT fx_of(t.x), fx_of(t.y) FROM things t WHERE t.id = :pthing INTO qx, qy;
-        an = BIN_AND(point_to_angle2(ax, ay, qx, qy) - aang, 4294967295);
-        IF (an > 1073741824 AND an < 3221225472 AND aprox_distance(fx32(qx - ax), fx32(qy - ay)) > 4194304) THEN ok = 0;
+        ok = IIF(hp > 0, 1, 0);
+        IF (ok = 1 AND allaround = 0) THEN
+        BEGIN
+          SELECT fx_of(t.x), fx_of(t.y) FROM things t WHERE t.id = :pthing INTO qx, qy;
+          an = BIN_AND(point_to_angle2(ax, ay, qx, qy) - aang, 4294967295);
+          IF (an > 1073741824 AND an < 3221225472 AND aprox_distance(fx32(qx - ax), fx32(qy - ay)) > 4194304) THEN ok = 0;
+        END
+        IF (ok = 1) THEN ok = sight_fx(tid, pthing);
+        seen = seen || ll || ':' || ok || ',';
       END
-      -- (P_CheckSight again for a player already looked at gives the same answer: kept)
-      IF (ok = 1 AND POSITION(',' || ll || ':' IN seen) = 0) THEN seen = seen || ll || ':' || IIF(hp > 0, sight_fx(tid, pthing), 0) || ',';
-      IF (ok = 1 AND POSITION(',' || ll || ':1,' IN seen) > 0) THEN
+      IF (POSITION(',' || ll || ':1,' IN seen) > 0) THEN
       BEGIN
         found = ll + 1;
         LEAVE;
@@ -7857,6 +7864,15 @@ BEGIN
 
   UPDATE nodes n SET fx = CAST(n.x AS BIGINT) * 65536, fy = CAST(n.y AS BIGINT) * 65536,
                      fdx = CAST(n.dx AS BIGINT) * 65536, fdy = CAST(n.dy AS BIGINT) * 65536;
+  -- P_CrossSubsector's lines (SS_LINES), each subsector's segs in order
+  DELETE FROM ss_lines;
+  INSERT INTO ss_lines (ss_id, seg_id, fx, fy, fdx, fdy, lback, flags, fsec, bsec, minx, maxx, miny, maxy)
+  SELECT ss.id, sg.id, l.fx, l.fy, l.fdx, l.fdy, l.back_sector, l.flags, sg.front_sector, sg.back_sector,
+         CAST(l.minx AS BIGINT) * 65536 - 131072, CAST(l.maxx AS BIGINT) * 65536 + 131072,
+         CAST(l.miny AS BIGINT) * 65536 - 131072, CAST(l.maxy AS BIGINT) * 65536 + 131072
+    FROM ssectors ss
+    JOIN segs sg ON sg.id >= ss.first_seg AND sg.id < ss.first_seg + ss.seg_count
+    JOIN linedefs l ON l.id = sg.linedef;
   UPDATE game
      SET tic = 0, exit_kind = 0, noise_tic = -1000, noise_sector = NULL, map_name = :map_name, skill = :skill,
          root_node = (SELECT MAX(id) FROM nodes)

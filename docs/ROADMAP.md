@@ -54,7 +54,10 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   (`P_TryMove`, `P_CheckPosition`), `P_PlayerThink` 1.1 ms, `A_Chase` 1 ms a call. Two fixes so
   far, 13.7 → 11.6 ms: `P_LookForPlayers` asks the angle before the sight (the same answer: the
   sight changes nothing), and `P_CheckPosition`'s lines come block by block by the blockmap's key
-  (a range on `bx` read whole columns), 300 → 140 µs. Next: the sight check itself (its answer
+  (a range on `bx` read whole columns), 300 → 140 µs. Then P_CrossSubsector reads a subsector's lines
+  from `SS_LINES` (made at the map's load) instead of joining four tables, and the sectors' heights
+  only for a line the sight line crosses: a sight check past REJECT on E1M2 2.3 → 1.5 ms (it walks
+  some 57 nodes and 20 subsectors). Next: the sight check itself (its answer
   doesn't depend on the order of the lines crossed, since the slopes only narrow, so one query over
   the segs the line crosses might do for a walk of the BSP – but where it passes exactly through a
   vertex the walk decides, so it needs the fixtures' word), and the thinkers' list (a scan of every

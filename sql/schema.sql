@@ -305,6 +305,20 @@ CREATE TABLE blockmap (
   line_id INTEGER NOT NULL,
   PRIMARY KEY (bx, by_, seq)
 );
+-- P_CrossSubsector's lines, made at a map's load (INIT_MAP): a subsector's segs in order, each
+-- with its line's start and delta in 16.16, its flags and whether it's two-sided, the segs' two
+-- sectors, and the line's box in 16.16 two units wider (DOOM's side test is in whole units): one
+-- lookup a subsector instead of a join of four tables
+CREATE TABLE ss_lines (
+  ss_id   INTEGER NOT NULL,
+  seg_id  INTEGER NOT NULL,
+  fx      BIGINT, fy BIGINT, fdx BIGINT, fdy BIGINT,
+  lback   INTEGER,                          -- the line's back sector (NULL: one-sided)
+  flags   INTEGER,
+  fsec    INTEGER, bsec INTEGER,            -- the seg's front and back sectors
+  minx    BIGINT, maxx BIGINT, miny BIGINT, maxy BIGINT,
+  PRIMARY KEY (ss_id, seg_id)
+);
 CREATE TABLE blockmap_info (
   id    SMALLINT NOT NULL PRIMARY KEY,
   org_x INTEGER NOT NULL,                  -- bmaporgx, bmaporgy (map units)
