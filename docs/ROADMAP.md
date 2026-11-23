@@ -61,7 +61,13 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   it's two-sided and crossed (a slide 1.66 → 1.54 ms; its three traverses about 0.3 ms each, each
   `P_TryMove` about 0.4). Profiled again, a tic of the same run is 9.3 ms. `P_CheckPosition` hands
   back the sector it found where the thing would stand, so the moves (the player's, a monster's, a
-  missile's) don't walk the BSP for it a second time: a `P_TryMove` 0.3 → 0.22 ms. Next: the sight check itself (its answer
+  missile's) don't walk the BSP for it a second time: a `P_TryMove` 0.3 → 0.22 ms. Tried and not
+  kept: skipping a node's side whose box (the WAD's, 2 units wider) the sight line's box doesn't
+  reach – the same answer on all 16,981 pairs of things REJECT lets through on ten maps of both
+  WADs, but slower (1.27 against 1.16 ms a check: few sides skipped, a wider row read for every
+  node); and the walk as a loop with its own stack (no faster). A sight check's cost is the
+  engine's per statement: some 10 µs a node (a key lookup, two side tests, a call) and 20–25 µs a
+  subsector, ~57 nodes and ~20 subsectors a check. Next: the sight check itself (its answer
   doesn't depend on the order of the lines crossed, since the slopes only narrow, so one query over
   the segs the line crosses might do for a walk of the BSP – but where it passes exactly through a
   vertex the walk decides, so it needs the fixtures' word), and the thinkers' list (a scan of every
