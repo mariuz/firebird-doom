@@ -348,6 +348,28 @@ try {
       `standing still the walls are drawn from the last answer (${r1 - r0} frames in ${took.toFixed(1)} s), the same as asking again; the ceiling moved, they're asked anew`);
   }
 
+  // rewind (not vanilla): Backspace goes back to the last snapshot – one every 35 tics – and a
+  // second press further, the player where they were then
+  {
+    const at = () => doom(() => window.doom.sql("SELECT g.tic, t.x, t.y FROM game g CROSS JOIN things t WHERE t.kind = 'player'").then((r) => r[0]));
+    await waitTics(40);
+    await page.keyboard.down('ArrowUp');
+    await waitTics(50);
+    await page.keyboard.up('ArrowUp');
+    await waitTics(3);
+    const w0 = await at();
+    await page.keyboard.press('Backspace');
+    await page.waitForFunction(() => /^Back to/.test(window.doom.lastSaid ?? ''), null, { timeout: 30000 });
+    const w1 = await at();
+    const said1 = await doom(() => window.doom.lastSaid);
+    // (the second lands at least 35 tics before the first: its "Back to m:ss" is another second's)
+    await page.keyboard.press('Backspace');
+    await page.waitForFunction((was) => /^Back to/.test(window.doom.lastSaid ?? '') && window.doom.lastSaid !== was, said1, { timeout: 30000 });
+    const w2 = await at();
+    assert(w1.TIC < w0.TIC && w2.TIC < w1.TIC && Math.hypot(w0.X - w2.X, w0.Y - w2.Y) > 16,
+      `Backspace rewinds: tic ${w0.TIC} → ${w1.TIC} ("${said1}") → ${w2.TIC}, the player back ${Math.hypot(w0.X - w2.X, w0.Y - w2.Y).toFixed(0)} units`);
+  }
+
   // key bindings (default.cfg's keys): Forward's first key set to I in the Keys panel walks, and W
   // no longer does; Alt, DOOM's strafe key, makes → strafe
   {

@@ -75,15 +75,20 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   save only its 1–5 ms; the page already waits on the engine without blocking.
 - **A debug build of firebird-wasm** (Engine): an engine build with source maps and assertions,
   made in `mariuz/electric-firebird`, to find where the WebKit trap above happens.
-- **Rewind** (Showcase; not vanilla, ask first): the whole game is in tables, so a snapshot every
-  second (as a save) would let a player step back in time, or open a past tic in the SQL console.
-  Something only this port could do; DOOM never did it.
 - **Declined extras**, noted where they come up: random sound pitch, the OPL3's rhythm mode and
   4-operator channels, a frag limit and obituaries (none of them vanilla 1.9).
 
 Everything else below is done.
 
 ## Game flow and menus
+
+- ~~**Rewind.**~~ Done (not vanilla, asked for): Backspace goes back about a second a press, as far
+  as half a minute, alone in a level (not in a netgame or a demo). `src/rewind.js` makes snapshot
+  tables from the schema's own columns; `REWIND_TAKE` copies a save's worth of rows inside the
+  engine every 35 tics (the walls' and lines' changed rows only, kept by triggers), `REWIND_BACK`
+  writes the newest at least a second old back and drops what came after. Past tics can be read
+  in the SQL console (`SNAP_THINGS` and the rest). A capture through the save code would have
+  cost 30–90 ms in the page, one round trip a table; inside the engine it's one.
 
 - ~~**Playwright past 1.56.**~~ Done: 1.63, whose Chromium (build 1243) is the container's, so the
   page tests run here without `CHROMIUM=`, and which installs its browsers on Ubuntu 26.04, so both

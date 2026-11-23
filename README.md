@@ -763,6 +763,29 @@ imported file and a netgame host's save. Its table and column names go into SQL,
 one this version has, and every row must be whole and hold plain values. Otherwise the load stops
 and says what's wrong.
 
+### Rewind (not vanilla)
+
+**Backspace** goes back in time, about a second a press, as far as half a minute. DOOM never had
+this: it's here because the whole game is rows in Firebird, so a moment of it is a copy of rows.
+Every 35 tics the page asks the engine for a snapshot (`REWIND_TAKE`): what a save holds – game,
+player, things, movers, frags, the respawn queue, the sectors' heights and lights – and the
+switches counting down too, copied into tables of their own inside the engine, one round trip.
+Of the walls' textures and the lines' specials, thousands of rows, only those that have changed
+since the level started are copied: a trigger keeps each one's first value. Backspace writes the
+newest snapshot at least a second old back over the game (`REWIND_BACK`), and the snapshots after
+it go – that future won't happen now. Things made after it get the ids and the block order they
+would have had, so the same keys from there play out exactly as they did the first time.
+
+It works alone in a level, dead or alive: a death a second ago can be undone. Not in a netgame
+(the other players' games would go on), and not while a demo plays or records (it would no longer
+be the game's own). A new level starts the snapshots again. They can be looked at in the SQL
+console: `SELECT snap, tic FROM rewind_snaps`, then `SELECT x, y, hp FROM snap_things WHERE snap
+= 3`. The snapshot tables are made from the game's own tables as the schema has them
+(`src/rewind.js` reads `RDB$RELATION_FIELDS`), so they follow any column added. A snapshot takes
+5–10 ms on E1M1 in Node, ~30 on MAP11's 836 things; going back 6–20. `npm run test:savegame`
+checks the rewind restores every row exactly, goes further back each time, and replays the same;
+the browser test presses Backspace in the page.
+
 ### Demos
 
 A demo is the input of a game (after `G_RecordDemo`/`G_DoPlayDemo`, in this port's own format,
@@ -1329,7 +1352,7 @@ Backspace leaves it empty. A key does one thing, so binding it takes it from whe
 defaults are the keys above plus DOOM's **Alt** as the strafe key: held, it turns the turn keys
 and the mouse into strafing (`key_strafe`). Left and right Ctrl, Shift and Alt count as one key
 each, as they did under DOS. The keys the page keeps for itself can't be bound: Esc, Tab, the
-weapon digits, the function keys, `-`, `=`, P, M and T. With the automap open, its own keys (F,
+weapon digits, the function keys, `-`, `=`, P, M, T and Backspace (rewind). With the automap open, its own keys (F,
 G, M, C, 0, and the arrows while it pans) are its alone. The bindings are remembered in the
 browser (`src/keys.js`).
 

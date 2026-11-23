@@ -189,6 +189,7 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
 | Colours, palette, upscaling | `src/present.js` |
 | Screens between levels | `src/intermission.js`, `src/finale.js`, `src/progress.js`; the hand-off is in `main.js`'s `frame()` |
 | Cheats | SQL `CHEAT` procedure; readers in `src/cheats.js`; key handling in `main.js` |
+| Rewind (Backspace) | `src/rewind.js` (the snapshot tables and `REWIND_TAKE`/`REWIND_BACK`, generated from the schema at `createSchema`: a new column of a saved table is snapshotted with no change there); `rewind()` and the snapshot after each tic in `main.js` |
 | Save and load | `src/savegame.js` (what's saved: its `WHOLE`/`MOVING` lists; **add a column there if the simulation starts changing a new one**); after a schema change run `npm run save-fixtures`, and if an old save stops loading, migrate it in `restoreGame` (a dropped column goes in `RETIRED`, an old shape is mended in SQL's `ADOPT_STATES`); `saveToSlot`/`loadFromSlot` in `main.js` |
 | DOOM's frame tables (states) | `src/states.js` (GPL-2, generated), the `states` table, `SET_STATE` / `STATE_ACTION` / `STATES_THINK` in `sql/game.sql`; the phases in `docs/ROADMAP.md` (Simulation) |
 | DeHackEd, rules a patch can change | `src/dehacked.js`, the `RULES` table (SQL reads it instead of hard-coding those numbers) |

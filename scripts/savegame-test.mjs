@@ -226,6 +226,49 @@ await loadMap(db, wad, res, map, { skill: 4 });
 await restoreGame(db, (await other.get(`${key}|3`)).save);
 assert(JSON.stringify(await captureGame(db)) === before, 'an imported save restores the game exactly');
 
+// rewind (rewind.js, not vanilla): snapshots taken inside the engine (REWIND_TAKE) and written back
+// over the game (REWIND_BACK) – exactly, switches' textures and used lines' specials too; each
+// rewind a step further back; the same inputs after one, the same game as the first time
+{
+  await loadMap(db, wad, res, map, { skill: 4 });
+  const game = async () => JSON.stringify((await captureGame(db)).tables);
+  const take = () => db.query('EXECUTE PROCEDURE rewind_take(30)');
+  const back = async () => (await db.query('EXECUTE PROCEDURE rewind_back', [], { rowMode: 'object' })).rows[0]?.TIC ?? null;
+  const none = await back();
+  for (let i = 0; i < 20; i++) await tic(1, 0.02, i % 5 === 0 ? 1 : 0);
+  await take();
+  const first = await game();
+  const t1 = (await one('SELECT tic FROM game')).TIC;
+  // (a switch's texture and a line's special as play changes them, before the next snapshot and after it)
+  await db.exec('UPDATE sidedefs SET mid_tex = 1 WHERE id IN (3, 5)');
+  await db.exec("UPDATE linedefs SET special = 0 WHERE id = (SELECT MIN(id) FROM linedefs WHERE special <> 0)");
+  for (let i = 0; i < 20; i++) await tic(1, -0.02, 1);
+  await take();
+  const second = await game();
+  const inputs = Array.from({ length: 40 }, (_, i) => [i % 3 ? 1 : -1, 0.03, i % 4 === 0 ? 1 : 0, i === 20 ? 1 : 0]);
+  for (const c of inputs) await tic(...c);
+  const future = await game();
+  await db.exec('UPDATE sidedefs SET mid_tex = 2 WHERE id IN (5, 11)');
+  const b1 = await back();
+  const atSecond = await game();
+  // the same inputs again from there: the same game as the first time
+  for (const c of inputs) await tic(...c);
+  const again = await game();
+  await back();
+  const b2 = await back();
+  const atFirst = await game();
+  const further = await back();
+  assert(none === null && b1 === t1 + 20 && atSecond === second && again === future && b2 === t1 && atFirst === first && further === null,
+    `rewind: back to tic ${b1}, every row as it was (sidedefs and linedefs changed since too); the same inputs again, the same game; then back to tic ${b2}, as it was too, and no further (${further})`);
+  // a new level starts its snapshots again
+  await take();
+  await loadMap(db, wad, res, map, { skill: 4 });
+  await tic();
+  const kept = (await one('SELECT COUNT(*) n FROM rewind_snaps')).N;
+  const orig = (await one('SELECT COUNT(*) n FROM rewind_orig_sidedefs')).N;
+  assert(kept === 0 && orig === 0 && (await back()) === null, 'a level\'s load forgets the last one\'s snapshots');
+}
+
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'savegame ok');
 process.exit(failures ? 1 : 0);

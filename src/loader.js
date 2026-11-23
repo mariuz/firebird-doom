@@ -52,6 +52,7 @@ export function typeStates(type, mobjinfo = MOBJINFO) {
 }
 import { applyDehacked, parseDehacked } from './dehacked.js';
 import { parseDehStrings } from './finale.js';
+import { createRewind } from './rewind.js';
 
 // P_TouchSpecialThing's message for each item: the string it shows (by its
 // DEHACKED name: Freedoom's DEHACKED has them all), else our own plain words
@@ -115,6 +116,8 @@ export async function createSchema(db, sql) {
   await db.exec(sql.schema);
   await db.exec(sql.game);
   await db.exec(sql.render);
+  // (rewind's snapshot tables, made from the tables as they now stand)
+  await createRewind(db);
 }
 
 /**
@@ -260,7 +263,7 @@ export async function loadMap(db, wad, res, name, {
   const flat = (n) => res.flatId.get(n) ?? null;
 
   await db.exec(
-    'DELETE FROM sound_events; DELETE FROM movers; DELETE FROM buttons; DELETE FROM line_blocks; DELETE FROM ss_lines; DELETE FROM blockmap; DELETE FROM blockmap_info; DELETE FROM things; DELETE FROM map_things; DELETE FROM nodes; DELETE FROM ssectors; ' +
+    'EXECUTE PROCEDURE rewind_clear; DELETE FROM sound_events; DELETE FROM movers; DELETE FROM buttons; DELETE FROM line_blocks; DELETE FROM ss_lines; DELETE FROM blockmap; DELETE FROM blockmap_info; DELETE FROM things; DELETE FROM map_things; DELETE FROM nodes; DELETE FROM ssectors; ' +
       'DELETE FROM segs; DELETE FROM linedefs; DELETE FROM sidedefs; DELETE FROM sectors; DELETE FROM vertexes; DELETE FROM reject',
   );
   await insertRows(db, 'vertexes', ['id', 'x', 'y'], m.vertexes.map((v) => [v.id, v.x, v.y]));

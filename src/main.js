@@ -20,6 +20,7 @@ import { Finale, parseDehStrings, setFallbackStrings } from './finale.js';
 import { Menu, TitleLoop } from './menu.js';
 import { captureGame, restoreGame, saveStore, exportSaves, importSaves, rememberFiles, recallFiles, SLOTS,
   savePlayers, saveSetting, packSave, unpackSave, SAVE_VERSION } from './savegame.js';
+import { REWIND_KEEP, REWIND_EVERY } from './rewind.js';
 import { DemoPlayer, DemoRecorder, demoProblem, attractDemoFile, ATTRACT_DEMOS } from './demo.js';
 import { parseLmp, LmpPlayer } from './lmp.js';
 import { Intermission, levelOf, setParOverrides } from './intermission.js';
@@ -71,6 +72,8 @@ async function applyView() {
 let showMap = false;
 let face = new FaceWidget();         // the status bar face (ST_updateFaceWidget), its own state
 let lastFire = false;               // the attack button, as the face sees it (player->attackdown)
+let rewindAsk = false;               // (Backspace: go back a snapshot before the next tics)
+let rewindAt = -Infinity;            // the tic of the last snapshot (rewind.js)
 let amView = null;                  // the automap's window: zoom, follow, grid, marks (AutomapView)
 let lastSaid = null;                // the last of those (doom.lastSaid: it may time out before a slow test looks)
 let amMsg = null;                   // the page's own messages ({ text, tics }: the automap's, F5/F8/F11's), shown like the game's but kept out of Firebird
@@ -253,6 +256,8 @@ window.addEventListener('keydown', (e) => {
     else if (!net.special) net.special = SPECIAL_PAUSE;
   }
   if (e.code === 'KeyM' && !showMap) setAudio(!settings.audio);
+  // Backspace: back a second in time (not vanilla: rewind.js), alone in a level, not in a demo
+  if (e.code === 'Backspace' && !e.repeat && !menu?.active) rewindAsk = true;
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 window.addEventListener('blur', () => { keys.clear(); mouse.release(); });
@@ -778,6 +783,7 @@ async function startMapNow(name, newGame, { netDemo = undefined, skill = null, s
   if (inFrame && !fromFrame && !frameStarting) await inFrame.catch(() => {});
   if (forTitle && !attract) return;   // (the title loop's demo, called off while it waited its turn)
   levelSerial++;
+  rewindAt = -Infinity;   // (a level's snapshots start again with it: rewind_clear)
   finale = null;
   intermission = null;
   if (!forTitle) {
@@ -1465,6 +1471,10 @@ async function frameNow() {
       return;
     }
 
+    if (rewindAsk) {
+      rewindAsk = false;
+      await rewind();
+    }
     let t = performance.now();
     if (net) {
       // a netgame: this player's commands out, everyone's tics in (TryRunTics)
@@ -1505,6 +1515,11 @@ async function frameNow() {
         recorder?.push(args);
         if (recorder && recorder.demo.calls.length % 35 === 0) setStatus(`● Recording a demo of ${map.name}: ${recorder.tics} tics`);
         hud = (await db.query('SELECT * FROM doom_tic(?, ?, ?, ?, ?, ?, ?, ?)', args, { rowMode: 'object' })).rows[0];
+        // a snapshot for rewinding, every REWIND_EVERY tics (and at a level's first: back to its start)
+        if (!demoPlayer && (hud.TIC - rewindAt >= REWIND_EVERY || hud.TIC < rewindAt)) {
+          rewindAt = hud.TIC;
+          await db.query(`EXECUTE PROCEDURE rewind_take(${REWIND_KEEP})`);
+        }
       }
     }
     lastFrame.tic = performance.now() - t;
@@ -1683,6 +1698,23 @@ function chatSay(text, forMe = false) {
     const lump = wad.mapNames().some((m) => m.startsWith('MAP')) ? 'DSRADIO' : 'DSTINK';
     audio.playEvents([[0, lump, 'menu', null, null]], { x: 0, y: 0, angle: 0 });
   }
+}
+
+/**
+ * Back a snapshot (rewind.js: REWIND_BACK), about a second each time, as far as half a minute.
+ * Not vanilla – DOOM never did it – and only alone in a level: not in a netgame (the others' games
+ * would go on), nor while a demo plays or records (it would no longer be the game's own).
+ */
+async function rewind() {
+  if (net || demoPlayer || title || intermission || finale) return;
+  if (recorder) { pageSay('No going back while recording a demo.', true); return; }
+  const back = (await db.query('EXECUTE PROCEDURE rewind_back', [], { rowMode: 'object' })).rows[0]?.TIC;
+  if (back == null) { pageSay('No further back.', true); return; }
+  rewindAt = back;
+  // (the status bar and the view as they were then, paused or not)
+  hud = (await db.query(`SELECT * FROM hud_row(${viewer()})`, [], { rowMode: 'object' })).rows[0];
+  const s = Math.floor(back / 35);
+  pageSay(`Back to ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, true);
 }
 
 function pageSay(text, always = false) {
