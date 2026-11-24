@@ -765,7 +765,8 @@ and says what's wrong.
 
 ### Rewind (not vanilla)
 
-**Backspace** goes back in time, about a second a press, as far as half a minute. DOOM never had
+**Backspace**, or the **⏪ 1 s** button under the view (**⏪** among the touch buttons), goes back in
+time, about a second a press, as far as half a minute. DOOM never had
 this: it's here because the whole game is rows in Firebird, so a moment of it is a copy of rows.
 Every 35 tics the page asks the engine for a snapshot (`REWIND_TAKE`): what a save holds – game,
 player, things, movers, frags, the respawn queue, the sectors' heights and lights – and the
@@ -784,7 +785,7 @@ console: `SELECT snap, tic FROM rewind_snaps`, then `SELECT x, y, hp FROM snap_t
 (`src/rewind.js` reads `RDB$RELATION_FIELDS`), so they follow any column added. A snapshot takes
 5–10 ms on E1M1 in Node, ~30 on MAP11's 836 things; going back 6–20. `npm run test:savegame`
 checks the rewind restores every row exactly, goes further back each time, and replays the same;
-the browser test presses Backspace in the page.
+the browser test presses Backspace, then the button, in the page, and taps ⏪ on the emulated phone.
 
 ### Demos
 
@@ -1378,14 +1379,15 @@ On a phone or tablet the view gets touch controls (`src/touch.js`), shown once t
 or wherever the pointer is a finger. In play the left half is a move pad: it centres where your thumb
 lands, and how far you slide says how fast you go, running past one and a half times its ring. The
 right half turns as you drag it, and a tap there fires once. Down the right edge are **FIRE** (held,
-as the fire key), **USE**, **WPN** (the next weapon), **MAP** (the automap) and **☰** (the menu). In
+as the fire key), **USE**, **WPN** (the next weapon), **MAP** (the automap), **⏪** (rewind, below: not
+vanilla) and **☰** (the menu). In
 the menus the buttons are the arrows, **OK** and back (↩), and on the title or an ending a tap is a
 key. DOOM had no touch screen, so these give only what its keys give. **WPN** presses the number key
 of the next slot that has a weapon, so the fist's slot still brings up the chainsaw and the shotgun's
 the super shotgun, as `P_PlayerThink` chooses (Chocolate Doom's own next-weapon key does the same).
 To the simulation a touch game is a keyboard game, demos and netgames included. `npm run test:browser`
 plays one in an emulated phone (Chromium): a tap opens the menu, **OK** starts a game, the pad walks,
-**FIRE** held fires, **WPN** brings up the shotgun, **MAP** opens the automap and **☰** the menu.
+**FIRE** held fires, **WPN** brings up the shotgun, **⏪** rewinds, **MAP** opens the automap and **☰** the menu.
 
 ### Command line
 

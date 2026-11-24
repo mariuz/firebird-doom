@@ -348,11 +348,13 @@ try {
       `standing still the walls are drawn from the last answer (${r1 - r0} frames in ${took.toFixed(1)} s), the same as asking again; the ceiling moved, they're asked anew`);
   }
 
-  // rewind (not vanilla): Backspace goes back to the last snapshot – one every 35 tics – and a
-  // second press further, the player where they were then
+  // rewind (not vanilla): Backspace goes back to the last snapshot – one every 35 tics – and the
+  // Rewind button under the view further, the player where they were then
   {
     const at = () => doom(() => window.doom.sql("SELECT g.tic, t.x, t.y FROM game g CROSS JOIN things t WHERE t.kind = 'player'").then((r) => r[0]));
-    await waitTics(40);
+    // (snapshots enough behind for two steps back, however slowly the tics come: a quickload
+    // above started the level's snapshots again)
+    await waitTics(80);
     await page.keyboard.down('ArrowUp');
     await waitTics(50);
     await page.keyboard.up('ArrowUp');
@@ -363,11 +365,16 @@ try {
     const w1 = await at();
     const said1 = await doom(() => window.doom.lastSaid);
     // (the second lands at least 35 tics before the first: its "Back to m:ss" is another second's)
-    await page.keyboard.press('Backspace');
-    await page.waitForFunction((was) => /^Back to/.test(window.doom.lastSaid ?? '') && window.doom.lastSaid !== was, said1, { timeout: 30000 });
+    const enabled = await doom(() => !document.getElementById('rewind').disabled);
+    // (a click as a mouse makes it: the button takes the focus, then the click – the stats line above
+    // reflows each frame, so a pointer aimed at it can land on the row instead)
+    await doom(() => { const b = document.getElementById('rewind'); b.focus(); b.click(); });
+    const focus = await doom(() => document.activeElement?.id ?? '');
+    await page.waitForFunction((was) => window.doom.lastSaid !== was, said1, { timeout: 30000 });
     const w2 = await at();
-    assert(w1.TIC < w0.TIC && w2.TIC < w1.TIC && Math.hypot(w0.X - w2.X, w0.Y - w2.Y) > 16,
-      `Backspace rewinds: tic ${w0.TIC} → ${w1.TIC} ("${said1}") → ${w2.TIC}, the player back ${Math.hypot(w0.X - w2.X, w0.Y - w2.Y).toFixed(0)} units`);
+    const said2 = await doom(() => window.doom.lastSaid);
+    assert(w1.TIC < w0.TIC && w2.TIC < w1.TIC && Math.hypot(w0.X - w2.X, w0.Y - w2.Y) > 16 && /^Back to/.test(said2) && enabled && focus !== 'rewind',
+      `Backspace rewinds: tic ${w0.TIC} → ${w1.TIC} ("${said1}"), and the Rewind button further → ${w2.TIC} ("${said2}"), the player back ${Math.hypot(w0.X - w2.X, w0.Y - w2.Y).toFixed(0)} units (the button lets go of the focus)`);
   }
 
   // key bindings (default.cfg's keys): Forward's first key set to I in the Keys panel walks, and W
@@ -638,14 +645,17 @@ try {
     await tap(await button('weapon'));
     await waitTics(4, tic6);
     const d = await where();
+    // ⏪: rewind (not vanilla), as Backspace
+    await tap(await button('rewind'));
+    const rewound = await p6.waitForFunction(() => /^Back to/.test(window.doom.lastSaid ?? ''), null, { timeout: 30000 }).then(() => true, () => false);
     await tap(await button('map'));
     const mapOpen = await p6.evaluate(() => window.doom.automap.open);
     await tap(await button('map'));
     await tap(await button('menu'));
     const s3 = await state();
     assert(t0.shown && t0.mode === 'screen' && padShown && walked > 8 && held && b.BULLETS - c.BULLETS >= 2
-      && (d.WEAPON === 3 || d.PENDING_WEAPON === 3) && mapOpen && s3.menu && s3.mode === 'menu',
-      `touch: the controls show on a touch screen; a tap on the title opens the menu and OK starts a game; the move pad walks (${walked.toFixed(0)} units), FIRE held fires (${b.BULLETS - c.BULLETS} bullets), WPN takes the shotgun (${d.WEAPON}, pending ${d.PENDING_WEAPON}), MAP opens the automap, ☰ the menu`);
+      && (d.WEAPON === 3 || d.PENDING_WEAPON === 3) && rewound && mapOpen && s3.menu && s3.mode === 'menu',
+      `touch: the controls show on a touch screen; a tap on the title opens the menu and OK starts a game; the move pad walks (${walked.toFixed(0)} units), FIRE held fires (${b.BULLETS - c.BULLETS} bullets), WPN takes the shotgun (${d.WEAPON}, pending ${d.PENDING_WEAPON}), ⏪ rewinds, MAP opens the automap, ☰ the menu`);
     await ctx.close();
   }
 

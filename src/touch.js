@@ -4,7 +4,8 @@
 //   in play   the left half is a move pad: where the thumb lands is its centre, and how far it
 //             slides says how fast (past STICK_RUN of the radius, running); the right half turns
 //             as it's dragged (a tap there fires once, as it did before). Down the right edge:
-//             FIRE (held, as the fire key), USE, the next weapon, the automap and the menu.
+//             FIRE (held, as the fire key), USE, the next weapon, the automap, rewind (Backspace's:
+//             not vanilla) and the menu.
 //   in menus  the arrows, select and back – the keys M_Responder takes.
 //   elsewhere the title, the endings: a tap is a key (the intermission takes taps as fire or use).
 //
@@ -48,7 +49,7 @@ export function touchMode({ menu, title, intermission, finale }) {
 }
 
 const BUTTONS = {
-  play: [['fire', 'FIRE', 'hold'], ['use', 'USE'], ['weapon', 'WPN'], ['map', 'MAP'], ['menu', '☰']],
+  play: [['fire', 'FIRE', 'hold'], ['use', 'USE'], ['weapon', 'WPN'], ['map', 'MAP'], ['rewind', '⏪'], ['menu', '☰']],
   menu: [['ArrowUp', '▲'], ['ArrowDown', '▼'], ['ArrowLeft', '◀'], ['ArrowRight', '▶'], ['Enter', 'OK'], ['Backspace', '↩']],
   screen: [],
 };

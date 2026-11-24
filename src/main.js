@@ -40,6 +40,7 @@ const $ = (id) => document.getElementById(id);
 let canvas = $('screen');   // replaced by a fresh element when the display kind changes
 const statusEl = $('status');
 const statsEl = $('stats');
+const rewindBtn = $('rewind');
 
 const TIC_MS = 1000 / 35;
 
@@ -648,6 +649,7 @@ const touchUI = new TouchOverlay(document.querySelector('.screen-wrap'), (name, 
   else if (name === 'use') keys.add('TapUse');
   else if (name === 'weapon') { if (hud) weaponSel = nextWeaponSlot(hud); }
   else if (name === 'map') synthKey('Tab');
+  else if (name === 'rewind') rewindAsk = true;
   else if (name === 'menu') synthKey('Escape');
   else synthKey(name);   // (the menu's: arrows, Enter, Backspace)
 });
@@ -1668,6 +1670,9 @@ let fpsN = 0;
 let fps = 0;
 function updateStats() {
   fpsN++;
+  // (the Rewind button: for a game alone, not a netgame, a demo or the title's)
+  const noRewind = !!(net || demoPlayer || title);
+  if (rewindBtn.disabled !== noRewind) rewindBtn.disabled = noRewind;
   const now = performance.now();
   if (now - fpsT > 500) {
     fps = (fpsN * 1000) / (now - fpsT);
@@ -1706,7 +1711,8 @@ function chatSay(text, forMe = false) {
  * would go on), nor while a demo plays or records (it would no longer be the game's own).
  */
 async function rewind() {
-  if (net || demoPlayer || title || intermission || finale) return;
+  if (net) { pageSay('No going back in a netgame.', true); return; }
+  if (demoPlayer || title || intermission || finale) return;
   if (recorder) { pageSay('No going back while recording a demo.', true); return; }
   const back = (await db.query('EXECUTE PROCEDURE rewind_back', [], { rowMode: 'object' })).rows[0]?.TIC;
   if (back == null) { pageSay('No further back.', true); return; }
@@ -2206,6 +2212,11 @@ for (const o of LAUNCH_OPTIONS) {
 }
 // demos: record, stop, play, download, load
 $('demo-record').addEventListener('click', () => startRecording().catch((err) => setStatus(err.message, true)));
+// the Rewind button: Backspace's, and then out of the way of the game's keys (Space would press it again)
+$('rewind').addEventListener('click', (e) => {
+  rewindAsk = true;
+  e.currentTarget.blur();
+});
 $('demo-stop').addEventListener('click', () => { if (recorder) finishRecording(); else if (demoPlayer) endPlayback('stopped'); });
 $('demo-play').addEventListener('click', () => lastDemo && playDemo(lastDemo).catch((err) => setStatus(err.message, true)));
 $('demo-download').addEventListener('click', () => {
