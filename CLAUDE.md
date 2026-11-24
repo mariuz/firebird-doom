@@ -95,6 +95,10 @@ attract` and commit `public/demos/`. All of them must pass; CI runs the same set
   against it keeps the index out, and a range on the first column of a composite index scans
   every row of that range: `LINES_IN_BOX` went from 480 to 38 µs with a single-key `CELL` column
   and exact lookups. When the optimizer picks the wrong index, `col + 0` hides a column from it.
+  **A procedure's plan is made when it's compiled** (`createSchema`, over empty tables) and kept
+  for the page's life. That suits most of `game.sql`: recompiling it over a loaded map made a tic
+  3.5× slower. A query that wants another plan pins it with `PLAN` (`THINKER_LIST`); an inline
+  query timed in a bench is planned afresh, so time the procedure itself.
   Time things with `scripts/frame-bench.mjs`, `scripts/sql-profile.mjs` (a tic's parts timed
   inside the engine), or a WHILE loop in an `EXECUTE BLOCK` around one call (there's no profiler
   plugin in the WASM build; timing each call from JS measures mostly the round trip, ~0.8 ms in

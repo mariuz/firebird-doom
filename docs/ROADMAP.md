@@ -70,9 +70,16 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   subsector, ~57 nodes and ~20 subsectors a check. Next: the sight check itself (its answer
   doesn't depend on the order of the lines crossed, since the slopes only narrow, so one query over
   the segs the line crosses might do for a walk of the BSP – but where it passes exactly through a
-  vertex the walk decides, so it needs the fixtures' word), and the thinkers' list (a scan of every
-  thing each tic, 0.7 ms). Moving the rasteriser off the main thread, as once planned here, would
-  save only its 1–5 ms; the page already waits on the engine without blocking.
+  vertex the walk decides, so it needs the fixtures' word). The thinkers' list is done:
+  `THINKER_LIST` reads who has something to do from indexes now: the state's end, the kind,
+  an expression index on moving, sliding or falling (`THINGS_MOVING`), the floaters' types and
+  the lights' sectors. That takes 0.2 ms, where a scan of every thing joined to its type took
+  0.7–1.6 ms (`scripts/think-bench.mjs`). A tic of E1M1–3 is 9.3 → 9.0 ms; the new index costs
+  a little on every write of a thing's momentum. Found on the way: a procedure's plan is made
+  when it's compiled, at `createSchema`, over empty tables. That is the right plan for most of
+  `game.sql`: compiled again over a loaded map, a tic took 33 ms instead of 9. It wasn't the
+  right plan for this list, so the list's plans are pinned with `PLAN`. Moving the rasteriser off the main thread, as once planned here,
+  would save only its 1–5 ms; the page already waits on the engine without blocking.
 - **A debug build of firebird-wasm** (Engine): an engine build with source maps and assertions,
   made in `mariuz/electric-firebird`, to find where the WebKit trap above happens.
 - **Declined extras**, noted where they come up: random sound pitch, the OPL3's rhythm mode and

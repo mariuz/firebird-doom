@@ -881,6 +881,49 @@ assert(adopted.join() === 'S_POSS_STND,S_SPOS_RUN1,S_CPOS_DIE7' && mended.ST.tri
   `an old save's monsters join the tables: asleep, chasing and a corpse → ${adopted.join(', ')}; a corpse once labelled idle lies ${mended.ST.trim()}`);
 for (const id of [...olds, misread]) await remove(id);
 
+// the thinkers' list (THINKER_LIST, read from indexes with its plans pinned) names the thinkers
+// the plain query does – a scan of every thing and its type – in the same order: tic after tic of
+// the map, with a cacodemon floating, an imp sliding, and on Nightmare's tic the corpses
+{
+  const plain = (tic, nightmare) => `SELECT q.kind, q.k, q.id
+        FROM (SELECT 'T' kind, COALESCE(t.think_key, 2 * t.id) k, t.id FROM things t WHERE t.state_tic BETWEEN ${tic} - 1 AND ${tic}
+              UNION
+              SELECT 'T', COALESCE(t.think_key, 2 * t.id), t.id FROM things t WHERE t.kind IN ('player', 'missile', 'cube')
+              UNION
+              SELECT 'T', COALESCE(t.think_key, 2 * t.id), t.id FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
+               WHERE t.state IS NOT NULL
+                 AND (BIN_AND(t.flags, 262144) <> 0 OR t.momz <> 0 OR t.momx <> 0 OR t.momy <> 0
+                      OR tt.floats = 1 OR BIN_AND(t.flags, 1048576) <> 0
+                      OR (${nightmare} = 1 AND t.kind = 'monster' AND t.st = 'dead'))
+              UNION ALL
+              SELECT 'L', COALESCE(s.lfx_key, 0), s.id FROM sectors s WHERE s.lfx IN ('flash', 'strobe', 'flicker') AND s.lfx_count = 0
+              UNION ALL
+              SELECT 'M', COALESCE(m.think_key, 0), m.sector_id FROM movers m) q
+       ORDER BY q.k, q.kind, q.id`;
+  const listed = (tic, nightmare) => `SELECT q.kind, q.k, q.id FROM thinker_list(${tic}, -1, 2 * GEN_ID(thing_seq, 0) + 1, 'TLM', ${nightmare}) q`;
+  const key = (rows) => rows.map((r) => `${r.KIND}${r.K}:${r.ID}`).join(' ');
+  const caco = await spawnAt(3005, 256, facing);
+  const imp = await spawnAt(3001, 320, facing);
+  await db.exec(`UPDATE things SET momx = 3, momy = -2 WHERE id = ${imp}`);
+  let same = 0;
+  let differ = '';
+  let most = 0;
+  for (let i = 0; i < 40 && !differ; i++) {
+    const tic = (await one('SELECT tic FROM game WHERE id = 1')).TIC + 1;
+    for (const nm of [0, 1]) {
+      const [a, b] = [await all(plain(tic, nm)), await all(listed(tic, nm))];
+      if (key(a) !== key(b)) { differ = `tic ${tic}${nm ? ' (Nightmare)' : ''}: ${key(a)} ≠ ${key(b)}`; break; }
+      most = Math.max(most, a.length);
+      same++;
+    }
+    await db.query('EXECUTE BLOCK AS DECLARE t INTEGER; BEGIN FOR SELECT tic FROM doom_tic(1, 0, 0, 0, 0, 0, 0, 1) INTO t DO t = t; END');
+  }
+  assert(!differ && same === 80 && most > 3,
+    `the thinkers' list from its indexes is the plain query's, thinker for thinker (${same} lists, up to ${most} thinkers)${differ ? `; ${differ}` : ''}`);
+  await remove(caco);
+  await remove(imp);
+}
+
 await db.close();
 console.log(failures ? `${failures} failure(s)` : 'states ok');
 process.exit(failures ? 1 : 0);

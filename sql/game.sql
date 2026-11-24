@@ -7450,6 +7450,42 @@ BEGIN
   END
 END^
 
+-- The thinkers with something to do this tic, in the list's order (RUN_THINKERS': see there).
+-- A thing has if its state ends now (or ended during the last pass, after its turn), if it's a
+-- player's body, a missile or a cube, if it moves, slides, charges or falls (MF_SKULLFLY, the
+-- falling bit, momentum), if it floats (MF_FLOAT or MF_NOGRAVITY: THING_TYPES.FLOATS), or on
+-- Nightmare's tic a monster's corpse. Each test is read from an index (THINGS_STATE_TIC,
+-- THINGS_KIND, THINGS_MOVING, THINGS_TYPE; the lights SECTORS_LFX): a scan of every thing and a
+-- join to its type for each was a millisecond a tic. The plans are pinned: a procedure's plan is
+-- made as it's compiled, at createSchema, over empty tables – the right one for most of game.sql
+-- (compiled again over a loaded map, it all ran three times slower), not for this one.
+CREATE OR ALTER PROCEDURE thinker_list (tic INTEGER, lo BIGINT, hi BIGINT, kinds VARCHAR(3), nightmare SMALLINT)
+RETURNS (kind CHAR(1), k BIGINT, id INTEGER)
+AS
+BEGIN
+  FOR SELECT q.kind, q.k, q.id
+        FROM (SELECT 'T' kind, COALESCE(t.think_key, 2 * t.id) k, t.id FROM things t
+               WHERE t.state_tic BETWEEN :tic - 1 AND :tic
+                  OR t.kind IN ('player', 'missile', 'cube')
+                  OR IIF(state IS NOT NULL AND (BIN_AND(flags, 1310720) <> 0 OR momz <> 0 OR momx <> 0 OR momy <> 0), 1, 0) = 1
+                  OR (t.kind = IIF(:nightmare = 1, 'monster', '-') AND t.st = 'dead' AND t.state IS NOT NULL)
+              PLAN (t INDEX (things_state_tic, things_kind, things_moving, things_kind))
+              UNION
+              SELECT 'T', COALESCE(t.think_key, 2 * t.id), t.id FROM thing_types tt JOIN things t ON t.thing_type = tt.thing_type
+               WHERE tt.floats = 1 AND t.state IS NOT NULL
+              PLAN JOIN (tt NATURAL, t INDEX (things_type))
+              UNION ALL
+              SELECT 'L', COALESCE(s.lfx_key, 0), s.id FROM sectors s
+               WHERE s.lfx IN ('flash', 'strobe', 'flicker') AND s.lfx_count = 0
+              PLAN (s INDEX (sectors_lfx))
+              UNION ALL
+              SELECT 'M', COALESCE(m.think_key, 0), m.sector_id FROM movers m) q
+       WHERE q.k > :lo AND q.k <= :hi AND POSITION(q.kind IN :kinds) > 0
+       ORDER BY q.k, q.kind, q.id
+        INTO kind, k, id
+  DO SUSPEND;
+END^
+
 -- P_RunThinkers: every thinker with something to do this tic, in the list's order – the order
 -- they were made in (THINK_KEY: a thing's is twice its id, a player's body sits among the map's
 -- things where its start was, and a light's or a mover's is taken from THING_SEQ as it's made,
@@ -7466,24 +7502,7 @@ BEGIN
   n = 0;
   -- (P_MobjThinker's leveltime & 31: LEVELTIME is TIC - 1 while the thinkers run)
   nightmare = IIF(MOD(tic - 1, 32) = 0 AND EXISTS (SELECT 1 FROM game g WHERE g.id = 1 AND (g.skill = 5 OR g.respawn = 1)), 1, 0);
-  FOR SELECT q.kind, q.k, q.id
-        FROM (SELECT 'T' kind, COALESCE(t.think_key, 2 * t.id) k, t.id FROM things t WHERE t.state_tic BETWEEN :tic - 1 AND :tic
-              UNION
-              SELECT 'T', COALESCE(t.think_key, 2 * t.id), t.id FROM things t
-               WHERE t.kind IN ('player', 'missile', 'cube')
-              UNION
-              SELECT 'T', COALESCE(t.think_key, 2 * t.id), t.id FROM things t JOIN thing_types tt ON tt.thing_type = t.thing_type
-               WHERE t.state IS NOT NULL
-                 AND (BIN_AND(t.flags, 262144) <> 0 OR t.momz <> 0 OR t.momx <> 0 OR t.momy <> 0
-                      OR tt.floats = 1 OR BIN_AND(t.flags, 1048576) <> 0
-                      OR (:nightmare = 1 AND t.kind = 'monster' AND t.st = 'dead'))
-              UNION ALL
-              SELECT 'L', COALESCE(s.lfx_key, 0), s.id FROM sectors s
-               WHERE s.lfx IN ('flash', 'strobe', 'flicker') AND s.lfx_count = 0
-              UNION ALL
-              SELECT 'M', COALESCE(m.think_key, 0), m.sector_id FROM movers m) q
-       WHERE q.k > :lo AND q.k <= :hi AND POSITION(q.kind IN :kinds) > 0
-       ORDER BY q.k, q.kind, q.id
+  FOR SELECT q.kind, q.k, q.id FROM thinker_list(:tic, :lo, :hi, :kinds, :nightmare) q
         INTO kind, key_, id
   DO
   BEGIN

@@ -244,6 +244,8 @@ CREATE TABLE sectors (
   bb_yh      INTEGER
 );
 CREATE INDEX sectors_tag ON sectors (tag);
+-- (the sectors with a light's thinker: THINKER_LIST)
+CREATE INDEX sectors_lfx ON sectors (lfx);
 
 CREATE TABLE sidedefs (
   id        INTEGER NOT NULL PRIMARY KEY,
@@ -445,6 +447,10 @@ BEGIN
 END^
 SET TERM ; ^
 CREATE INDEX things_kind ON things (kind);
+-- (THINKER_LIST's: the things of a type, the floaters; and those moving, sliding or charging – the
+-- expression is the one it asks, word for word, so it's read from the index, not a scan)
+CREATE INDEX things_type ON things (thing_type);
+CREATE INDEX things_moving ON things COMPUTED BY (IIF(state IS NOT NULL AND (BIN_AND(flags, 1310720) <> 0 OR momz <> 0 OR momx <> 0 OR momy <> 0), 1, 0));
 CREATE INDEX things_sector ON things (sector_id);
 CREATE INDEX things_x ON things (x);
 CREATE INDEX things_state_tic ON things (state_tic);

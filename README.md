@@ -1627,6 +1627,9 @@ thread: 1–5 ms; the engine runs in its Worker). The simulation is the biggest 
 `node scripts/sql-profile.mjs E1M1,E1M2 300` times its pieces inside the engine – the player,
 the thinkers, each state action – over a few hundred tics: monsters asleep looking for you
 (`A_Look`, a sight check each) were the largest share, and the player's own move next.
+`node scripts/think-bench.mjs` times one part on its own: finding who has something to do this tic
+(`THINKER_LIST`). It reads that from indexes now: 0.2 ms a tic, where a scan of every thing took
+0.7–1.6 ms.
 
 ## Credits
 
