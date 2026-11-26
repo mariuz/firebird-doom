@@ -45,6 +45,7 @@ npm run test:coop          # co-op and deathmatch: two pages, a real WebRTC link
 npm run relay              # the netgame relay (worker/relay.js) under Node on :8787; open the page with ?relay=http://localhost:8787
 npm run test:relay         # the relay: rooms, expiry, limits, origins, the TURN request (Cloudflare faked)
 npm run test:states        # DOOM's state table in Firebird: whole, consistent, every thing type tied to its DOOM type
+npm run test:sight         # P_CheckSight: SIGHT_FX (lines in blocks) against SIGHT_BSP (DOOM's BSP walk), pair for pair (and WAD=)
 npm run gen-states         # regenerates src/states.js (GPL-2) from Chocolate Doom's info.c; never edit it by hand
 BROWSER=firefox npm run test:browser   # (and webkit; test:coop too) CI's browsers.yml runs both in both; Chromium is the default
 npm run test:visual        # the README's pictures, pixel for pixel against docs/screenshots.json

@@ -41,6 +41,7 @@
     "test:all": "node scripts/test-all.mjs",
     "test:relay": "node scripts/relay-test.mjs",
     "test:states": "node scripts/states-test.mjs",
+    "test:sight": "node scripts/sight-bench.mjs",
     "gen-states": "node scripts/gen-states.mjs",
     "relay": "node scripts/relay-dev.mjs"
   },

@@ -499,7 +499,9 @@ try {
   await atSwitch();
   await doom(() => window.doom.menu.close(true));
   await until(() => window.doom.settled, null, 60000);   // (keys pressed during a melt are dropped)
-  await page.keyboard.down('Space'); await page.waitForTimeout(300); await page.keyboard.up('Space');
+  // (held for two of the game's tics, however long they take: beside the other tests 300 ms could
+  // pass with no tic, and the switch was never used)
+  await page.keyboard.down('Space'); await waitTics(2); await page.keyboard.up('Space');
   try {
     if (process.env.DBG) {
       for (let i = 0; i < 15 && (await doom(() => window.doom.screen)) !== 'intermission'; i++) {

@@ -67,10 +67,19 @@ fidelity (DOOM's frame tables, then its `.lmp` demos), and things for players ar
   WADs, but slower (1.27 against 1.16 ms a check: few sides skipped, a wider row read for every
   node); and the walk as a loop with its own stack (no faster). A sight check's cost is the
   engine's per statement: some 10 µs a node (a key lookup, two side tests, a call) and 20–25 µs a
-  subsector, ~57 nodes and ~20 subsectors a check. Next: the sight check itself (its answer
-  doesn't depend on the order of the lines crossed, since the slopes only narrow, so one query over
-  the segs the line crosses might do for a walk of the BSP – but where it passes exactly through a
-  vertex the walk decides, so it needs the fixtures' word). The thinkers' list is done:
+  subsector, ~57 nodes and ~20 subsectors a check. The sight check itself is done.
+  `SIGHT_FX` takes the lines in the blocks along the sight line (`LINE_BLOCKS`), column by
+  column, through `P_CrossSubsector`'s tests: 0.63–0.72 ms a check against the walk's 1.13–1.25.
+  Two of the walk's quirks found on the way leave the answer to it (`SIGHT_BSP`):
+  - a line crossed near its end, or near the looker or the target: the walk may not reach its
+    subsector, so a wall's end on the sight line doesn't block in DOOM;
+  - a looker whose x is a horizontal node's y, behind it, with the sight line crossing it within
+    its box: `P_DivlineSide`'s slip sends the walk down the front, so DOOM's monster sees through
+    a step.
+
+  All 168,824 pairs on every map of both WADs agree; `npm run test:sight` keeps a few maps'
+  worth. A tic gains less (11.5 → 11.1 ms on E1M1–3): most looks end at `REJECT` or the field
+  of view. The thinkers' list is done:
   `THINKER_LIST` reads who has something to do from indexes now: the state's end, the kind,
   an expression index on moving, sliding or falling (`THINGS_MOVING`), the floaters' types and
   the lights' sectors. That takes 0.2 ms, where a scan of every thing joined to its type took

@@ -656,9 +656,11 @@ BEGIN
     RETURNING_VALUES ok, top, bottom;
 END^
 
--- P_CheckSight: can T1 see T2? Not if REJECT says their sectors can't; else from T1's eyes
--- (a quarter of its height below its top) to any part of T2's body, through the BSP
-CREATE OR ALTER FUNCTION sight_fx (t1 INTEGER, t2 INTEGER) RETURNS SMALLINT
+-- P_CheckSight as DOOM does it: can T1 see T2? Not if REJECT says their sectors can't; else from
+-- T1's eyes (a quarter of its height below its top) to any part of T2's body, through the BSP.
+-- SIGHT_FX gives the same answers faster; this is what it's held to (scripts/sight-bench.mjs) and
+-- what it asks where the walk's own quirks decide.
+CREATE OR ALTER FUNCTION sight_bsp (t1 INTEGER, t2 INTEGER) RETURNS SMALLINT
 AS
 DECLARE x1 BIGINT;
 DECLARE y1 BIGINT;
@@ -687,6 +689,149 @@ BEGIN
   EXECUTE PROCEDURE cross_bsp(root, x1, y1, fx32(x2 - x1), fx32(y2 - y1), x2, y2, zstart, top, bottom)
     RETURNING_VALUES ok, top, bottom;
   RETURN ok;
+END^
+
+-- P_CheckSight, the same answers as SIGHT_BSP's walk of the BSP for a third of the cost or less.
+-- P_CrossSubsector's tests don't depend on the order the lines come in (the slopes only narrow,
+-- and any one line can block), so instead of walking nodes and subsectors (some 10 µs a node and
+-- 20 a subsector) it takes every line in the blocks the sight line passes (LINE_BLOCKS: every block
+-- a line touches), column by column, and puts each through the same tests. Two places where the walk
+-- itself decides, and the BSP is asked instead:
+-- - a line crossed near one of its ends, or near the looker or the target: the walk may never
+--   reach the subsector of its segs there (a sight line along a wall's end, touching it at a point);
+-- - P_DivlineSide's slip at a horizontal node, below.
+CREATE OR ALTER FUNCTION sight_fx (t1 INTEGER, t2 INTEGER) RETURNS SMALLINT
+AS
+DECLARE x1 BIGINT;
+DECLARE y1 BIGINT;
+DECLARE z1 BIGINT;
+DECLARE h1 BIGINT;
+DECLARE s1 INTEGER;
+DECLARE x2 BIGINT;
+DECLARE y2 BIGINT;
+DECLARE z2 BIGINT;
+DECLARE h2 BIGINT;
+DECLARE s2 INTEGER;
+DECLARE zstart BIGINT;
+DECLARE top BIGINT;
+DECLARE bottom BIGINT;
+DECLARE sdx BIGINT;
+DECLARE sdy BIGINT;
+DECLARE minx BIGINT;
+DECLARE maxx BIGINT;
+DECLARE miny BIGINT;
+DECLARE maxy BIGINT;
+DECLARE c INTEGER;
+DECLARE c1 INTEGER;
+DECLARE r0 INTEGER;
+DECLARE r1 INTEGER;
+DECLARE xa DOUBLE PRECISION;
+DECLARE xb DOUBLE PRECISION;
+DECLARE ya DOUBLE PRECISION;
+DECLARE yb DOUBLE PRECISION;
+DECLARE lx BIGINT;
+DECLARE ly BIGINT;
+DECLARE ldx BIGINT;
+DECLARE ldy BIGINT;
+DECLARE lback INTEGER;
+DECLARE lflags INTEGER;
+DECLARE fsec INTEGER;
+DECLARE bsec INTEGER;
+DECLARE ff BIGINT;
+DECLARE fc BIGINT;
+DECLARE bf BIGINT;
+DECLARE bc BIGINT;
+DECLARE opentop BIGINT;
+DECLARE openbottom BIGINT;
+DECLARE frac BIGINT;
+DECLARE slope BIGINT;
+DECLARE a1 SMALLINT;
+DECLARE a2 SMALLINT;
+DECLARE b1 SMALLINT;
+DECLARE b2 SMALLINT;
+DECLARE near_s DOUBLE PRECISION;
+BEGIN
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), fx_of(t.height), t.sector_id FROM things t WHERE t.id = :t1 INTO x1, y1, z1, h1, s1;
+  SELECT fx_of(t.x), fx_of(t.y), fx_of(t.z), fx_of(t.height), t.sector_id FROM things t WHERE t.id = :t2 INTO x2, y2, z2, h2, s2;
+  IF (x1 IS NULL OR x2 IS NULL) THEN RETURN 0;
+  IF (rejected(s1, s2) = 1) THEN RETURN 0;
+  zstart = z1 + h1 - BIN_SHR(h1, 2);
+  top = z2 + h2 - zstart;
+  bottom = z2 - zstart;
+  sdx = fx32(x2 - x1);
+  sdy = fx32(y2 - y1);
+  near_s = 131072 * SQRT(sdx * 1e0 * sdx + sdy * 1e0 * sdy);
+  minx = MINVALUE(x1, x2); maxx = MAXVALUE(x1, x2);
+  miny = MINVALUE(y1, y2); maxy = MAXVALUE(y1, y2);
+  -- (P_DivlineSide's slip at a horizontal node: it tests the looker's x against the node's y, and
+  -- where they're equal takes the front, whichever side the looker is on – a looker behind a node
+  -- the sight line crosses, on the way (its box), may be sent one side only: the BSP decides)
+  IF (BIN_AND(x1, 65535) = 0
+      AND EXISTS (SELECT 1 FROM nodes n WHERE n.fy = :x1 AND n.fdy = 0
+                     AND IIF(:y1 <= n.fy, IIF(n.fdx < 0, 1, 0), IIF(n.fdx > 0, 1, 0)) = 1
+                     AND n.fy BETWEEN :miny - 131072 AND :maxy + 131072
+                     AND MAXVALUE(n.r_right, n.l_right) * 65536 >= :minx - 131072 AND MINVALUE(n.r_left, n.l_left) * 65536 <= :maxx + 131072
+                     AND MAXVALUE(n.r_top, n.l_top) * 65536 >= :miny - 131072 AND MINVALUE(n.r_bot, n.l_bot) * 65536 <= :maxy + 131072)) THEN
+    RETURN sight_bsp(t1, t2);
+  -- (the blocks the sight line passes, column by column, 2 units wider all round)
+  c = FLOOR((minx / 65536e0 - 2) / 128);
+  c1 = FLOOR((maxx / 65536e0 + 2) / 128);
+  WHILE (c <= c1) DO
+  BEGIN
+    xa = MAXVALUE(c * 128e0, minx / 65536e0) - 2;
+    xb = MINVALUE(c * 128e0 + 128, maxx / 65536e0) + 2;
+    IF (x1 = x2) THEN BEGIN ya = miny / 65536e0; yb = maxy / 65536e0; END
+    ELSE
+    BEGIN
+      ya = y1 / 65536e0 + (MAXVALUE(xa, minx / 65536e0) - x1 / 65536e0) * (y2 - y1) / (x2 - x1);
+      yb = y1 / 65536e0 + (MINVALUE(xb, maxx / 65536e0) - x1 / 65536e0) * (y2 - y1) / (x2 - x1);
+    END
+    r0 = FLOOR((MINVALUE(ya, yb) - 2) / 128);
+    r1 = FLOOR((MAXVALUE(ya, yb) + 2) / 128);
+    FOR SELECT q.fx, q.fy, q.fdx, q.fdy, q.back_sector, q.flags, q.front_sector, q.back_sector
+          FROM line_blocks lb JOIN linedefs q ON q.id = lb.line_id
+         WHERE lb.bx = :c AND lb.by_ BETWEEN :r0 AND :r1
+           AND CAST(q.maxx AS BIGINT) * 65536 + 131072 >= :minx AND CAST(q.minx AS BIGINT) * 65536 - 131072 <= :maxx
+           AND CAST(q.maxy AS BIGINT) * 65536 + 131072 >= :miny AND CAST(q.miny AS BIGINT) * 65536 - 131072 <= :maxy
+          INTO lx, ly, ldx, ldy, lback, lflags, fsec, bsec
+    DO
+    BEGIN
+      a1 = divline_side(lx, ly, x1, y1, sdx, sdy);
+      a2 = divline_side(fx32(lx + ldx), fx32(ly + ldy), x1, y1, sdx, sdy);
+      IF (a1 = a2) THEN CONTINUE;
+      b1 = divline_side(x1, y1, lx, ly, ldx, ldy);
+      b2 = divline_side(x2, y2, lx, ly, ldx, ldy);
+      IF (b1 = b2) THEN CONTINUE;
+      -- (crossed near an end of either: the BSP walk decides, it may not meet the line there)
+      IF (ABS((lx - x1) * 1e0 * sdy - (ly - y1) * 1e0 * sdx) < near_s
+          OR ABS((lx + ldx - x1) * 1e0 * sdy - (ly + ldy - y1) * 1e0 * sdx) < near_s
+          OR ABS((x1 - lx) * 1e0 * ldy - (y1 - ly) * 1e0 * ldx) < 131072 * SQRT(ldx * 1e0 * ldx + ldy * 1e0 * ldy)
+          OR ABS((x2 - lx) * 1e0 * ldy - (y2 - ly) * 1e0 * ldx) < 131072 * SQRT(ldx * 1e0 * ldx + ldy * 1e0 * ldy)) THEN
+        RETURN sight_bsp(t1, t2);
+      IF (lback IS NULL OR BIN_AND(lflags, 4) = 0) THEN RETURN 0;
+      ff = NULL; fc = NULL; bf = NULL; bc = NULL;
+      SELECT fx_of(z.floor_h), fx_of(z.ceil_h) FROM sectors z WHERE z.id = :fsec INTO ff, fc;
+      SELECT fx_of(z.floor_h), fx_of(z.ceil_h) FROM sectors z WHERE z.id = :bsec INTO bf, bc;
+      IF (ff = bf AND fc = bc) THEN CONTINUE;
+      opentop = MINVALUE(fc, bc);
+      openbottom = MAXVALUE(ff, bf);
+      IF (openbottom >= opentop) THEN RETURN 0;
+      frac = intercept_vector(x1, y1, sdx, sdy, lx, ly, ldx, ldy);
+      IF (ff <> bf) THEN
+      BEGIN
+        slope = fx_div(fx32(openbottom - zstart), frac);
+        IF (slope > bottom) THEN bottom = slope;
+      END
+      IF (fc <> bc) THEN
+      BEGIN
+        slope = fx_div(fx32(opentop - zstart), frac);
+        IF (slope < top) THEN top = slope;
+      END
+      IF (top <= bottom) THEN RETURN 0;
+    END
+    c = c + 1;
+  END
+  RETURN 1;
 END^
 
 -- P_CheckSight: is there an unobstructed line from A to B at these heights?

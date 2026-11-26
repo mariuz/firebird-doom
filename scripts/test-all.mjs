@@ -44,6 +44,7 @@ const TESTS = [
   ...both('weapons', 6),
   ['relay', npm('test:relay'), 3],
   ...both('states', 5),
+  ...both('sight', 15),
   ...['music', 'statusbar', 'light', 'sound', 'intermission', 'automap', 'finale', 'menu'].map((t) => [t, npm(`test:${t}`), 5]),
 ];
 

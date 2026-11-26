@@ -366,6 +366,8 @@ CREATE TABLE nodes (
   -- the partition line in 16.16 (INIT_MAP), for P_CheckSight's walk and R_PointInSubsector's
   fx BIGINT, fy BIGINT, fdx BIGINT, fdy BIGINT
 );
+-- (SIGHT_FX: the horizontal nodes at a y, where P_DivlineSide's slip leaves the sight to the BSP)
+CREATE INDEX nodes_fy ON nodes (fy);
 
 -- THINGS lump as authored; INIT_MAP spawns from it per skill level.
 CREATE TABLE map_things (

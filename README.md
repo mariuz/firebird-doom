@@ -46,7 +46,7 @@ through DuckDB-WASM). This one is graphical, plays real DOOM maps, and runs Fire
 | `BLOCKMAP` | the lump itself (`BLOCKMAP`, in its order, for the player), and `LINE_BLOCKS`, a 128×128 grid built by `INIT_MAP` |
 | `P_CheckPosition`, `P_TryMove`, `PIT_CheckThing` | in 16.16: `CHECK_POSITION_FX`; `TRY_MOVE_FX` (the player, whose pickups `PIT_CheckThing` touches there), `TRY_MOVE_MOBJ` (monsters, corpses, a charging lost soul's `SKULL_CONTACT`), `TRY_MOVE_MISSILE`; `CHECK_POSITION` for the rest |
 | `P_MovePlayer`, `P_CalcHeight`, `P_XYMovement`, `P_SlideMove`, `P_ZMovement` (the player) | `PLAYER_THINK`, `XY_MOVEMENT_FX`, `SLIDE_MOVE_FX` (`SLIDE_TRAVERSE`, `HIT_SLIDE_LINE`), `Z_MOVEMENT_FX` |
-| `P_CheckSight` | for monsters, `SIGHT_FX()`: `REJECT`, then the BSP walk (`CROSS_BSP`, `CROSS_SUBSECTOR`) in 16.16; elsewhere `CHECK_SIGHT()` walks the blockmap cells along the sight line |
+| `P_CheckSight` | for monsters, `SIGHT_FX()`: `REJECT`, then the lines in the blocks along the sight line through `P_CrossSubsector`'s tests in 16.16, with the BSP walk (`SIGHT_BSP`: `CROSS_BSP`, `CROSS_SUBSECTOR`) asked where its quirks decide; elsewhere `CHECK_SIGHT()` walks the blockmap cells along the sight line |
 | `P_UseLines`, `P_CrossSpecialLine`, `EV_DoDoor/Plat/Floor/Ceiling`, `EV_BuildStairs`, `EV_DoDonut`, exits | `ACTIVATE_LINE`, `DOOR_START`, `FLOOR_START`, `MOVERS` (`MTYPE`: DOOM's own types) |
 | `T_VerticalDoor`, `T_PlatRaise`, `T_MoveFloor`, `T_MoveCeiling`, `T_MovePlane` | `MOVER_STEP`, `MOVE_PLANE` |
 | `G_DoCompleted`: which map comes next, secret exits included | [src/progress.js](src/progress.js) |
@@ -1556,7 +1556,18 @@ monster sight check first asks the map's `REJECT` table: a precomputed bit per p
 saying one can't see the other. Firebird keeps it as a row of bits per sector, and `REJECT`
 (`rejected(s1, s2)`) rules out 70–94% of pairs on Freedoom's maps before any line of sight is
 walked. That makes idle monsters cheaper than before, when the port instead ignored the player
-beyond 2400 units. `P_Move` and `P_NewChaseDir` are stored procedures in 16.16 (`P_MOVE_FX`,
+beyond 2400 units. Past `REJECT`, DOOM walks the BSP from node to node along the sight line and
+puts each line it meets through `P_CrossSubsector`'s tests. Here `SIGHT_FX` takes every line in
+the blockmap's blocks along the sight line instead, and puts each through the same tests. That
+gives the same answer, because the slopes only narrow and any one line can block, whatever order
+they come in. It is 1.8 times faster (0.7 ms a check against 1.2). Where the walk's own quirks
+decide, it asks the walk itself (`SIGHT_BSP`):
+- a line crossed at its very end, whose subsector the walk may never reach;
+- a looker standing on a horizontal node's y, where `P_DivlineSide`'s slip sends it down one
+  side.
+
+So a monster still sees through what DOOM's sees through. `npm run test:sight` holds the two to
+the same answer, pair for pair; every map of both WADs (168,824 pairs) agreed. `P_Move` and `P_NewChaseDir` are stored procedures in 16.16 (`P_MOVE_FX`,
 `NEW_CHASE_DIR_FX`), moving the monster through `TRY_MOVE_MOBJ`, DOOM's `P_TryMove`.
 
 Monsters fight each other, as in DOOM. When one monster's attack hurts another, the victim turns
@@ -1629,7 +1640,7 @@ the thinkers, each state action – over a few hundred tics: monsters asleep loo
 (`A_Look`, a sight check each) were the largest share, and the player's own move next.
 `node scripts/think-bench.mjs` times one part on its own: finding who has something to do this tic
 (`THINKER_LIST`). It reads that from indexes now: 0.2 ms a tic, where a scan of every thing took
-0.7–1.6 ms.
+0.7–1.6 ms. `node scripts/sight-bench.mjs MAP,MAP…` times a monster's sight check both ways.
 
 ## Credits
 
